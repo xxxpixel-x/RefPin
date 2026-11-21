@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --paper-bg: #f7f6f3;
+  --paper-ink: #1c1917;
+  --paper-gold: #d97706;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper-bg);
+  color: var(--paper-ink);
+  font-family: Inter, 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 精细滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6d3d1;
+  border: 2px solid var(--paper-bg);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a29e;
+}
+
+/* 跨页返回原行时的一次性金色柔光 */
+@keyframes citationFlash {
+  0% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+  12% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+.citation-flash {
+  animation: citationFlash 1.8s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.16s ease-out;
+}
+
+/* 论文页面内文字不可选，避免拖拽框选时选中文本 */
+.pdf-canvas canvas {
+  user-select: none;
+}
