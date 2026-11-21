@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
+  ArrowDown,
   ArrowDownToLine,
+  ArrowUp,
   ArrowUpToLine,
   Check,
   ChevronDown,
-  ChevronUp,
   Copy,
   ExternalLink,
   Maximize2,
@@ -84,23 +85,42 @@ export function PinnedCard({
         ) : (
           <button
             type="button"
-            onDoubleClick={() => isSnip && setEditing(true)}
-            onClick={() => onJump(item.pageNumber, item.cropRect)}
+            onClick={() => {
+              if (!isSnip) onJump(item.pageNumber, item.cropRect);
+            }}
+            onDoubleClick={() => {
+              if (isSnip) setEditing(true);
+            }}
             className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-paper-ink hover:text-paper-gold"
-            title={isSnip ? '双击可重命名 · 点击跳回原页' : '点击跳回原页'}
+            title={isSnip ? '双击可重命名' : '点击跳回原页'}
           >
             {item.title}
           </button>
         )}
 
-        <span className="shrink-0 font-mono text-[10px] text-paper-muted">P.{item.pageNumber}</span>
+        <button
+          type="button"
+          onClick={() => onJump(item.pageNumber, item.cropRect)}
+          className="shrink-0 rounded px-1 font-mono text-[10px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-gold"
+          title="跳回原页"
+        >
+          P.{item.pageNumber}
+        </button>
         <button
           type="button"
           onClick={() => onMove(item.id, -1)}
           className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
           aria-label="上移"
         >
-          <ChevronUp className="h-3 w-3" />
+          <ArrowUp className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(item.id, 1)}
+          className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
+          aria-label="下移"
+        >
+          <ArrowDown className="h-3 w-3" />
         </button>
         <button
           type="button"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CornerDownRight,
@@ -28,6 +28,7 @@ interface HoverPeekCardProps {
   onJump: (pageNumber: number, rect?: InlineCitation['rect']) => void;
   onOpenLightbox: (asset: PaperAsset) => void;
   onPeek: (citation: InlineCitation) => void;
+  fallbackPreview?: { imageUrl: string; pageNumber: number } | null;
 }
 
 const KIND_LABEL: Record<InlineCitation['kind'], string> = {
@@ -50,6 +51,7 @@ export function HoverPeekCard({
   onJump,
   onOpenLightbox,
   onPeek,
+  fallbackPreview,
 }: HoverPeekCardProps) {
   const [activeTrigger, setActiveTrigger] = useState<PeekTrigger | null>(null);
   const [activeRefIndex, setActiveRefIndex] = useState(0);
@@ -96,7 +98,9 @@ export function HoverPeekCard({
 
   const activeReference = references[Math.min(activeRefIndex, references.length - 1)];
 
-  useEffect(() => {
+  const previewImage = asset?.imageUrl ?? fallbackPreview?.imageUrl ?? null;
+
+  const recalcPosition = useCallback(() => {
     if (!activeTrigger || !cardRef.current) return;
     const rect = activeTrigger.anchorEl.getBoundingClientRect();
     const height = cardRef.current.offsetHeight || 280;
@@ -108,7 +112,23 @@ export function HoverPeekCard({
       window.innerWidth - CARD_WIDTH - 12,
     );
     setPosition({ left, top });
-  }, [activeTrigger, activeRefIndex, asset, activeReference]);
+  }, [activeTrigger]);
+
+  useEffect(() => {
+    recalcPosition();
+  }, [recalcPosition, activeRefIndex, asset, activeReference]);
+
+  useEffect(() => {
+    if (!activeTrigger) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        hoveringCard.current = false;
+        setActiveTrigger(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTrigger]);
 
   if (!activeTrigger || !citation) return null;
 
@@ -120,6 +140,11 @@ export function HoverPeekCard({
   const scheduleClose = () => {
     hoveringCard.current = false;
     leaveTimer.current = window.setTimeout(() => setActiveTrigger(null), HIDE_DELAY);
+  };
+
+  const closeNow = () => {
+    hoveringCard.current = false;
+    setActiveTrigger(null);
   };
 
   return createPortal(
@@ -134,19 +159,26 @@ export function HoverPeekCard({
         <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-paper-goldtext">
           {KIND_LABEL[citation.kind]}
         </span>
-        <span className="font-mono text-[10px] text-paper-muted">P.{citation.pageNumber}</span>
+        <span className="font-mono text-[10px] text-paper-muted">
+          P.
+          {asset?.pageNumber ??
+            activeReference?.pageNumber ??
+            citation.nativeDest?.pageNumber ??
+            citation.pageNumber}
+        </span>
         <span className="truncate text-[11px] text-paper-muted">{citation.rawText}</span>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            closeNow();
             onJump(
               asset?.pageNumber ??
                 activeReference?.pageNumber ??
                 citation.nativeDest?.pageNumber ??
                 citation.pageNumber,
               asset?.cropRect,
-            )
-          }
+            );
+          }}
           className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-white hover:text-paper-ink"
           title="跳去原页"
         >
@@ -225,15 +257,20 @@ export function HoverPeekCard({
         </div>
       ) : (
         <div className="p-3">
-          {asset?.imageUrl ? (
+          {previewImage ? (
             <button
               type="button"
-              onClick={() => onOpenLightbox(asset)}
+              onClick={() => {
+                closeNow();
+                if (asset) onOpenLightbox(asset);
+                else if (fallbackPreview) onJump(fallbackPreview.pageNumber);
+              }}
               className="group block w-full overflow-hidden rounded-lg border border-paper-border bg-paper-bg"
             >
               <img
-                src={asset.imageUrl}
-                alt={asset.label}
+                src={previewImage}
+                alt={asset?.label ?? citation.rawText}
+                onLoad={recalcPosition}
                 className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
               />
               <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
@@ -262,12 +299,13 @@ export function HoverPeekCard({
             </button>
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                closeNow();
                 onJump(
                   asset?.pageNumber ?? citation.nativeDest?.pageNumber ?? citation.pageNumber,
                   asset?.cropRect,
-                )
-              }
+                );
+              }}
               className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"
             >
               跳去原页

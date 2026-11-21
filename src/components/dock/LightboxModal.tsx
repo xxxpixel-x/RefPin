@@ -34,7 +34,6 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
       className="fixed inset-0 z-[60] flex flex-col bg-stone-950/80 backdrop-blur-sm"
       onClick={onClose}
       onWheel={(event) => {
-        event.preventDefault();
         changeZoom(event.deltaY > 0 ? -0.1 : 0.1);
       }}
     >
@@ -94,7 +93,6 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
           'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-8 pb-8',
           zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
         )}
-        onClick={(event) => event.stopPropagation()}
         onMouseDown={(event) => {
           if (zoom <= 1) return;
           dragging.current = {
@@ -122,6 +120,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
           src={asset.imageUrl}
           alt={asset.label}
           draggable={false}
+          onClick={(event) => event.stopPropagation()}
           className="max-h-full max-w-full select-none rounded-lg bg-white shadow-2xl transition-transform duration-150"
           style={{
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,

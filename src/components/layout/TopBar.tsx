@@ -127,7 +127,7 @@ export function TopBar({
       </button>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="group relative hidden lg:block">
+        <div className="group relative hidden shrink-0 sm:block">
           <span className="flex items-center gap-1.5 rounded-full border border-paper-goldborder bg-paper-goldbg px-3 py-1 text-[11px] font-medium text-paper-goldtext transition group-hover:border-amber-400">
             已免去翻页
             <span className="font-mono text-xs font-semibold text-paper-goldtext">
