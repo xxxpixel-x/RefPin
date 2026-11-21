@@ -10,6 +10,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 const LINE_TOLERANCE = 0.007;
 /** 超过该水平间距视为换栏 / 换块（相对页宽） */
 const COLUMN_GAP = 0.018;
+/** 双栏页里真正跨越中缝的最小间距（CJK 双栏中缝实测约 0.013） */
+const MIDLINE_GAP = 0.012;
 
 export async function loadPdfDocument(
   source: string | ArrayBuffer,
@@ -31,6 +33,63 @@ interface RawBox {
   width: number;
   height: number;
   baseline: number;
+}
+
+/**
+ * 在行聚类之前先用原始 box 判断整页是否双栏。
+ * 单栏页的正文 box 往往横跨中缝，不会被误判。
+ */
+function looksTwoColumn(boxes: RawBox[]): boolean {
+  const left: RawBox[] = [];
+  const right: RawBox[] = [];
+
+  for (const box of boxes) {
+    if (box.width < 0.18) continue;
+    const rightEdge = box.x + box.width;
+    if (rightEdge <= 0.51) {
+      left.push(box);
+    } else if (box.x >= 0.49) {
+      right.push(box);
+    }
+  }
+
+  if (left.length < 3 || right.length < 3) return false;
+
+  // 每一栏的行需要共享稳定的左边界，排除单栏页右侧的零散行尾碎片
+  const alignedCount = (boxes: RawBox[]) => {
+    let best = 0;
+    for (const candidate of boxes) {
+      let count = 0;
+      for (const box of boxes) {
+        if (Math.abs(box.x - candidate.x) <= 0.03) count += 1;
+      }
+      if (count > best) best = count;
+    }
+    return best;
+  };
+  if (
+    alignedCount(left) < Math.max(3, Math.ceil(left.length * 0.5)) ||
+    alignedCount(right) < Math.max(3, Math.ceil(right.length * 0.5))
+  ) {
+    return false;
+  }
+
+  const median = (values: number[]) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  };
+  const gutter =
+    median(right.map((box) => box.x)) -
+    median(left.map((box) => box.x + box.width));
+  if (gutter <= 0 || gutter > 0.08) return false;
+
+  const leftTop = Math.min(...left.map((box) => box.y));
+  const leftBottom = Math.max(...left.map((box) => box.y + box.height));
+  const rightTop = Math.min(...right.map((box) => box.y));
+  const rightBottom = Math.max(...right.map((box) => box.y + box.height));
+  const overlap = Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop);
+  if (overlap <= 0.15) return false;
+  return overlap >= Math.min(leftBottom - leftTop, rightBottom - rightTop) * 0.35;
 }
 
 function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
@@ -132,6 +191,7 @@ export async function extractPageLines(
   if (boxes.length === 0) return [];
 
   boxes.sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+  const twoColumnPage = looksTwoColumn(boxes);
 
   // 1) 按基线聚类成“同一视觉行”
   const groups: RawBox[][] = [];
@@ -166,7 +226,13 @@ export async function extractPageLines(
       const current = group[i];
       const gap = current.x - (prev.x + prev.width);
       const threshold = Math.max(COLUMN_GAP, prev.height * 1.6);
-      if (gap > threshold) {
+      // 双栏页里左右两栏的窄中缝也可能小于常规阈值，必须强制断开
+      const crossesMidline =
+        twoColumnPage &&
+        prev.x + prev.width < 0.5 &&
+        current.x > 0.49 &&
+        gap > MIDLINE_GAP;
+      if (gap > threshold || crossesMidline) {
         flush();
         run = [current];
       } else {

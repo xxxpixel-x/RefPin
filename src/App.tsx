@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   FileText,
@@ -38,10 +38,13 @@ export default function App() {
   const stats = useReaderStore((state) => state.stats);
 
   const viewerRef = useRef<PdfViewerHandle>(null);
+  const openRequestRef = useRef(0);
+  const hoverTimerRef = useRef<number | null>(null);
   const [hover, setHover] = useState<{ citation: InlineCitation; anchor: HTMLElement } | null>(
     null,
   );
   const [bootError, setBootError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   const citationCount = Object.values(citationsByPage).reduce(
     (sum, list) => sum + list.length,
@@ -52,25 +55,82 @@ export default function App() {
     source: string | ArrayBuffer,
     name: string,
   ) => {
+    const requestId = ++openRequestRef.current;
     setBootError(null);
     setHover(null);
     const store = useReaderStore.getState();
     store.resetPaper();
     try {
       const doc = await loadPdfDocument(source);
+      if (requestId !== openRequestRef.current) {
+        void doc.destroy().catch(() => {});
+        return;
+      }
       useReaderStore.getState().setPdfDocument(doc, name, source);
       useReaderStore.getState().setParsing(true);
-      const result = await parsePaper(doc, (percent) =>
-        useReaderStore.getState().setParseProgress(percent),
-      );
+      const result = await parsePaper(doc, (percent) => {
+        if (requestId === openRequestRef.current) {
+          useReaderStore.getState().setParseProgress(percent);
+        }
+      });
+      if (requestId !== openRequestRef.current) return;
       useReaderStore.getState().setParseResult(result);
     } catch (error) {
+      if (requestId !== openRequestRef.current) return;
       const message = error instanceof Error ? error.message : '论文打开失败';
       useReaderStore.getState().setParseError(message);
       setBootError(message);
     } finally {
-      useReaderStore.getState().setParsing(false);
+      if (requestId === openRequestRef.current) {
+        useReaderStore.getState().setParsing(false);
+      }
     }
+  };
+
+  // 全局 S 键切换框选模式（输入框聚焦时忽略）
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 's' || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (!useReaderStore.getState().pdfDoc) return;
+      event.preventDefault();
+      const state = useReaderStore.getState();
+      state.setSnipMode(!state.snipMode);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+    },
+    [],
+  );
+
+  const cancelHoverClose = () => {
+    if (hoverTimerRef.current) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
+
+  const closeHoverSoon = () => {
+    cancelHoverClose();
+    hoverTimerRef.current = window.setTimeout(() => {
+      setHover(null);
+      hoverTimerRef.current = null;
+    }, 250);
   };
 
   const handleFile = async (file: File | undefined) => {
@@ -83,8 +143,22 @@ export default function App() {
     await openPaper(buffer, file.name);
   };
 
+  const resolveCitationPage = (citation: InlineCitation): number | undefined => {
+    const store = useReaderStore.getState();
+    const asset = citation.targetKeys.map((key) => store.assetsMap[key]).find(Boolean);
+    const reference = citation.targetKeys
+      .map((key) => store.referencesMap[key])
+      .find(Boolean);
+    return asset?.pageNumber ?? reference?.pageNumber ?? citation.nativeDest?.pageNumber;
+  };
+
   const handleHover = (citation: InlineCitation, anchor: HTMLElement) => {
+    cancelHoverClose();
     setHover({ citation, anchor });
+    const targetPage = resolveCitationPage(citation);
+    if (targetPage && targetPage !== currentPage) {
+      useReaderStore.getState().recordSavedFlip(targetPage);
+    }
     if (citation.nativeDest && citation.nativeDest.pageNumber !== currentPage) {
       useReaderStore.getState().recordPeek();
     }
@@ -95,9 +169,9 @@ export default function App() {
     store.setJumpAnchor({
       fromPage: store.currentPage,
       fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
+      highlightRect: rect,
       label: `回到第 ${store.currentPage} 页刚才读的位置`,
     });
-    store.recordSavedFlip(pageNumber);
     viewerRef.current?.scrollToPosition(pageNumber, rect, true);
   };
 
@@ -117,7 +191,26 @@ export default function App() {
           </p>
         </div>
 
-        <label className="flex w-full max-w-xl cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed border-paper-border bg-white px-8 py-10 shadow-paper transition hover:border-amber-400">
+        <label
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+            void handleFile(event.dataTransfer.files?.[0]);
+          }}
+          className={
+            dragActive
+              ? 'flex w-full max-w-xl cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed border-amber-500 bg-amber-50 px-8 py-10 shadow-paper transition'
+              : 'flex w-full max-w-xl cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed border-paper-border bg-white px-8 py-10 shadow-paper transition hover:border-amber-400'
+          }
+        >
           <Upload className="h-5 w-5 text-paper-muted" />
           <span className="text-sm text-paper-ink">点击选择或拖入本地 PDF</span>
           <span className="text-xs text-paper-muted">
@@ -246,6 +339,8 @@ export default function App() {
               viewerRef.current?.scrollToPosition(
                 jumpAnchor.fromPage,
                 jumpAnchor.fromScrollTop,
+                true,
+                jumpAnchor.highlightRect,
               );
               useReaderStore.getState().clearJumpAnchor();
             }}
@@ -283,7 +378,7 @@ export default function App() {
             initialPage={SAMPLES.find((sample) => fileName.startsWith(sample.title))?.demoStartPage}
             onPageChange={(page) => useReaderStore.getState().setCurrentPage(page)}
             onCitationHover={handleHover}
-            onCitationLeave={() => setHover(null)}
+            onCitationLeave={closeHoverSoon}
             onCitationClick={(citation) => {
               const asset = citation.targetKeys
                 .map((key) => assetsMap[key])
@@ -341,7 +436,14 @@ export default function App() {
         </aside>
       </div>
 
-      {hover && <DebugPeek hover={hover} onJump={jumpTo} />}
+      {hover && (
+        <DebugPeek
+          hover={hover}
+          onJump={jumpTo}
+          onKeepAlive={cancelHoverClose}
+          onCloseSoon={closeHoverSoon}
+        />
+      )}
     </div>
   );
 }
@@ -349,9 +451,13 @@ export default function App() {
 function DebugPeek({
   hover,
   onJump,
+  onKeepAlive,
+  onCloseSoon,
 }: {
   hover: { citation: InlineCitation; anchor: HTMLElement };
   onJump: (page: number, rect?: InlineCitation['rect']) => void;
+  onKeepAlive: () => void;
+  onCloseSoon: () => void;
 }) {
   const assetsMap = useReaderStore((state) => state.assetsMap);
   const referencesMap = useReaderStore((state) => state.referencesMap);
@@ -373,6 +479,8 @@ function DebugPeek({
     <div
       className="animate-fade-in-up fixed z-50 w-[320px] rounded-xl border border-paper-border bg-white p-3 shadow-float"
       style={{ left, top }}
+      onMouseEnter={onKeepAlive}
+      onMouseLeave={onCloseSoon}
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-paper-goldtext">

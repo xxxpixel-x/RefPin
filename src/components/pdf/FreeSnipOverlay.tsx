@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { recropPageRegion } from '../../engine/assetExtractor';
 import { useReaderStore } from '../../store/useReaderStore';
@@ -19,24 +19,18 @@ interface Selection {
 
 /** 自由框选钉住：拖拽一块区域，松手后高清截取并钉到右侧对照栏 */
 export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
-  const overlayRef = useRef<HTMLDivElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+  // 同步保存选区，避免快速松手时 finishSelection 读到旧的 React state
+  const selectionRef = useRef<Selection | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
   const setSnipMode = useReaderStore((state) => state.setSnipMode);
   const pinSnip = useReaderStore((state) => state.pinSnip);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        startRef.current = null;
-        setSelection(null);
-        setSnipMode(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [setSnipMode]);
+  const applySelection = (next: Selection | null) => {
+    selectionRef.current = next;
+    setSelection(next);
+  };
 
   const pointFromEvent = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -52,14 +46,14 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointFromEvent(event);
     startRef.current = point;
-    setSelection({ x: point.x, y: point.y, width: 0, height: 0 });
+    applySelection({ x: point.x, y: point.y, width: 0, height: 0 });
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current;
     if (!start) return;
     const point = pointFromEvent(event);
-    setSelection({
+    applySelection({
       x: Math.min(start.x, point.x),
       y: Math.min(start.y, point.y),
       width: Math.abs(point.x - start.x),
@@ -68,10 +62,10 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
   };
 
   const finishSelection = async () => {
-    const current = selection;
+    const current = selectionRef.current;
     startRef.current = null;
     if (!current || current.width < 20 || current.height < 20) {
-      setSelection(null);
+      applySelection(null);
       return;
     }
 
@@ -86,22 +80,23 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
       const imageUrl = await recropPageRegion(pdfDoc, pageNumber, cropRect);
       pinSnip({ pageNumber, cropRect, imageUrl });
       setSnipMode(false);
+    } catch {
+      // 截取失败时留在框选模式，避免未捕获的 Promise 拒绝
     } finally {
       setBusy(false);
-      setSelection(null);
+      applySelection(null);
     }
   };
 
   return (
     <div
-      ref={overlayRef}
       className="absolute inset-0 z-30 cursor-crosshair select-none"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={() => void finishSelection()}
       onPointerCancel={() => {
         startRef.current = null;
-        setSelection(null);
+        applySelection(null);
       }}
     >
       <div className="pointer-events-none absolute inset-0 bg-amber-500/[0.04]" />

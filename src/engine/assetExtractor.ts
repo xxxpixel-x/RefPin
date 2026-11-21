@@ -1,7 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { NormalizedRect, PaperAsset } from '../types/paper';
-import type { LinesByPage, TextLine } from './types';
-import { clamp, clampRect } from './utils';
+import type { LinesByPage, RefRange, TextLine } from './types';
+import { clamp, clampRect, isInsideRefRange, isTwoColumnPage } from './utils';
 
 /** 离屏渲染倍率：2.0 保证钉板与灯箱里的图足够清晰 */
 const RENDER_SCALE = 2;
@@ -21,17 +21,28 @@ interface PageBitmap {
   height: number;
 }
 
-const bitmapCache = new Map<number, PageBitmap>();
+/** 位图缓存绑定到具体文档，切换 PDF 时不会串图 */
+const bitmapCache = new WeakMap<PDFDocumentProxy, Map<number, PageBitmap>>();
 
-export function resetAssetCache() {
-  bitmapCache.clear();
+export function resetAssetCache(doc?: PDFDocumentProxy) {
+  if (doc) bitmapCache.delete(doc);
+}
+
+function cacheFor(doc: PDFDocumentProxy): Map<number, PageBitmap> {
+  let cache = bitmapCache.get(doc);
+  if (!cache) {
+    cache = new Map();
+    bitmapCache.set(doc, cache);
+  }
+  return cache;
 }
 
 async function getPageBitmap(
   doc: PDFDocumentProxy,
   pageNumber: number,
 ): Promise<PageBitmap> {
-  const cached = bitmapCache.get(pageNumber);
+  const cache = cacheFor(doc);
+  const cached = cache.get(pageNumber);
   if (cached) return cached;
 
   const page = await doc.getPage(pageNumber);
@@ -50,10 +61,10 @@ async function getPageBitmap(
     height: canvas.height,
   };
 
-  bitmapCache.set(pageNumber, bitmap);
-  if (bitmapCache.size > MAX_CACHED_PAGES) {
-    const oldest = bitmapCache.keys().next().value;
-    if (oldest !== undefined) bitmapCache.delete(oldest);
+  cache.set(pageNumber, bitmap);
+  if (cache.size > MAX_CACHED_PAGES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
   }
   return bitmap;
 }
@@ -235,44 +246,60 @@ function sameColumn(a: TextLine, b: TextLine): boolean {
   return overlap > Math.min(a.rect.width, b.rect.width) * 0.35;
 }
 
+/** 用扩展后的 [left, right] 栏带判断某行是否与 caption 处于同一栏 */
+function overlapsBand(left: number, right: number, line: TextLine): boolean {
+  const lineRight = line.rect.x + line.rect.width;
+  const overlap = Math.min(right, lineRight) - Math.max(left, line.rect.x);
+  return overlap > Math.min(right - left, line.rect.width) * 0.35;
+}
+
 /**
  * 判断一行是否像“正文段落”。
  * 图表内部的标签、表格单元格都是短行且不从栏位左边界开始，
  * 不能拿它们当裁切边界，否则 Table 1 会被表头行截断。
  */
-function isParagraphLine(line: TextLine): boolean {
+function isParagraphLine(line: TextLine, isTwoCol: boolean): boolean {
   if (line.rect.width < 0.22) return false;
   if (line.column === 'full') return true;
-  const [colLeft] = columnRange(line);
+  const [colLeft] = columnRange(line, isTwoCol);
   return Math.abs(line.rect.x - colLeft) < 0.09;
 }
 
-function columnRange(line: TextLine): [number, number] {
-  if (line.rect.width > 0.62 || line.column === 'full') return [0.03, 0.97];
-  // 居中、左右都留出明显边距的短标题（通栏图表的 caption）按通栏处理
-  if (line.rect.x > 0.18 && line.rect.x + line.rect.width < 0.88 && line.rect.x < 0.35) {
+function columnRange(line: TextLine, isTwoCol: boolean): [number, number] {
+  // 单栏页一律通栏；不要再通过 x < 0.35 之类的经验值把居中 caption 切成半边
+  if (!isTwoCol || line.rect.width > 0.62 || line.column === 'full') {
     return [0.03, 0.97];
   }
-  if (line.column === 'left') return [0.03, 0.48];
+  const center = line.rect.x + line.rect.width / 2;
+  const roughlyCentered =
+    Math.abs(center - 0.5) < 0.1 &&
+    line.rect.x >= 0.12 &&
+    line.rect.x + line.rect.width <= 0.88;
+  if (roughlyCentered) return [0.03, 0.97];
+  if (line.column === 'left' || center < 0.5) return [0.03, 0.48];
   return [0.51, 0.97];
 }
 
 function collectCaptions(
   linesByPage: LinesByPage,
-  referencesStartPage?: number,
+  refRange?: RefRange,
 ): CaptionInfo[] {
   const captions: CaptionInfo[] = [];
   const seen = new Set<string>();
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
     const pageNumber = Number(pageKey);
-    if (referencesStartPage && pageNumber >= referencesStartPage) continue;
-
-    const ordered = [...lines].sort((a, b) => a.baseline - b.baseline);
+    const isTwoCol = isTwoColumnPage(lines);
+    const ordered = [...lines].sort(
+      (a, b) => a.baseline - b.baseline || a.rect.x - b.rect.x,
+    );
     const captionLineSet = new Set<TextLine>();
 
     for (let i = 0; i < ordered.length; i += 1) {
       const line = ordered[i];
+      if (isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange)) {
+        continue;
+      }
       const parsed = parseCaptionLine(line);
       if (!parsed) continue;
       if (captionLineSet.has(line)) continue;
@@ -306,7 +333,7 @@ function collectCaptions(
 
       const top = Math.min(...group.map((item) => item.rect.y));
       const bottom = Math.max(...group.map((item) => item.rect.y + item.rect.height));
-      const bars = group.map((item) => columnRange(item));
+      const bars = group.map((item) => columnRange(item, isTwoCol));
       const left = Math.min(...bars.map((bar) => bar[0]));
       const right = Math.max(...bars.map((bar) => bar[1]));
 
@@ -330,7 +357,7 @@ function collectCaptions(
 }
 
 export interface ExtractAssetsOptions {
-  referencesStartPage?: number;
+  refRange?: RefRange;
   onProgress?: (percent: number) => void;
 }
 
@@ -340,21 +367,37 @@ export async function extractAssets(
   options: ExtractAssetsOptions = {},
 ): Promise<Record<string, PaperAsset>> {
   const assets: Record<string, PaperAsset> = {};
-  const captions = collectCaptions(linesByPage, options.referencesStartPage);
+  const captions = collectCaptions(linesByPage, options.refRange);
 
-  // 公式行的候选（(1) / （3）独立成行，且位于栏位右半侧）
-  const equationCandidates: Array<{ line: TextLine; number: string }> = [];
+  // 公式行的候选（(1) / （3）独立成行，且位于所属栏位的右侧）
+  const equationCandidates: Array<{
+    line: TextLine;
+    number: string;
+    band: [number, number];
+  }> = [];
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
     const pageNumber = Number(pageKey);
-    if (options.referencesStartPage && pageNumber >= options.referencesStartPage) continue;
+    const pageIsTwoCol = isTwoColumnPage(lines);
     for (const line of lines) {
+      if (
+        isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, options.refRange)
+      ) {
+        continue;
+      }
       const hit = line.text.trim().match(/^[(（](\d{1,3})[)）]$/);
       if (!hit) continue;
-      const [colLeft, colRight] = columnRange(line);
       const center = line.rect.x + line.rect.width / 2;
-      if (center > (colLeft + colRight) / 2) {
-        equationCandidates.push({ line, number: hit[1] });
+
+      // 公式编号永远靠右：单栏页取通栏，双栏页按编号所在半页取对应栏
+      let band: [number, number];
+      if (!pageIsTwoCol) {
+        if (center < 0.55) continue;
+        band = [0.05, 0.95];
+      } else {
+        band = center < 0.5 ? [0.03, 0.48] : [0.51, 0.97];
+        if (center <= (band[0] + band[1]) / 2) continue;
       }
+      equationCandidates.push({ line, number: hit[1], band });
     }
   }
 
@@ -372,12 +415,15 @@ export async function extractAssets(
 
       const captionLines = new Set(caption.lines);
       const pageLines = linesByPage[pageNumber] ?? [];
+      const pageIsTwoCol = isTwoColumnPage(pageLines);
+
+      // 同一栏（用扩展后的 caption 栏带）的正文段落
       const above = pageLines
         .filter(
           (line) =>
             !captionLines.has(line) &&
-            isParagraphLine(line) &&
-            sameColumn(line, caption.lines[0]) &&
+            isParagraphLine(line, pageIsTwoCol) &&
+            overlapsBand(caption.left, caption.right, line) &&
             line.rect.y + line.rect.height <= caption.top - 0.002,
         )
         .sort((a, b) => b.rect.y + b.rect.height - (a.rect.y + a.rect.height))[0];
@@ -385,16 +431,42 @@ export async function extractAssets(
         .filter(
           (line) =>
             !captionLines.has(line) &&
-            isParagraphLine(line) &&
-            sameColumn(line, caption.lines[0]) &&
+            isParagraphLine(line, pageIsTwoCol) &&
+            overlapsBand(caption.left, caption.right, line) &&
             line.rect.y >= caption.bottom + 0.002,
         )
         .sort((a, b) => a.rect.y - b.rect.y)[0];
 
-      const limitTop = above
-        ? Math.min(0.99, above.rect.y + above.rect.height + 0.006)
+      // 同页同栏的其他 caption 也是硬边界，避免多图互相串图
+      const siblingCaptions = captions.filter(
+        (other) =>
+          other.key !== caption.key &&
+          other.lines[0]?.pageNumber === pageNumber &&
+          Math.min(caption.right, other.right) - Math.max(caption.left, other.left) >
+            Math.min(caption.right - caption.left, other.right - other.left) * 0.35,
+      );
+      const captionAbove = siblingCaptions
+        .filter((other) => other.bottom <= caption.top - 0.002)
+        .sort((a, b) => b.bottom - a.bottom)[0];
+      const captionBelow = siblingCaptions
+        .filter((other) => other.top >= caption.bottom + 0.002)
+        .sort((a, b) => a.top - b.top)[0];
+
+      const topBoundary = Math.max(
+        above ? above.rect.y + above.rect.height : -Infinity,
+        captionAbove ? captionAbove.bottom : -Infinity,
+      );
+      const bottomBoundary = Math.min(
+        below ? below.rect.y : Infinity,
+        captionBelow ? captionBelow.top : Infinity,
+      );
+
+      const limitTop = Number.isFinite(topBoundary)
+        ? Math.min(0.99, topBoundary + 0.006)
         : 0.02;
-      const limitBottom = below ? Math.max(0.01, below.rect.y - 0.006) : 0.98;
+      const limitBottom = Number.isFinite(bottomBoundary)
+        ? Math.max(0.01, bottomBoundary - 0.006)
+        : 0.98;
 
       const x0 = Math.floor(caption.left * bitmap.width);
       const x1 = Math.ceil(caption.right * bitmap.width);
@@ -402,6 +474,8 @@ export async function extractAssets(
       const captionBottomPx = Math.ceil(caption.bottom * bitmap.height);
 
       let band: { top: number; bottom: number } | null = null;
+      let direction: 'up' | 'down' | null = null;
+
       if (caption.kind === 'figure') {
         band = scanContentBand(
           bitmap,
@@ -410,6 +484,7 @@ export async function extractAssets(
           captionTopPx - 4,
           Math.floor(limitTop * bitmap.height),
         );
+        if (band) direction = 'up';
         if (!band) {
           band = scanContentBand(
             bitmap,
@@ -418,6 +493,7 @@ export async function extractAssets(
             captionBottomPx + 4,
             Math.ceil(limitBottom * bitmap.height),
           );
+          if (band) direction = 'down';
         }
       } else {
         band = scanContentBand(
@@ -427,6 +503,7 @@ export async function extractAssets(
           captionBottomPx + 4,
           Math.ceil(limitBottom * bitmap.height),
         );
+        if (band) direction = 'down';
         if (!band) {
           band = scanContentBand(
             bitmap,
@@ -435,19 +512,20 @@ export async function extractAssets(
             captionTopPx - 4,
             Math.floor(limitTop * bitmap.height),
           );
+          if (band) direction = 'up';
         }
       }
 
-      if (!band) {
+      if (!band || !direction) {
         report();
         continue;
       }
 
       let y0 = band.top;
       let y1 = band.bottom;
-      // 不要越过 caption 本身
-      if (caption.kind === 'figure') y1 = Math.min(y1, captionTopPx - 2);
-      else y0 = Math.max(y0, captionBottomPx + 2);
+      // 只按实际命中的扫描方向截断，反向兜底时不能误伤
+      if (direction === 'up') y1 = Math.min(y1, captionTopPx - 2);
+      if (direction === 'down') y0 = Math.max(y0, captionBottomPx + 2);
 
       const horizontal = trimHorizontal(bitmap, x0, x1, y0, y1);
       const left = Math.max(0, (horizontal?.left ?? x0) - PAD_PX);
@@ -491,7 +569,7 @@ export async function extractAssets(
     try {
       const pageNumber = candidate.line.pageNumber;
       const bitmap = await getPageBitmap(doc, pageNumber);
-      const [colLeft, colRight] = columnRange(candidate.line);
+      const [colLeft, colRight] = candidate.band;
 
       const y0 = Math.max(0, candidate.line.rect.y - 0.03);
       const y1 = Math.min(1, candidate.line.rect.y + candidate.line.rect.height + 0.03);

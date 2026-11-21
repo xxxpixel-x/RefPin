@@ -1,7 +1,13 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { CitationKind, InlineCitation, NormalizedRect } from '../types/paper';
-import type { LinesByPage, TextLine } from './types';
-import { clamp, rectDistance, rectForRange, rectIoU } from './utils';
+import type { LinesByPage, RefRange, TextLine } from './types';
+import {
+  clamp,
+  isInsideRefRange,
+  rectDistance,
+  rectForRange,
+  rectIoU,
+} from './utils';
 
 interface RawMatch {
   kind: CitationKind;
@@ -17,6 +23,101 @@ const REFERENCE_RE = /\[(\d+(?:\s*[-–,，]\s*\d+)*)\]/g;
 
 const CAPTION_START_RE = /^(?:figure|fig\.?|table|tab\.?|图|表)\s*\d/i;
 const REFERENCES_HEADING_RE = /^(?:references|bibliography|参考文献|references and notes)\s*$/i;
+
+function rectArea(rect: NormalizedRect): number {
+  return Math.max(0, rect.width) * Math.max(0, rect.height);
+}
+
+function overlapArea(a: NormalizedRect, b: NormalizedRect): number {
+  const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return width > 0 && height > 0 ? width * height : 0;
+}
+
+/**
+ * 链接框通常只框住 [13] 里的数字或 Figure 2 里的 2，
+ * 因此不能拿整行宽度做 IoU 分母；改为看链接框被行覆盖的比例。
+ */
+function linkHitsLine(lineRect: NormalizedRect, targetRect: NormalizedRect): boolean {
+  const targetArea = Math.max(1e-6, rectArea(targetRect));
+  if (overlapArea(lineRect, targetRect) / targetArea > 0.3) return true;
+
+  const vertical =
+    Math.min(lineRect.y + lineRect.height, targetRect.y + targetRect.height) -
+    Math.max(lineRect.y, targetRect.y);
+  const horizontal =
+    Math.min(lineRect.x + lineRect.width, targetRect.x + targetRect.width) -
+    Math.max(lineRect.x, targetRect.x);
+  return vertical > 0 && horizontal > 0;
+}
+
+/** match.rect 与链接框只要有交叠（容差 0.005）就算命中 */
+function matchHitsTarget(matchRect: NormalizedRect, targetRect: NormalizedRect): boolean {
+  const tolerance = 0.005;
+  const expanded: NormalizedRect = {
+    x: targetRect.x - tolerance,
+    y: targetRect.y - tolerance,
+    width: targetRect.width + tolerance * 2,
+    height: targetRect.height + tolerance * 2,
+  };
+  return overlapArea(matchRect, expanded) > 0;
+}
+
+const NAMED_DEST_RE =
+  /(?:^|[./:_\-])(subsection|section|figure|fig|table|tab|equation|eq)[._:\-]?(\d+(?:\.\d+)*)/i;
+const BOX_TEXT_RE =
+  /(?:figure|fig\.?|table|tab\.?|equation|eq\.?|图|表|公式)\s*(\d+(?:[.\-–]\d+)?[a-zA-Z]?)/i;
+
+function inferFromDestName(
+  name: string | undefined,
+): { kind: CitationKind; targetKeys: string[]; label: string } | null {
+  if (!name) return null;
+  const hit = name.match(NAMED_DEST_RE);
+  if (!hit) return null;
+
+  const family = hit[1].toLowerCase();
+  const number = hit[2].toLowerCase();
+  if (family.startsWith('fig')) {
+    return { kind: 'figure', targetKeys: [`fig-${number}`], label: `Figure ${number}` };
+  }
+  if (family.startsWith('tab')) {
+    return { kind: 'table', targetKeys: [`tab-${number}`], label: `Table ${number}` };
+  }
+  if (family === 'equation' || family === 'eq') {
+    return { kind: 'equation', targetKeys: [`eq-${number}`], label: `Eq. (${number})` };
+  }
+  // 章节链接没有对应的 PaperAsset，只保留 nativeDest 供目标页兜底预览
+  return { kind: 'reference', targetKeys: [], label: `Section ${number}` };
+}
+
+function inferFromBoxText(
+  text: string,
+): { kind: CitationKind; targetKeys: string[]; label: string } | null {
+  const hit = text.match(BOX_TEXT_RE);
+  if (!hit) return null;
+  const prefix = hit[0].trim().toLowerCase();
+  const number = hit[1].toLowerCase();
+  if (prefix.startsWith('fig') || prefix.startsWith('图')) {
+    return { kind: 'figure', targetKeys: [`fig-${number}`], label: `Figure ${number}` };
+  }
+  if (prefix.startsWith('tab') || prefix.startsWith('表')) {
+    return { kind: 'table', targetKeys: [`tab-${number}`], label: `Table ${number}` };
+  }
+  return { kind: 'equation', targetKeys: [`eq-${number}`], label: `Eq. (${number})` };
+}
+
+function destName(dest: unknown): string | undefined {
+  if (typeof dest === 'string') return dest;
+  if (Array.isArray(dest)) {
+    const first = dest[0] as unknown;
+    if (typeof first === 'string') return first;
+    if (first && typeof first === 'object' && 'name' in first) {
+      const name = (first as { name?: unknown }).name;
+      return typeof name === 'string' ? name : undefined;
+    }
+  }
+  return undefined;
+}
 
 function normalizeNumber(raw: string): string {
   return raw.trim().toLowerCase().replace(/[–—]/g, '-');
@@ -58,12 +159,18 @@ function collectMatches(line: TextLine): RawMatch[] {
     while (hit) {
       const start = hit.index;
       const end = start + hit[0].length;
+      const targetKeys = toKeys(hit[1], hit[0]);
+      // 年份 [2024] 等超出文献编号范围的内容不生成死链接热区
+      if (targetKeys.length === 0) {
+        hit = re.exec(text);
+        continue;
+      }
       const rect = rectForRange(line, start, end);
       if (rect) {
         matches.push({
           kind,
           rawText: hit[0].trim(),
-          targetKeys: toKeys(hit[1], hit[0]),
+          targetKeys,
           rect,
         });
       }
@@ -84,17 +191,19 @@ function collectMatches(line: TextLine): RawMatch[] {
 /** 路线二：纯文本层正则识别（Sioyek Smart Jump 思路） */
 function detectFromText(
   linesByPage: LinesByPage,
-  referencesStartPage: number | undefined,
+  refRange: RefRange | undefined,
 ): Record<number, InlineCitation[]> {
   const result: Record<number, InlineCitation[]> = {};
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
     const pageNumber = Number(pageKey);
-    if (referencesStartPage && pageNumber >= referencesStartPage) continue;
 
     const citations: InlineCitation[] = [];
     for (const line of lines) {
       if (REFERENCES_HEADING_RE.test(line.text.trim())) continue;
+      if (isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange)) {
+        continue;
+      }
       for (const match of collectMatches(line)) {
         citations.push({
           id: '',
@@ -168,18 +277,59 @@ async function resolveDestination(
   }
 }
 
+/** 收集链接框内实际覆盖的字符文本与矩形 */
+function collectBoxText(
+  lines: TextLine[],
+  targetRect: NormalizedRect,
+): { text: string; rect: NormalizedRect | null } {
+  const tolerance = 0.004;
+  let text = '';
+  let rect: NormalizedRect | null = null;
+
+  for (const line of lines) {
+    for (const char of line.chars) {
+      const expanded: NormalizedRect = {
+        x: char.rect.x - tolerance,
+        y: char.rect.y - tolerance,
+        width: char.rect.width + tolerance * 2,
+        height: char.rect.height + tolerance * 2,
+      };
+      if (overlapArea(expanded, targetRect) <= 0) continue;
+      text += char.ch;
+      if (!rect) {
+        rect = char.rect;
+      } else {
+        const right = Math.max(rect.x + rect.width, char.rect.x + char.rect.width);
+        const bottom = Math.max(rect.y + rect.height, char.rect.y + char.rect.height);
+        rect = {
+          x: Math.min(rect.x, char.rect.x),
+          y: Math.min(rect.y, char.rect.y),
+          width: right - Math.min(rect.x, char.rect.x),
+          height: bottom - Math.min(rect.y, char.rect.y),
+        };
+      }
+    }
+  }
+
+  return { text: text.trim(), rect };
+}
+
 /** 路线一：PDF 原生内部超链接（PDFRefPreview 思路） */
 async function detectFromAnnotations(
   doc: PDFDocumentProxy,
   linesByPage: LinesByPage,
-  referencesStartPage: number | undefined,
+  refRange: RefRange | undefined,
 ): Promise<Record<number, InlineCitation[]>> {
   const result: Record<number, InlineCitation[]> = {};
   const destCache = new Map<string, NativeTarget | null>();
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
     const pageNumber = Number(pageKey);
-    if (referencesStartPage && pageNumber >= referencesStartPage) continue;
+    // 只排除真正落在参考文献正文里的行，起始页上方的图表和附录页照常识别
+    const usableLines = lines.filter(
+      (line) =>
+        !isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange),
+    );
 
     const native: InlineCitation[] = [];
     try {
@@ -201,24 +351,16 @@ async function detectFromAnnotations(
           height: Math.abs(viewRect[3] - viewRect[1]) / viewport.height,
         };
 
-        const overlapping = lines.filter(
-          (line) => rectIoU(line.rect, targetRect) > 0.05,
+        const overlapping = usableLines.filter((line) =>
+          linkHitsLine(line.rect, targetRect),
         );
 
         const hits: RawMatch[] = [];
         for (const line of overlapping) {
           for (const match of collectMatches(line)) {
-            const centerX = match.rect.x + match.rect.width / 2;
-            const centerY = match.rect.y + match.rect.height / 2;
-            const inside =
-              centerX >= targetRect.x - 0.006 &&
-              centerX <= targetRect.x + targetRect.width + 0.006 &&
-              centerY >= targetRect.y - 0.006 &&
-              centerY <= targetRect.y + targetRect.height + 0.006;
-            if (inside) hits.push(match);
+            if (matchHitsTarget(match.rect, targetRect)) hits.push(match);
           }
         }
-        if (hits.length === 0) continue;
 
         const cacheKey = typeof dest === 'string' ? dest : JSON.stringify(dest);
         let target = destCache.get(cacheKey);
@@ -228,18 +370,38 @@ async function detectFromAnnotations(
         }
         if (!target) continue;
 
-        for (const hit of hits) {
-          native.push({
-            id: '',
-            kind: hit.kind,
-            rawText: hit.rawText,
-            targetKeys: hit.targetKeys,
-            pageNumber,
-            rect: hit.rect,
-            lineY: hit.rect.y,
-            nativeDest: { pageNumber: target.pageNumber, targetY: target.targetY },
-          });
+        if (hits.length > 0) {
+          for (const hit of hits) {
+            native.push({
+              id: '',
+              kind: hit.kind,
+              rawText: hit.rawText,
+              targetKeys: hit.targetKeys,
+              pageNumber,
+              rect: hit.rect,
+              lineY: hit.rect.y,
+              nativeDest: { pageNumber: target.pageNumber, targetY: target.targetY },
+            });
+          }
+          continue;
         }
+
+        // 正则没命中（如 hyperref 只框住 "2"）：用 dest 名称或框内文本兜底
+        const box = collectBoxText(overlapping, targetRect);
+        const inferred =
+          inferFromDestName(destName(dest)) ?? inferFromBoxText(box.text);
+        if (!inferred) continue;
+        const rect = box.rect ?? targetRect;
+        native.push({
+          id: '',
+          kind: inferred.kind,
+          rawText: inferred.label,
+          targetKeys: inferred.targetKeys,
+          pageNumber,
+          rect,
+          lineY: rect.y,
+          nativeDest: { pageNumber: target.pageNumber, targetY: target.targetY },
+        });
       }
     } catch {
       // 单页注释解析失败不影响整篇
@@ -252,7 +414,7 @@ async function detectFromAnnotations(
 }
 
 export interface DetectCitationOptions {
-  referencesStartPage?: number;
+  refRange?: RefRange;
 }
 
 /**
@@ -266,12 +428,8 @@ export async function detectCitations(
   linesByPage: LinesByPage,
   options: DetectCitationOptions = {},
 ): Promise<Record<number, InlineCitation[]>> {
-  const textLayer = detectFromText(linesByPage, options.referencesStartPage);
-  const nativeLayer = await detectFromAnnotations(
-    doc,
-    linesByPage,
-    options.referencesStartPage,
-  );
+  const textLayer = detectFromText(linesByPage, options.refRange);
+  const nativeLayer = await detectFromAnnotations(doc, linesByPage, options.refRange);
 
   const merged: Record<number, InlineCitation[]> = {};
   const allPages = new Set<number>([

@@ -8,14 +8,19 @@ import {
 } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { InlineCitation, NormalizedRect } from '../../types/paper';
+import { useReaderStore } from '../../store/useReaderStore';
 import { PdfPageCanvas, type FlashHighlight } from './PdfPageCanvas';
 
 export interface PdfViewerHandle {
-  /** 滚到某页；rect 给定时定位到页面内具体位置，flash 播放一次定位光带 */
+  /**
+   * 滚到某页；rectOrScrollTop 可以给具体矩形或精确 scrollTop。
+   * 传 scrollTop + flashHighlight 时用 flashRect 播放定位光带。
+   */
   scrollToPosition: (
     pageNumber: number,
     rectOrScrollTop?: NormalizedRect | number,
     flashHighlight?: boolean,
+    flashRect?: NormalizedRect,
   ) => void;
   getScrollTop: () => number;
 }
@@ -56,6 +61,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
 
   useEffect(() => {
     didInitialScrollRef.current = false;
+    lastPageRef.current = 1;
   }, [pdfDoc, initialPage]);
 
   useEffect(() => {
@@ -64,14 +70,19 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     setFlash(null);
 
     const load = async () => {
-      const list = await Promise.all(
-        Array.from({ length: pdfDoc.numPages }, async (_, index) => {
-          const page = await pdfDoc.getPage(index + 1);
-          const viewport = page.getViewport({ scale: 1 });
-          return { width: viewport.width, height: viewport.height };
-        }),
-      );
-      if (!cancelled) setDims(list);
+      try {
+        const list = await Promise.all(
+          Array.from({ length: pdfDoc.numPages }, async (_, index) => {
+            const page = await pdfDoc.getPage(index + 1);
+            const viewport = page.getViewport({ scale: 1 });
+            return { width: viewport.width, height: viewport.height };
+          }),
+        );
+        if (!cancelled) setDims(list);
+      } catch {
+        // 文档释放 / 损坏时不要永久停在“正在打开论文…”
+        if (!cancelled) setDims([]);
+      }
     };
 
     void load();
@@ -87,8 +98,20 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     [],
   );
 
+  // Esc 退出框选：在 PdfViewer 全局只注册一份，避免每页重复监听
+  useEffect(() => {
+    if (!snipMode) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        useReaderStore.getState().setSnipMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [snipMode]);
+
   const scrollToPosition = useCallback<PdfViewerHandle['scrollToPosition']>(
-    (pageNumber, rectOrScrollTop, flashHighlight) => {
+    (pageNumber, rectOrScrollTop, flashHighlight, flashRect) => {
       const container = scrollRef.current;
       if (!container) return;
       const pageElement = container.querySelector<HTMLElement>(
@@ -116,7 +139,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
 
       if (flashHighlight) {
         if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
-        const highlightRect: NormalizedRect =
+        // 精确返回时优先使用来源矩形，而不是写死的假矩形
+        const highlightRect: NormalizedRect = flashRect ??
           rect ?? { x: 0.08, y: 0.12, width: 0.84, height: 0.05 };
         setFlash({ pageNumber, rect: highlightRect, token: Date.now() });
         flashTimerRef.current = window.setTimeout(() => setFlash(null), 1800);

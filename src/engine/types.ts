@@ -18,3 +18,11 @@ export interface TextLine {
 }
 
 export type LinesByPage = Record<number, TextLine[]>;
+
+/** 参考文献正文的精确区间（坐标均为相对页面的归一化值） */
+export interface RefRange {
+  startPage: number;
+  startY: number;
+  endPage: number;
+  endY: number;
+}

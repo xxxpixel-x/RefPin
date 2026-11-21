@@ -64,6 +64,9 @@ interface ReaderState {
   unpinItem: (id: string) => void;
   updatePinnedCrop: (id: string, cropRect: NormalizedRect, imageUrl: string) => void;
   togglePinCollapse: (id: string) => void;
+  clearPinnedItems: () => void;
+  renamePinnedItem: (id: string, title: string) => void;
+  movePinnedItem: (id: string, direction: 'up' | 'down') => void;
 
   recordSavedFlip: (targetPage: number) => void;
   recordPeek: () => void;
@@ -188,6 +191,12 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       pinnedItems: state.pinnedItems.map((item) =>
         item.id === id ? { ...item, cropRect, imageUrl } : item,
       ),
+      assetsMap: state.assetsMap[id]
+        ? {
+            ...state.assetsMap,
+            [id]: { ...state.assetsMap[id], cropRect, imageUrl },
+          }
+        : state.assetsMap,
     })),
 
   togglePinCollapse: (id) =>
@@ -196,6 +205,27 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         item.id === id ? { ...item, collapsed: !item.collapsed } : item,
       ),
     })),
+
+  clearPinnedItems: () => set({ pinnedItems: [] }),
+
+  renamePinnedItem: (id, title) =>
+    set((state) => ({
+      pinnedItems: state.pinnedItems.map((item) =>
+        item.id === id ? { ...item, title } : item,
+      ),
+    })),
+
+  movePinnedItem: (id, direction) =>
+    set((state) => {
+      const index = state.pinnedItems.findIndex((item) => item.id === id);
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (index < 0 || target < 0 || target >= state.pinnedItems.length) {
+        return state;
+      }
+      const next = [...state.pinnedItems];
+      [next[index], next[target]] = [next[target], next[index]];
+      return { ...state, pinnedItems: next };
+    }),
 
   recordSavedFlip: (targetPage) => {
     const { currentPage } = get();
@@ -219,7 +249,15 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   setDrawerOpen: (open) => set({ drawerOpen: open }),
   setSnipMode: (on) => set({ snipMode: on }),
 
-  resetPaper: () =>
+  resetPaper: () => {
+    const { pdfDoc } = get();
+    if (pdfDoc) {
+      try {
+        void pdfDoc.destroy().catch(() => {});
+      } catch {
+        // 文档已释放时忽略
+      }
+    }
     set({
       fileName: '',
       pdfSource: null,
@@ -236,5 +274,6 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       snipMode: false,
       jumpAnchor: null,
       stats: initialStats,
-    }),
+    });
+  },
 }));

@@ -1,5 +1,5 @@
 import type { NormalizedRect } from '../types/paper';
-import type { TextLine } from './types';
+import type { RefRange, TextLine } from './types';
 
 export const clamp = (v: number, min: number, max: number) =>
   Math.min(max, Math.max(min, v));
@@ -45,14 +45,137 @@ export function rectDistance(a: NormalizedRect, b: NormalizedRect): number {
   return Math.hypot(ca.x - cb.x, ca.y - cb.y);
 }
 
-/** 两列论文的阅读顺序：先左栏从上到下，再右栏从上到下 */
+/** 构成“真正栏行”的最小行数，低于该数量的零散短行不算双栏证据 */
+const MIN_COLUMN_LINES = 3;
+/** 真正双栏的中缝宽度上限；超过说明只是行尾碎片而非两栏 */
+const MAX_GUTTER = 0.08;
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+/** 同一栏的行应大致共享左边界，避免把单栏页的右侧行尾碎片当成一栏 */
+const COLUMN_EDGE_TOLERANCE = 0.03;
+
+function alignedColumnCount(lines: TextLine[]): number {
+  let best = 0;
+  for (const candidate of lines) {
+    let count = 0;
+    for (const line of lines) {
+      if (Math.abs(line.rect.x - candidate.rect.x) <= COLUMN_EDGE_TOLERANCE) count += 1;
+    }
+    if (count > best) best = count;
+  }
+  return best;
+}
+
+/** 一行是否属于通栏内容（长行或明显居中的短标题） */
+function isFullWidthLine(line: TextLine): boolean {
+  if (line.rect.width > 0.62 || line.column === 'full') return true;
+  const center = line.rect.x + line.rect.width / 2;
+  return (
+    Math.abs(center - 0.5) < 0.1 &&
+    line.rect.x >= 0.12 &&
+    line.rect.x + line.rect.width <= 0.88
+  );
+}
+
+/**
+ * 判断一页是否真的是双栏排版。
+ * 单栏论文里也会有被拆短的行（比如表格单元、行尾断句），
+ * 只有同时存在足够多“贴着左右栏边界”的长行、且两栏在纵向上大幅重叠时才算双栏。
+ */
+export function isTwoColumnPage(lines: TextLine[]): boolean {
+  const left: TextLine[] = [];
+  const right: TextLine[] = [];
+
+  for (const line of lines) {
+    if (line.rect.width < 0.18) continue;
+    const rightEdge = line.rect.x + line.rect.width;
+    if (rightEdge <= 0.51) {
+      left.push(line);
+    } else if (line.rect.x >= 0.49) {
+      right.push(line);
+    }
+  }
+
+  if (left.length < MIN_COLUMN_LINES || right.length < MIN_COLUMN_LINES) {
+    return false;
+  }
+  // 双栏页每一栏的行会共享稳定的栏位左边界；单栏页的短行只是零散行尾
+  if (
+    alignedColumnCount(left) < Math.max(MIN_COLUMN_LINES, Math.ceil(left.length * 0.5)) ||
+    alignedColumnCount(right) < Math.max(MIN_COLUMN_LINES, Math.ceil(right.length * 0.5))
+  ) {
+    return false;
+  }
+
+  // 单栏页的行尾碎片可能分别落在中线两侧，但它们的“中缝”很宽
+  const gutter =
+    median(right.map((line) => line.rect.x)) -
+    median(left.map((line) => line.rect.x + line.rect.width));
+  if (gutter <= 0 || gutter > MAX_GUTTER) return false;
+
+  const leftTop = Math.min(...left.map((line) => line.rect.y));
+  const leftBottom = Math.max(...left.map((line) => line.rect.y + line.rect.height));
+  const rightTop = Math.min(...right.map((line) => line.rect.y));
+  const rightBottom = Math.max(...right.map((line) => line.rect.y + line.rect.height));
+
+  const overlap = Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop);
+  if (overlap <= 0.15) return false;
+  return overlap >= Math.min(leftBottom - leftTop, rightBottom - rightTop) * 0.35;
+}
+
+/**
+ * 阅读顺序：
+ * - 单栏页严格按基线（同基线按 x）排序，绝不拆成 left/full/right；
+ * - 双栏页先左栏再右栏，通栏标题/摘要按 Y 位置自然穿插。
+ */
 export function readingOrder(lines: TextLine[]): TextLine[] {
-  const hasRight = lines.some((line) => line.column === 'right');
-  if (!hasRight) return [...lines].sort((a, b) => a.baseline - b.baseline);
-  const left = lines.filter((l) => l.column === 'left').sort((a, b) => a.baseline - b.baseline);
-  const full = lines.filter((l) => l.column === 'full').sort((a, b) => a.baseline - b.baseline);
-  const right = lines.filter((l) => l.column === 'right').sort((a, b) => a.baseline - b.baseline);
-  return [...left, ...full, ...right];
+  const byPosition = (a: TextLine, b: TextLine) =>
+    a.baseline - b.baseline || a.rect.x - b.rect.x;
+
+  if (!isTwoColumnPage(lines)) {
+    return [...lines].sort(byPosition);
+  }
+
+  const full = lines.filter(isFullWidthLine).sort(byPosition);
+  const left = lines.filter((line) => !isFullWidthLine(line) && line.column !== 'right').sort(byPosition);
+  const right = lines.filter((line) => !isFullWidthLine(line) && line.column === 'right').sort(byPosition);
+
+  const ordered: TextLine[] = [];
+  const appendBand = (top: number, bottom: number) => {
+    ordered.push(
+      ...left.filter((line) => line.baseline >= top && line.baseline < bottom),
+      ...right.filter((line) => line.baseline >= top && line.baseline < bottom),
+    );
+  };
+
+  let bandTop = -Infinity;
+  for (const line of full) {
+    appendBand(bandTop, line.baseline);
+    ordered.push(line);
+    bandTop = line.rect.y + line.rect.height;
+  }
+  appendBand(bandTop, Infinity);
+
+  return ordered;
+}
+
+/** 判断一个行位置是否落在参考文献正文区间内（区间外一律放行） */
+export function isInsideRefRange(
+  pageNumber: number,
+  y: number,
+  refRange?: RefRange,
+): boolean {
+  if (!refRange) return false;
+  if (pageNumber < refRange.startPage || pageNumber > refRange.endPage) return false;
+  if (refRange.startPage === refRange.endPage) {
+    return y >= refRange.startY && y <= refRange.endY;
+  }
+  if (pageNumber === refRange.startPage) return y >= refRange.startY;
+  if (pageNumber === refRange.endPage) return y <= refRange.endY;
+  return true;
 }
 
 export function normalizeKeyNumber(raw: string): string {

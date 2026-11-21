@@ -23,7 +23,7 @@ export async function parsePaper(
   doc: PDFDocumentProxy,
   onProgress: ProgressHandler = () => {},
 ): Promise<ParsePaperResult> {
-  resetAssetCache();
+  resetAssetCache(doc);
 
   const linesByPage: LinesByPage = {};
   onProgress(1);
@@ -38,16 +38,14 @@ export async function parsePaper(
     onProgress(1 + Math.round((pageNumber / doc.numPages) * 14));
   }
 
-  const { referencesMap, startPage } = parseReferences(linesByPage);
+  const { referencesMap, refRange } = parseReferences(linesByPage);
   onProgress(20);
 
-  const citationsByPage = await detectCitations(doc, linesByPage, {
-    referencesStartPage: startPage,
-  });
+  const citationsByPage = await detectCitations(doc, linesByPage, { refRange });
   onProgress(38);
 
   const assetsMap = await extractAssets(doc, linesByPage, {
-    referencesStartPage: startPage,
+    refRange,
     onProgress: (percent) => onProgress(40 + Math.round(percent * 0.58)),
   });
 
