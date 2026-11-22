@@ -10,13 +10,15 @@ import {
 import clsx from 'clsx';
 import { findAssetForCitation } from '../../engine/backlinks';
 import type {
+  GlossaryEntry,
   InlineCitation,
   PaperAsset,
+  ReaderMention,
   ReferenceEntry,
 } from '../../types/paper';
 
 export interface PeekTrigger {
-  citation: InlineCitation;
+  mention: ReaderMention;
   anchorEl: HTMLElement;
 }
 
@@ -24,15 +26,17 @@ interface HoverPeekCardProps {
   trigger: PeekTrigger | null;
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
+  glossaryMap?: Record<string, GlossaryEntry>;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (reference: ReferenceEntry) => void;
   onJump: (
     pageNumber: number,
     targetRect?: InlineCitation['rect'],
     sourceRect?: InlineCitation['rect'],
+    sourcePage?: number,
   ) => void;
   onOpenLightbox: (asset: PaperAsset) => void;
-  onPeek: (citation: InlineCitation) => void;
+  onPeek: (mention: ReaderMention) => void;
   fallbackPreview?: {
     citationId?: string;
     imageUrl: string;
@@ -56,6 +60,7 @@ export function HoverPeekCard({
   trigger,
   assetsMap,
   referencesMap,
+  glossaryMap,
   onPinAsset,
   onPinReference,
   onJump,
@@ -102,12 +107,14 @@ export function HoverPeekCard({
     enterTimer.current = window.setTimeout(() => {
       setActiveTrigger(trigger);
       setActiveRefIndex(0);
-      peekRef.current(trigger.citation);
+      peekRef.current(trigger.mention);
     }, SHOW_DELAY);
     return () => window.clearTimeout(enterTimer.current);
   }, [trigger]);
 
-  const citation = activeTrigger?.citation ?? null;
+  const mention = activeTrigger?.mention;
+  const citation = mention && 'kind' in mention ? mention : null;
+  const definition = mention && 'term' in mention ? glossaryMap?.[mention.term] : undefined;
 
   const references = useMemo(() => {
     if (!citation || citation.kind !== 'reference') return [];
@@ -160,7 +167,7 @@ export function HoverPeekCard({
     return () => window.removeEventListener('keydown', onKey);
   }, [activeTrigger]);
 
-  if (!activeTrigger || !citation) return null;
+  if (!activeTrigger || !mention || (!citation && !definition)) return null;
 
   const keepOpen = () => {
     hoveringCard.current = true;
@@ -182,9 +189,32 @@ export function HoverPeekCard({
       ref={cardRef}
       onMouseEnter={keepOpen}
       onMouseLeave={scheduleClose}
+      onFocus={keepOpen}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose(); }}
       style={{ left: position.left, top: position.top, width: CARD_WIDTH }}
       className="animate-fade-in-up fixed z-50 overflow-hidden rounded-xl border border-paper-border bg-white shadow-float"
     >
+      {definition && (
+        <>
+          <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg px-3 py-2">
+            <span className="rounded border border-paper-border bg-white px-1.5 py-0.5 font-mono text-xs font-semibold text-paper-ink">{definition.term}</span>
+            <span className="rounded-full border border-paper-border px-1.5 text-[10px] text-paper-muted">Glossary</span>
+            <span className="ml-auto text-[10px] text-paper-muted">Defined on P.{definition.definedPage}</span>
+          </div>
+          <div className="p-3">
+            <p className="text-[13px] font-semibold text-paper-ink">{definition.expansion}</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">{definition.contextSentence}</p>
+            <button type="button" className="mt-3 flex items-center gap-1 rounded-md border border-paper-border px-2 py-1 text-[11px] text-paper-ink hover:bg-paper-bg"
+              onClick={() => {
+                closeNow();
+                onJump(definition.definedPage, definition.definedRect, mention.rect, mention.pageNumber);
+              }}>
+              <CornerDownRight size={13} />跳去定义页
+            </button>
+          </div>
+        </>
+      )}
+      {citation && <>
       <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg/60 px-3 py-2">
         <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-paper-goldtext">
           {KIND_LABEL[citation.kind]}
@@ -233,7 +263,7 @@ export function HoverPeekCard({
                       : 'bg-paper-bg text-paper-muted hover:text-paper-ink',
                   )}
                 >
-                  [{reference.index}]
+                  {reference.key.startsWith('ref-ay-') ? `${reference.firstAuthorLastName} ${reference.year}` : `[${reference.index}]`}
                 </button>
               ))}
             </div>
@@ -372,6 +402,7 @@ export function HoverPeekCard({
           </div>
         </div>
       )}
+      </>}
     </div>,
     document.body,
   );

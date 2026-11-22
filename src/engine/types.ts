@@ -4,6 +4,9 @@ import type { NormalizedRect } from '../types/paper';
 export interface TextChar {
   ch: string;
   rect: NormalizedRect;
+  /** Font size and true glyph baseline, both relative to the page height (y grows down). */
+  fontHeight?: number;
+  baselineY?: number;
 }
 
 /** 视觉文本行：把 pdf.js 拆碎的 TextItem 重新聚合成人能读的一行 */

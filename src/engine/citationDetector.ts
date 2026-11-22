@@ -1,13 +1,15 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { CitationKind, InlineCitation, NormalizedRect } from '../types/paper';
+import type { CitationKind, InlineCitation, NormalizedRect, ReferenceEntry } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
 import { parseCaptionLabel } from './captionLabel';
+import { authorNames, normalizeSurname, parseReferenceFields } from './referenceParser';
 import {
   clamp,
   isInsideRefRange,
   rectDistance,
   rectForRange,
   rectIoU,
+  readingOrder,
 } from './utils';
 
 interface RawMatch {
@@ -123,7 +125,7 @@ function normalizeNumber(raw: string): string {
   return raw.trim().toLowerCase().replace(/[–—]/g, '-');
 }
 
-function expandReferenceKeys(content: string): string[] {
+function expandReferenceKeys(content: string, requireAll = false): string[] {
   const numbers: number[] = [];
   for (const chunk of content.split(/[,，]/)) {
     const part = chunk.trim();
@@ -134,17 +136,155 @@ function expandReferenceKeys(content: string): string[] {
       const to = Number(range[1]);
       if (Number.isFinite(from) && Number.isFinite(to) && to >= from && to - from <= 30) {
         for (let n = from; n <= to; n += 1) numbers.push(n);
+      } else if (requireAll) {
+        return [];
       }
     } else {
       numbers.push(Number(part));
     }
   }
+  if (requireAll && numbers.some(n => !Number.isInteger(n) || n < 1 || n > 300)) return [];
   return Array.from(new Set(numbers))
     .filter((n) => Number.isFinite(n) && n > 0 && n <= 300)
     .map((n) => `ref-${n}`);
 }
 
-function collectMatches(line: TextLine): RawMatch[] {
+const surname = String.raw`(?:(?:van|von|der|den|de|del|da|di|la|al)\s+)*[\p{Lu}\p{Lt}][\p{L}\p{M}'’‐‑–-]*`;
+const citedAuthors = '(' + surname + ')(?:\\s+et\\s+al\\.?|\\s+(?:and|&)\\s+(' + surname + '))?';
+const citedYear = '((?:18|19|20)\\d{2}[a-z]?)';
+const authorInParens = new RegExp('^(?:(?:e\\.g\\.|i\\.e\\.|see(?: also)?|cf\\.)[,\\s]+)?' +
+  citedAuthors + ',?\\s+' + citedYear + '$', 'u');
+const narrative = new RegExp('(?<![\\p{L}\\p{N}_])' + citedAuthors + '\\s*\\(' + citedYear + '\\)', 'gu');
+
+function indexReferences(references: Record<string, ReferenceEntry>) {
+  const byAuthorYear = new Map<string, ReferenceEntry[]>();
+  for (const reference of Object.values(references)) {
+    let entry = reference;
+    if (!entry.firstAuthorLastName) {
+      // Older parse results and archived pins may have only authors or raw text.
+      const fields = entry.authors && entry.year ? authorNames(entry.authors) : parseReferenceFields(entry.rawText);
+      entry = { ...fields, ...reference, firstAuthorLastName: fields.firstAuthorLastName };
+    }
+    if (!entry.firstAuthorLastName || !entry.year) continue;
+    const key = normalizeSurname(entry.firstAuthorLastName) + '/' + entry.year;
+    const bucket = byAuthorYear.get(key) ?? [];
+    bucket.push(entry);
+    byAuthorYear.set(key, bucket);
+  }
+  return { references, byAuthorYear, hasNumbered: Object.keys(references).some(key => /^ref-\d+$/.test(key)) };
+}
+
+type ReferenceIndex = ReturnType<typeof indexReferences>;
+
+function resolveAuthorYear(hit: RegExpMatchArray, index: ReferenceIndex): string[] {
+  const [, first, second, year] = hit;
+  const prefix = normalizeSurname(first) + '/';
+  const candidates = index.byAuthorYear.get(prefix + year) ??
+    (year.length === 5 ? index.byAuthorYear.get(prefix + year.slice(0, 4)) : undefined);
+  if (!candidates) return [];
+  const matching = second
+    ? candidates.filter(entry => entry.secondAuthorLastName && normalizeSurname(entry.secondAuthorLastName) === normalizeSurname(second))
+    : candidates;
+  return matching.length === 1 ? [matching[0].key] : [];
+}
+
+// A PDF hotspot has one rectangle. A parenthetical or narrative citation
+// spanning a line break gets a separate exact hotspot on each printed line.
+function authorYearMatches(lines: TextLine[], index: ReferenceIndex) {
+  const byLine = new Map<TextLine, RawMatch[]>();
+  if (!index.byAuthorYear.size) return byLine;
+  let paragraph = '';
+  let spans: { line: TextLine; start: number; end: number }[] = [];
+  function add(start: number, raw: string, keys: string[]) {
+    if (!keys.length) return;
+    for (const span of spans) {
+      const first = Math.max(0, start - span.start);
+      const end = Math.min(span.end, start + raw.length) - span.start;
+      const rect = rectForRange(span.line, first, end);
+      if (!rect) continue;
+      const hits = byLine.get(span.line) ?? [];
+      hits.push({ kind: 'reference', rawText: span.line.text.slice(first, end), targetKeys: keys, rect });
+      byLine.set(span.line, hits);
+    }
+  }
+  function flush() {
+    for (const group of paragraph.matchAll(/\(([^()]*)\)/g)) {
+      const keys = new Set<string>();
+      for (const part of group[1].split(';')) {
+        const hit = authorInParens.exec(part.trim());
+        if (hit) for (const key of resolveAuthorYear(hit, index)) keys.add(key);
+      }
+      add(group.index!, group[0], [...keys]);
+    }
+    for (const hit of paragraph.matchAll(narrative)) {
+      add(hit.index!, hit[0], resolveAuthorYear(hit, index));
+    }
+    paragraph = '';
+    spans = [];
+  }
+  let previous: TextLine | undefined;
+  for (const line of readingOrder(lines)) {
+    // Overprinted lines or a column/paragraph break cannot continue a citation.
+    if (previous && (line.rect.y <= previous.rect.y || line.rect.y - previous.rect.y > previous.rect.height * 2.2 ||
+        Math.min(line.rect.x + line.rect.width, previous.rect.x + previous.rect.width) <= Math.max(line.rect.x, previous.rect.x))) flush();
+    const start = paragraph.length;
+    spans.push({ line, start, end: start + line.text.length });
+    paragraph += line.text + ' ';
+    previous = line;
+  }
+  flush();
+  return byLine;
+}
+
+const superDigits = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+function followsProse(before: string): boolean {
+  if (!/[\p{L}.,;:!?'’”")\]。，；：！？]$/u.test(before)) return false;
+  const base = before.replace(/[.,;:!?'’”"。，；：！？]+$/u, '');
+  if (/\b[A-Za-z]\([^()]*\)$|\([^()]*[=+*/^][^()]*\)$/u.test(base)) return false;
+  const word = base.replace(/[)\]]+$/u, '');
+  return !/(?:^|[^\p{L}\p{N}_])(?:[A-Za-z\p{Script=Greek}]|mm|cm|km)$|[\d^_=+*/×÷−]$/u.test(word) &&
+    !/[=+*/×÷^_−]\s*[\p{L}\p{N}]+$/u.test(word);
+}
+
+function superscriptMatches(line: TextLine, index: ReferenceIndex, add: (start: number, end: number, keys: string[]) => void) {
+  if (!index.hasNumbered || !/[\d⁰¹²³⁴⁵⁶⁷⁸⁹]/.test(line.text)) return;
+  // Letters give a representative body font even on a line ending in a long citation list.
+  const body = line.chars.filter(c => /\p{L}/u.test(c.ch));
+  if (!body.length) return;
+  const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  const height = median(body.map(c => c.fontHeight ?? c.rect.height));
+  const baseline = median(body.map(c => c.baselineY ?? c.rect.y + c.rect.height));
+  const raisedDigit = (i: number) => {
+    const c = line.chars[i];
+    if (!c) return false;
+    if (superDigits.includes(c.ch)) return true;
+    return /\d/.test(c.ch) && (c.fontHeight ?? c.rect.height) < height * 0.8 &&
+      (c.baselineY ?? c.rect.y + c.rect.height) < baseline - height * 0.12;
+  };
+  for (let start = 1; start < line.chars.length; start++) {
+    if (!raisedDigit(start)) continue;
+    let end = start + 1;
+    while (end < line.chars.length) {
+      if (raisedDigit(end)) { end++; continue; }
+      if (!/[,–⁻-]/.test(line.text[end])) break;
+      let next = end + 1;
+      while (line.text[next] === ' ') next++;
+      if (!raisedDigit(next)) break;
+      end = next + 1;
+    }
+    const before = line.text.slice(0, start);
+    const raw = line.text.slice(start, end);
+    if (followsProse(before) && !/^[\p{L}\p{N}_^=]/u.test(line.text.slice(end))) {
+      const numeric = raw.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, digit => String(superDigits.indexOf(digit))).replace(/⁻/g, '-');
+      const keys = expandReferenceKeys(numeric, true);
+      if (keys.length && keys.every(key => index.references[key])) add(start, end, keys);
+    }
+    start = end - 1;
+  }
+}
+
+function collectMatches(line: TextLine, index: ReferenceIndex, authorYear: RawMatch[]): RawMatch[] {
   const matches: RawMatch[] = [];
   const text = line.text;
   const trimmed = text.trim();
@@ -189,28 +329,43 @@ function collectMatches(line: TextLine): RawMatch[] {
   run(EQUATION_RE, 'equation', (num) => [`eq-${normalizeNumber(num)}`]);
   run(REFERENCE_RE, 'reference', (content) => expandReferenceKeys(content));
 
+  const addReference = (start: number, end: number, targetKeys: string[]) => {
+    if (!targetKeys.length) return;
+    const rect = rectForRange(line, start, end);
+    if (rect && !matches.some(match => rectIoU(match.rect, rect) > 1e-8)) {
+      matches.push({ kind: 'reference', rawText: text.slice(start, end), targetKeys, rect });
+    }
+  };
+  for (const hit of authorYear) {
+    if (!matches.some(match => rectIoU(match.rect, hit.rect) > 1e-8)) matches.push(hit);
+  }
+  superscriptMatches(line, index, addReference);
+
   return matches.sort((a, b) => a.rect.x - b.rect.x);
 }
 
 /** 路线二：纯文本层正则识别（Sioyek Smart Jump 思路） */
 function detectFromText(
   linesByPage: LinesByPage,
+  index: ReferenceIndex,
   refRange: RefRange | undefined,
   signal?: AbortSignal,
-): Record<number, InlineCitation[]> {
+) {
   const result: Record<number, InlineCitation[]> = {};
+  const matchesByLine = new Map<TextLine, RawMatch[]>();
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
     signal?.throwIfAborted();
     const pageNumber = Number(pageKey);
 
     const citations: InlineCitation[] = [];
-    for (const line of lines) {
-      if (REFERENCES_HEADING_RE.test(line.text.trim())) continue;
-      if (isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange)) {
-        continue;
-      }
-      for (const match of collectMatches(line)) {
+    const body = lines.filter(line => !REFERENCES_HEADING_RE.test(line.text.trim()) &&
+      !isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange));
+    const authorYear = authorYearMatches(body, index);
+    for (const line of body) {
+      const matches = collectMatches(line, index, authorYear.get(line) ?? []);
+      matchesByLine.set(line, matches);
+      for (const match of matches) {
         // Some PDFs paint the same text twice at the same position.
         if (citations.some((item) =>
           item.rawText === match.rawText && rectIoU(item.rect, match.rect) > 0.6,
@@ -229,7 +384,7 @@ function detectFromText(
     result[pageNumber] = citations;
   }
 
-  return result;
+  return { citationsByPage: result, matchesByLine };
 }
 
 interface NativeTarget {
@@ -328,6 +483,7 @@ function collectBoxText(
 async function detectFromAnnotations(
   doc: PDFDocumentProxy,
   linesByPage: LinesByPage,
+  matchesByLine: Map<TextLine, RawMatch[]>,
   refRange: RefRange | undefined,
   signal?: AbortSignal,
 ): Promise<Record<number, InlineCitation[]>> {
@@ -372,7 +528,7 @@ async function detectFromAnnotations(
 
         const hits: RawMatch[] = [];
         for (const line of overlapping) {
-          for (const match of collectMatches(line)) {
+          for (const match of matchesByLine.get(line) ?? []) {
             if (matchHitsTarget(match.rect, targetRect)) hits.push(match);
           }
         }
@@ -432,10 +588,13 @@ async function detectFromAnnotations(
   return result;
 }
 
-export interface DetectCitationOptions {
+export interface DetectCitationsOptions {
+  referencesMap?: Record<string, ReferenceEntry>;
   refRange?: RefRange;
   signal?: AbortSignal;
 }
+
+export type DetectCitationOptions = DetectCitationsOptions;
 
 /**
  * 双路融合：
@@ -450,8 +609,9 @@ export async function detectCitations(
 ): Promise<Record<number, InlineCitation[]>> {
   const { refRange, signal } = options;
   signal?.throwIfAborted();
-  const textLayer = detectFromText(linesByPage, refRange, signal);
-  const nativeLayer = await detectFromAnnotations(doc, linesByPage, refRange, signal);
+  const index = indexReferences(options.referencesMap ?? {});
+  const { citationsByPage: textLayer, matchesByLine } = detectFromText(linesByPage, index, refRange, signal);
+  const nativeLayer = await detectFromAnnotations(doc, linesByPage, matchesByLine, refRange, signal);
   signal?.throwIfAborted();
 
   const merged: Record<number, InlineCitation[]> = {};

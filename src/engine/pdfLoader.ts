@@ -160,7 +160,11 @@ function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
     if (boxIndex > 0) {
       const prev = boxes[boxIndex - 1];
       const gap = box.x - (prev.x + prev.width);
-      if (gap > 0.0015 && !text.endsWith(' ') && !box.text.startsWith(' ')) {
+      // A separately positioned superscript can have a small tracking gap
+      // without having a word space before it.
+      const raisedNumber = /^\d/.test(box.text) && gap < prev.height * 0.4 &&
+        box.height < prev.height * 0.8 && box.baseline < prev.baseline - prev.height * 0.12;
+      if (!raisedNumber && gap > 0.0015 && !text.endsWith(' ') && !box.text.startsWith(' ')) {
         const spaceRect: NormalizedRect = {
           x: prev.x + prev.width,
           y: box.y,
@@ -183,7 +187,9 @@ function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
       };
       text += ch;
       // RegExp indices use UTF-16 offsets, even when a glyph is a surrogate pair.
-      for (let i = 0; i < ch.length; i += 1) chars.push({ ch: ch[i], rect });
+      for (let i = 0; i < ch.length; i += 1) {
+        chars.push({ ch: ch[i], rect, fontHeight: box.height, baselineY: box.baseline });
+      }
     });
   });
 
@@ -237,21 +243,23 @@ export async function extractPageLines(
     const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
     const fontHeight = Math.hypot(tx[2], tx[3]) || item.height || 8;
     const left = tx[4];
-    const baselineY = tx[5] - fontHeight;
+    const baselineY = tx[5] / viewport.height;
 
     boxes.push({
       text: item.str,
       x: left / viewport.width,
-      y: baselineY / viewport.height,
+      y: baselineY - fontHeight / viewport.height,
       width: (item.width * viewport.scale) / viewport.width,
       height: fontHeight / viewport.height,
-      baseline: baselineY / viewport.height,
+      baseline: baselineY,
     });
   }
 
   if (boxes.length === 0) return [];
 
-  boxes.sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+  // Group on glyph tops as before: raised small type can share a body line
+  // even when its true baseline is well above that line's baseline.
+  boxes.sort((a, b) => a.y - b.y || a.x - b.x);
   const twoColumnPage = looksTwoColumn(boxes);
 
   // 1) 按基线聚类成“同一视觉行”
@@ -260,13 +268,13 @@ export async function extractPageLines(
     let placed = false;
     for (let i = groups.length - 1; i >= 0; i -= 1) {
       const group = groups[i];
-      const diff = Math.abs(group[0].baseline - box.baseline);
+      const diff = Math.abs(group[0].y - box.y);
       if (diff <= LINE_TOLERANCE) {
         group.push(box);
         placed = true;
         break;
       }
-      if (group[0].baseline < box.baseline - LINE_TOLERANCE) break;
+      if (group[0].y < box.y - LINE_TOLERANCE) break;
     }
     if (!placed) groups.push([box]);
   }

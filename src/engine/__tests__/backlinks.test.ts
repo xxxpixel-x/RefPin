@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { InlineCitation } from '../../types/paper';
-import { buildBacklinksMap } from '../backlinks';
+import type { InlineCitation, PaperAsset } from '../../types/paper';
+import { buildBacklinksMap, currentPageAssets } from '../backlinks';
 
 function mention(id: string, targetKeys: string[], pageNumber: number, y: number): InlineCitation {
   return {
@@ -26,4 +26,18 @@ describe('buildBacklinksMap', () => {
     expect(result['ref-1']).toEqual(result['ref-3']);
     expect(buildBacklinksMap({})).toEqual({});
   });
+});
+
+it('auto-syncs each cross-page asset once, resolves panels, and keeps manual pins stable', () => {
+  const fig: PaperAsset = { key: 'fig-1', kind: 'figure', label: 'Figure 1', caption: '', pageNumber: 5,
+    cropRect: { x: 0, y: 0, width: 1, height: 1 } };
+  const table: PaperAsset = { ...fig, key: 'tab-2', kind: 'table' };
+  const local: PaperAsset = { ...fig, key: 'fig-3', pageNumber: 1 };
+  const assets = { 'fig-1': fig, 'tab-2': table, 'fig-3': local };
+  const citations = [mention('a', ['fig-1a', 'tab-2', 'fig-3'], 1, 0.2), mention('b', ['fig-1'], 1, 0.5)];
+  expect(currentPageAssets(1, citations, assets, [])).toEqual([fig, table]);
+  const pins = [{ id: table.key, kind: table.kind, title: 'Renamed', createdAt: 1, pageNumber: 5 }];
+  expect(currentPageAssets(1, citations, assets, pins)).toEqual([fig]);
+  expect(currentPageAssets(2, [], assets, pins)).toEqual([]);
+  expect(pins.map(pin => pin.title)).toEqual(['Renamed']);
 });

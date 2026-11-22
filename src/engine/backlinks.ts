@@ -1,13 +1,30 @@
-import type { CitationBacklink, InlineCitation, PaperAsset } from '../types/paper';
+import type { CitationBacklink, InlineCitation, PaperAsset, PinnedItem } from '../types/paper';
+
+function basePanelKey(key: string): string {
+  return key.replace(/^((?:fig|tab)-\d+(?:[.-]\d+)*)[a-z]$/i, '$1');
+}
 
 function targetKeys(citation: InlineCitation): Set<string> {
   const keys = new Set<string>();
   for (const key of citation.targetKeys) {
     keys.add(key);
-    const panel = /^((?:fig|tab)-\d+(?:[.-]\d+)*)[a-z]$/i.exec(key);
-    if (panel) keys.add(panel[1]);
+    keys.add(basePanelKey(key));
   }
   return keys;
+}
+
+export function currentPageAssets(page: number, citations: InlineCitation[], assets: Record<string, PaperAsset>, pins: PinnedItem[]) {
+  const seen = new Set(pins.map(item => item.id));
+  const result: PaperAsset[] = [];
+  for (const citation of citations) {
+    for (const key of citation.targetKeys) {
+      const asset = assets[key] ?? assets[basePanelKey(key)];
+      if (!asset || asset.pageNumber === page || seen.has(asset.key)) continue;
+      seen.add(asset.key);
+      result.push(asset);
+    }
+  }
+  return result;
 }
 
 export function findAssetForCitation(

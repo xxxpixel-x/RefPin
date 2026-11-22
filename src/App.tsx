@@ -26,6 +26,7 @@ import type {
   PaperAsset,
   PaperArchive,
   PinnedItem,
+  ReaderMention,
   ReferenceEntry,
   SamplePaperMeta,
 } from './types/paper';
@@ -60,6 +61,8 @@ export default function App() {
   const assetsMap = useReaderStore((state) => state.assetsMap);
   const referencesMap = useReaderStore((state) => state.referencesMap);
   const citationsByPage = useReaderStore((state) => state.citationsByPage);
+  const glossaryMap = useReaderStore(state => state.glossaryMap);
+  const glossaryMentionsByPage = useReaderStore(state => state.glossaryMentionsByPage);
   const backlinksMap = useReaderStore((state) => state.backlinksMap);
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
   const drawerOpen = useReaderStore((state) => state.drawerOpen);
@@ -310,14 +313,15 @@ export default function App() {
       pageNumber: number,
       targetRect?: NormalizedRect,
       sourceRect?: NormalizedRect,
+      sourcePage?: number,
     ) => {
       const store = useReaderStore.getState();
       store.setJumpAnchor({
-        fromPage: store.currentPage,
+        fromPage: sourcePage ?? store.currentPage,
         fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
         fromScrollLeft: viewerRef.current?.getScrollLeft() ?? 0,
         highlightRect: sourceRect,
-        label: `回到第 ${store.currentPage} 页刚才读的位置`,
+        label: `回到第 ${sourcePage ?? store.currentPage} 页刚才读的位置`,
       });
       setHoverTrigger(null);
       viewerRef.current?.scrollToPosition(pageNumber, targetRect, true);
@@ -325,10 +329,17 @@ export default function App() {
     [],
   );
 
-  const handlePeek = useCallback((citation: InlineCitation) => {
-    activePeekIdRef.current = citation.id;
+  const handlePeek = useCallback((mention: ReaderMention) => {
+    activePeekIdRef.current = mention.id;
     const store = useReaderStore.getState();
     store.recordPeek();
+    if ('term' in mention) {
+      const definition = store.glossaryMap[mention.term];
+      if (definition) store.recordSavedFlip(definition.definedPage);
+      setFallbackPreview(null);
+      return;
+    }
+    const citation = mention;
 
     const asset = findAssetForCitation(citation, store.assetsMap);
     const reference = findReferenceForCitation(citation, store.referencesMap);
@@ -373,19 +384,24 @@ export default function App() {
       });
   }, []);
 
-  const handleCitationHover = useCallback(
-    (citation: InlineCitation, anchorEl: HTMLElement) => {
-      setHoverTrigger({ citation, anchorEl });
+  const handleMentionHover = useCallback(
+    (mention: ReaderMention, anchorEl: HTMLElement) => {
+      setHoverTrigger({ mention, anchorEl });
     },
     [],
   );
 
-  const handleCitationLeave = useCallback(() => {
+  const handleMentionLeave = useCallback(() => {
     setHoverTrigger(null);
   }, []);
 
-  const handleCitationClick = useCallback(
-    (citation: InlineCitation) => {
+  const handleMentionClick = useCallback(
+    (mention: ReaderMention, anchorEl: HTMLElement) => {
+      if ('term' in mention) {
+        setHoverTrigger({ mention, anchorEl });
+        return;
+      }
+      const citation = mention;
       const store = useReaderStore.getState();
       const asset = findAssetForCitation(citation, store.assetsMap);
       if (asset) {
@@ -639,19 +655,25 @@ export default function App() {
             pdfDoc={pdfDoc}
             scale={scale}
             citationsByPage={citationsByPage}
+            glossaryMentionsByPage={glossaryMentionsByPage}
             snipMode={snipMode}
             initialPage={initialPage}
             initialScrollTop={initialScrollTop}
             onScrollTopChange={handleScrollTop}
             onPageChange={(page) => useReaderStore.getState().setCurrentPage(page)}
-            onCitationHover={handleCitationHover}
-            onCitationLeave={handleCitationLeave}
-            onCitationClick={handleCitationClick}
+            onMentionHover={handleMentionHover}
+            onMentionLeave={handleMentionLeave}
+            onMentionClick={handleMentionClick}
           />
           {!snipMode && <SelectionToolbar viewerRef={readerRef} />}
         </main>
 
         <PinDock
+          currentPage={currentPage}
+          citations={citationsByPage[currentPage] ?? []}
+          assetsMap={assetsMap}
+          onPinAsset={handlePinAsset}
+          onPreviewAsset={setLightboxAsset}
           items={pinnedItems}
           backlinksMap={backlinksMap}
           onJumpToBacklink={handleJump}
@@ -676,6 +698,7 @@ export default function App() {
 
       <HoverPeekCard
         trigger={hoverTrigger}
+        glossaryMap={glossaryMap}
         assetsMap={assetsMap}
         referencesMap={referencesMap}
         onPinAsset={handlePinAsset}

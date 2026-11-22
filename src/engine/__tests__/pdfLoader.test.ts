@@ -1,9 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getDocument } from 'pdfjs-dist';
-import { computePdfFingerprint, loadPdfDocument, loadReaderPdf } from '../pdfLoader';
+import { getDocument, type PDFPageProxy } from 'pdfjs-dist';
+import { computePdfFingerprint, extractPageLines, loadPdfDocument, loadReaderPdf } from '../pdfLoader';
+import { detectCitations } from '../citationDetector';
 import { annotationDoc } from './fixtures';
 
-vi.mock('pdfjs-dist', () => ({ getDocument: vi.fn(), GlobalWorkerOptions: {} }));
+vi.mock('pdfjs-dist', () => ({
+  getDocument: vi.fn(), GlobalWorkerOptions: {},
+  Util: { transform: (_identity: number[], item: number[]) => item },
+}));
+
+it('retains font size and true baseline across separately positioned PDF citation glyphs', async () => {
+  const page = {
+    getViewport: () => ({ width: 1000, height: 1000, scale: 1, transform: [1, 0, 0, 1, 0, 0] }),
+    getTextContent: async () => ({ items: [
+      { str: 'Evidence', width: 65, transform: [12, 0, 0, 12, 80, 200] },
+      { str: '14', width: 9, transform: [8, 0, 0, 8, 147, 195] },
+    ] }),
+  } as unknown as PDFPageProxy;
+  const lines = await extractPageLines(page, 1);
+  expect(lines.map(line => line.text)).toEqual(['Evidence14']);
+  expect(lines[0].chars[8]).toMatchObject({ ch: '1', fontHeight: 0.008, baselineY: 0.195 });
+  const result = await detectCitations(annotationDoc(), { 1: lines }, {
+    referencesMap: { 'ref-14': { key: 'ref-14', index: 14, pageNumber: 3, rawText: 'Work.' } },
+  });
+  expect(result[1].map(c => [c.rawText, c.targetKeys])).toEqual([['14', ['ref-14']]]);
+});
 
 describe('PDF fingerprint', () => {
   it('hashes the entire visible byte range through 2 MiB, independent of the filename', async () => {

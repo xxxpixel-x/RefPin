@@ -20,7 +20,7 @@ describe('parseReferences', () => {
     });
     expect(Object.keys(result.referencesMap)).toEqual(['ref-1', 'ref-2']);
     expect(result.referencesMap['ref-1']).toEqual({
-      key: 'ref-1', index: 1, pageNumber: 2, authors: 'Quoc V. Le',
+      key: 'ref-1', index: 1, pageNumber: 2, authors: 'Quoc V. Le', firstAuthorLastName: 'le', isEtAl: false,
       title: 'A study of citation links', year: '2023',
       rawText: 'Quoc V. Le. A study of citation links. Journal of Reading, 2023.',
     });
@@ -47,5 +47,48 @@ describe('parseReferences', () => {
     expect(parseReferences({ 1: [textLine('[1] is discussed here.')] })).toEqual({
       referencesMap: {},
     });
+  });
+
+  it('splits unnumbered ACL and APA entries at margin resets, keeping wrapped authors and titles', () => {
+    const { referencesMap } = parseReferences({ 1: [
+      textLine('References', { y: 0.1 }),
+      textLine('Ashish Vaswani, Noam Shazeer,', { y: 0.2 }),
+      textLine('and Jakob Uszkoreit. 2017a. Attention is all', { y: 0.216, x: 0.11 }),
+      textLine('you need. In NeurIPS.', { y: 0.232, x: 0.11 }),
+      textLine('Vaswani et al. 2017b. Follow-up.', { y: 0.248 }),
+      textLine('Smith, J., & Lee, A. (2022). Measuring attention.', { y: 0.285 }),
+    ] });
+    expect(Object.keys(referencesMap)).toEqual(['ref-ay-vaswani-2017a', 'ref-ay-vaswani-2017b', 'ref-ay-smith-2022']);
+    expect(referencesMap['ref-ay-vaswani-2017a']).toMatchObject({
+      firstAuthorLastName: 'vaswani', secondAuthorLastName: 'shazeer', isEtAl: true,
+      year: '2017a', title: 'Attention is all you need',
+    });
+    expect(referencesMap['ref-ay-vaswani-2017b']).toMatchObject({ isEtAl: true, year: '2017b' });
+    expect(referencesMap['ref-ay-smith-2022']).toMatchObject({
+      firstAuthorLastName: 'smith', secondAuthorLastName: 'lee', year: '2022', title: 'Measuring attention',
+    });
+  });
+
+  it('preserves numeric IDs in a mixed bibliography and assigns deterministic collision suffixes', () => {
+    const { referencesMap } = parseReferences({ 1: [
+      textLine('References', { y: 0.1 }),
+      textLine('1. Brown et al. Language models. Science, 2020.', { y: 0.2 }),
+      textLine('García & Lee (2022). One result.', { y: 0.3 }),
+      textLine('García and Kim (2022). Another result.', { y: 0.4 }),
+    ] });
+    expect(Object.keys(referencesMap)).toEqual(['ref-1', 'ref-ay-garcía-2022', 'ref-ay-garcía-2022-2']);
+    expect(referencesMap['ref-1']).toMatchObject({ firstAuthorLastName: 'brown', year: '2020', title: 'Language models' });
+  });
+
+  it('splits year-last Nature entries with hanging titles at a paragraph break', () => {
+    const { referencesMap } = parseReferences({ 1: [
+      textLine('References and Notes', { y: 0.1 }),
+      textLine('Smith, J. & Lee, A. Some experiments.', { y: 0.2 }),
+      textLine('Nature 42, 100–103 (2022).', { x: 0.11, y: 0.216 }),
+      textLine('Devlin, J. et al. Language models. Science 18, 10–20 (2019).', { y: 0.25 }),
+    ] });
+    expect(Object.keys(referencesMap)).toEqual(['ref-ay-smith-2022', 'ref-ay-devlin-2019']);
+    expect(referencesMap['ref-ay-smith-2022']).toMatchObject({ secondAuthorLastName: 'lee', title: 'Some experiments' });
+    expect(referencesMap['ref-ay-devlin-2019']).toMatchObject({ isEtAl: true, title: 'Language models' });
   });
 });

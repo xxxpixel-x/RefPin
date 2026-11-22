@@ -8,11 +8,12 @@ import {
   useState,
 } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { InlineCitation, NormalizedRect } from '../../types/paper';
+import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
 import { useReaderStore } from '../../store/useReaderStore';
 import { PdfPageCanvas, type FlashHighlight } from './PdfPageCanvas';
 
 const NO_CITATIONS: InlineCitation[] = [];
+const NO_GLOSSARY_MENTIONS: GlossaryMention[] = [];
 
 export interface PdfViewerHandle {
   /**
@@ -34,14 +35,15 @@ interface Props {
   pdfDoc: PDFDocumentProxy;
   scale: number;
   citationsByPage: Record<number, InlineCitation[]>;
+  glossaryMentionsByPage: Record<number, GlossaryMention[]>;
   snipMode: boolean;
   /** 文档就绪后自动滚到的起始页（示例论文直达演示页） */
   initialPage?: number;
   initialScrollTop?: number;
   onScrollTopChange?: (top: number) => void;
-  onCitationHover?: (citation: InlineCitation, anchor: HTMLElement) => void;
-  onCitationLeave?: () => void;
-  onCitationClick?: (citation: InlineCitation) => void;
+  onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
+  onMentionLeave?: () => void;
+  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onPageChange?: (pageNumber: number) => void;
 }
 
@@ -50,13 +52,14 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     pdfDoc,
     scale,
     citationsByPage,
+    glossaryMentionsByPage,
     snipMode,
     initialPage,
     initialScrollTop,
     onScrollTopChange,
-    onCitationHover,
-    onCitationLeave,
-    onCitationClick,
+    onMentionHover,
+    onMentionLeave,
+    onMentionClick,
     onPageChange,
   },
   ref,
@@ -276,11 +279,12 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
               pageWidth={dim.width * scale}
               pageHeight={dim.height * scale}
               citations={citationsByPage[index + 1] ?? NO_CITATIONS}
+              glossaryMentions={glossaryMentionsByPage[index + 1] ?? NO_GLOSSARY_MENTIONS}
               flash={flash?.pageNumber === index + 1 ? flash : null}
               snipMode={snipMode}
-              onCitationHover={onCitationHover}
-              onCitationLeave={onCitationLeave}
-              onCitationClick={onCitationClick}
+              onMentionHover={onMentionHover}
+              onMentionLeave={onMentionLeave}
+              onMentionClick={onMentionClick}
             />
           ))}
         </div>

@@ -26,6 +26,25 @@ export interface InlineCitation {
   nativeDest?: { pageNumber: number; targetY?: number };
 }
 
+export interface GlossaryEntry {
+  term: string;
+  expansion: string;
+  contextSentence: string;
+  definedPage: number;
+  definedRect: NormalizedRect;
+  kind: 'acronym' | 'symbol';
+}
+
+export interface GlossaryMention {
+  id: string;
+  term: string;
+  pageNumber: number;
+  rect: NormalizedRect;
+  rawText: string;
+}
+
+export type ReaderMention = InlineCitation | GlossaryMention;
+
 /** 从图表或文献卡片跳回正文中的一次引用 */
 export interface CitationBacklink {
   citationId: string;
@@ -53,6 +72,9 @@ export interface ReferenceEntry {
   title?: string;
   authors?: string;
   year?: string;
+  firstAuthorLastName?: string;
+  secondAuthorLastName?: string;
+  isEtAl?: boolean;
   pageNumber: number;
 }
 

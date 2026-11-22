@@ -39,6 +39,44 @@ describe('reader parse lifecycle', () => {
     expect((await parsePaper({ ...doc, numPages: 0 } as PDFDocumentProxy)).isImageOnly).toBe(false);
   });
 
+  it('publishes and clears glossary entries and resolved author-year mentions with the document', async () => {
+    vi.mocked(extractPageLines)
+      .mockResolvedValueOnce([textLine('Multi-Head Attention (MHA).')])
+      .mockResolvedValueOnce([textLine('MHA follows Smith and Lee (2022).', { pageNumber: 2 })])
+      .mockResolvedValueOnce([textLine('References', { pageNumber: 3 }),
+        textLine('Smith & Lee (2022). Attention.', { pageNumber: 3, y: 0.4 })]);
+    const doc = { ...annotationDoc(), numPages: 3 } as PDFDocumentProxy;
+    const store = useReaderStore.getState();
+    store.setParseResult(await parsePaper(doc));
+    expect(useReaderStore.getState()).toMatchObject({
+      glossaryMap: { MHA: { definedPage: 1 } }, glossaryMentionsByPage: { 2: [{ term: 'MHA' }] },
+      citationsByPage: { 2: [{ targetKeys: ['ref-ay-smith-2022'] }] },
+    });
+    store.resetPaper();
+    expect(useReaderStore.getState()).toMatchObject({ glossaryMap: {}, glossaryMentionsByPage: {} });
+  });
+
+  it('defaults auto-sync on and restores a disabled preference after reopening the reader', async () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal('window', { localStorage: {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value),
+    } });
+    try {
+      vi.resetModules();
+      const { useReaderStore: first } = await import('../../store/useReaderStore');
+      expect(first.getState().autoSyncEnabled).toBe(true);
+      first.getState().setAutoSyncEnabled(false);
+      first.getState().resetPaper();
+      expect(first.getState().autoSyncEnabled).toBe(false);
+      vi.resetModules();
+      const { useReaderStore: reopened } = await import('../../store/useReaderStore');
+      expect(reopened.getState().autoSyncEnabled).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('stops after an in-flight text extraction and never publishes partial lines or completion progress', async () => {
     const controller = new AbortController();
     const progress = vi.fn();

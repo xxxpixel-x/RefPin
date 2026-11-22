@@ -127,7 +127,7 @@ export function BPreview() {
     [currentPage],
   );
 
-  const handlePeek = useCallback((_citation: InlineCitation) => {}, []);
+  const handlePeek = useCallback(() => {}, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -257,7 +257,7 @@ export function BPreview() {
                 <button
                   key={citation.id}
                   type="button"
-                  onMouseEnter={(event) => setHoverTrigger({ citation, anchorEl: event.currentTarget })}
+                  onMouseEnter={(event) => setHoverTrigger({ mention: citation, anchorEl: event.currentTarget })}
                   onMouseLeave={() => setHoverTrigger(null)}
                   onClick={() => jumpTo(citation.pageNumber)}
                   style={{
@@ -283,6 +283,11 @@ export function BPreview() {
         </main>
 
         <PinDock
+          currentPage={currentPage}
+          citations={pageCitations}
+          assetsMap={assetsMap}
+          onPinAsset={pinAsset}
+          onPreviewAsset={setLightboxAsset}
           items={pinnedItems}
           backlinksMap={backlinksMap}
           onJumpToBacklink={jumpTo}

@@ -3,7 +3,7 @@ import type { LinesByPage, RefRange, TextLine } from './types';
 import { readingOrder } from './utils';
 
 const HEADING_RE =
-  /^(?:\d+\.?\s*)?(?:references|bibliography|参\s*考\s*文\s*献|參\s*考\s*文\s*獻)\s*$/i;
+  /^(?:\d+\.?\s*)?(?:references(?:\s+and\s+notes)?|bibliography|参\s*考\s*文\s*献|參\s*考\s*文\s*獻)\s*$/i;
 const BRACKET_ENTRY_RE = /^\[(\d{1,3})\]\s*/;
 const NUMBER_ENTRY_RE = /^(\d{1,3})[.)、]\s+/;
 
@@ -19,9 +19,41 @@ const CAPTION_STOP_RE =
 const HEADING_FONT_SIZE = 0.0175;
 
 interface PendingEntry {
-  index: number;
+  index?: number;
   pageNumber: number;
   text: string;
+}
+
+const yearPattern = /\b(?:18|19|20)\d{2}[a-z]?\b/;
+const particles = /^(?:de|del|der|den|di|da|du|van|von|la|le|al)$/;
+
+export function normalizeSurname(name: string): string {
+  return name.normalize('NFC').toLowerCase().replace(/’/g, "'").replace(/[‐‑–]/g, '-').trim();
+}
+
+function looksLikeNames(text: string): boolean {
+  const words = text.match(/[\p{L}\p{M}’'-]+/gu);
+  return !!words?.length && !/[?!:=\d]|\p{L}{2}\.\s+\p{Lu}/u.test(text) && words.every(word =>
+    /^[\p{Lu}\p{Lt}]/u.test(word) || particles.test(word) || /^(and|et|al)$/i.test(word));
+}
+
+export function authorNames(authors: string) {
+  const names = authors.replace(/\bet\s+al\.?.*$/i, '').split(/\s+(?:and|&)\s+|[,;&]/i)
+    .map(name => name.trim()).filter(Boolean);
+  const surnames: string[] = [];
+  for (const name of names) {
+    // APA puts initials after a comma. Vancouver puts them after the surname.
+    const words = name.replace(/(?:\s+[A-Z]{1,3}\.?)+$/, '').match(/[\p{L}\p{M}’'-]+/gu) ?? [];
+    if (!words.length || words.every(word => /^[A-Z]{1,3}$/.test(word))) continue;
+    let start = words.length - 1;
+    while (start > 0 && particles.test(words[start - 1])) start--;
+    surnames.push(normalizeSurname(words.slice(start).join(' ')));
+  }
+  return {
+    firstAuthorLastName: surnames[0],
+    secondAuthorLastName: surnames[1],
+    isEtAl: /\bet\s+al\b/i.test(authors) || surnames.length > 2,
+  };
 }
 
 /**
@@ -42,7 +74,12 @@ function splitSentenceBoundaries(body: string): string[] {
     const isAbbreviation = /(?:^|\s)(?:e\.g|i\.e|etc|vs|fig|tab|eq|no|dr|mr|ms|prof)\.$/i.test(
       before,
     );
-    if (isInitial || isEtAl || isAbbreviation) continue;
+    // In a surname-first reference the final initial also closes the author
+    // list ("Smith, J. & Lee, A. Title..."). A following initial belongs to it.
+    const next = body.slice(hit.index + hit[0].length);
+    const endsAuthorList = isInitial && /,\s*(?:\p{Lu}\.\s*)+$/u.test(before) &&
+      /^\p{Lu}(?!\.)/u.test(next) && looksLikeNames(before);
+    if ((isInitial && !endsAuthorList) || isEtAl || isAbbreviation) continue;
 
     parts.push(body.slice(start, hit.index + 1).trim());
     start = hit.index + hit[0].length;
@@ -52,32 +89,44 @@ function splitSentenceBoundaries(body: string): string[] {
   return parts.filter(Boolean);
 }
 
-function parseFields(raw: string): Pick<ReferenceEntry, 'title' | 'authors' | 'year'> {
+export function parseReferenceFields(raw: string) {
   const body = raw
     .replace(/^\[\d+\]\s*/, '')
     .replace(/^\d+[.)、]\s+/, '')
     .trim();
 
-  const years = body.match(/\b(?:19|20)\d{2}\b/g);
-  const year = years ? years[years.length - 1] : undefined;
+  const years = [...body.matchAll(new RegExp(yearPattern, 'g'))];
+  const earlyYear = years[0];
+  const beforeYear = earlyYear && body.slice(0, earlyYear.index).replace(/[\s.,;(]+$/, '');
+  const datedAuthors = beforeYear && looksLikeNames(beforeYear) ? beforeYear : undefined;
+  const year = datedAuthors ? earlyYear[0] : years[years.length - 1]?.[0];
 
-  const quoted = body.match(/[“"']([^”"']{6,200})[”"']/);
+  const quoted = body.match(/(?:^|[\s,])[“"']([^”"']{6,200})[”"']/);
   let title = quoted?.[1]?.trim();
   let authors: string | undefined;
 
-  if (title) {
-    authors = body.split(/[“"']/)[0]?.replace(/[.,;，。．；]\s*$/, '').trim();
+  if (datedAuthors) {
+    authors = datedAuthors;
+    const rest = body.slice(earlyYear.index! + earlyYear[0].length).replace(/^[\s).,:;]+/, '');
+    title ??= splitSentenceBoundaries(rest)[0]?.replace(/[.。．]$/, '');
+  } else if (title && quoted) {
+    authors = body.slice(0, quoted.index).replace(/[.,;，。．；]\s*$/, '').trim();
   } else {
-    const segments = splitSentenceBoundaries(body);
+    // In year-last entries "et al." can terminate the author list.
+    const etAl = /^(.+?\bet al\.)\s+(?=\p{Lu})/u.exec(body);
+    const segments = etAl
+      ? [etAl[1], ...splitSentenceBoundaries(body.slice(etAl[0].length))]
+      : splitSentenceBoundaries(body);
     authors = segments[0]?.replace(/[.,;，。．；]\s*$/, '').trim();
     title = segments[1]?.replace(/[.,;，。．；]\s*$/, '').trim();
   }
 
+  const names = authors ? authorNames(authors) : undefined;
   if (authors && authors.length > 160) authors = `${authors.slice(0, 157)}...`;
   if (title && title.length > 220) title = `${title.slice(0, 217)}...`;
   if (!title) title = body.slice(0, 160);
 
-  return { title, authors, year };
+  return { title, authors, year, ...names };
 }
 
 export interface ReferenceParseResult {
@@ -134,8 +183,15 @@ export function parseReferences(linesByPage: LinesByPage): ReferenceParseResult 
 
   const entries: PendingEntry[] = [];
   let current: PendingEntry | null = null;
-
-  for (const { pageNumber, line } of collected) {
+  const numberedCount = collected.filter(({ line }) =>
+    BRACKET_ENTRY_RE.test(line.text.trim()) || NUMBER_ENTRY_RE.test(line.text.trim())).length;
+  const margins = new Map<string, number>();
+  const columnKey = (line: TextLine) => line.pageNumber + '/' + line.column;
+  for (const { line } of collected) {
+    const column = columnKey(line);
+    margins.set(column, Math.min(margins.get(column) ?? Infinity, line.rect.x));
+  }
+  for (const [i, { pageNumber, line }] of collected.entries()) {
     const text = line.text.trim();
     if (!text) continue;
 
@@ -150,22 +206,54 @@ export function parseReferences(linesByPage: LinesByPage): ReferenceParseResult 
         pageNumber,
         text: text.replace(BRACKET_ENTRY_RE, '').replace(NUMBER_ENTRY_RE, '').trim(),
       };
-    } else if (current) {
-      current.text = `${current.text} ${text}`.trim();
+    } else if (numberedCount >= 3) {
+      if (current) current.text += ' ' + text;
+    } else {
+      const prev = collected[i - 1]?.line;
+      const atMargin = line.rect.x <= margins.get(columnKey(line))! + 0.004;
+      const paragraphBreak = !prev || columnKey(prev) !== columnKey(line) ||
+        line.rect.x < prev.rect.x - 0.004 || line.rect.y - prev.rect.y > prev.rect.height * 1.55;
+      const year = yearPattern.exec(text);
+      const namePart = text.slice(0, year?.index).replace(/[\s.,;(]+$/, '');
+      const datedAuthor = !!year && looksLikeNames(namePart);
+      const authorLine = looksLikeNames(namePart) || looksLikeNames(parseReferenceFields(text).authors ?? '');
+      // A hanging continuation may itself start with an author. Keep it in the
+      // same entry until its year has been reached, even across a page break.
+      const hasYear = current && yearPattern.test(current.text);
+      // A single-line entry can be followed immediately by a wrapped author
+      // list. Its date and hanging indent may first appear on the next line.
+      const next = collected[i + 1]?.line;
+      const wrappedAuthors = !year && next && next.pageNumber === pageNumber &&
+        next.rect.x > line.rect.x + 0.004 && looksLikeNames(namePart);
+      const newEntry = !current || (hasYear && atMargin &&
+        (datedAuthor || wrappedAuthors || (paragraphBreak && authorLine)));
+      if (newEntry) {
+        if (current) entries.push(current);
+        current = { pageNumber, text };
+      } else if (current) {
+        current.text += ' ' + text;
+      }
     }
   }
   if (current) entries.push(current);
 
   const referencesMap: Record<string, ReferenceEntry> = {};
-  for (const entry of entries) {
-    const key = `ref-${entry.index}`;
+  for (const [position, entry] of entries.entries()) {
+    const fields = parseReferenceFields(entry.text);
+    let key = 'ref-' + entry.index;
+    if (entry.index === undefined) {
+      if (!fields.firstAuthorLastName || !fields.year) continue;
+      const base = 'ref-ay-' + fields.firstAuthorLastName.replace(/\s+/g, '-') + '-' + fields.year;
+      key = base;
+      for (let n = 2; referencesMap[key]; n++) key = base + '-' + n;
+    }
     if (referencesMap[key]) continue;
     referencesMap[key] = {
       key,
-      index: entry.index,
+      index: entry.index ?? position + 1,
       rawText: entry.text,
       pageNumber: entry.pageNumber,
-      ...parseFields(entry.text),
+      ...fields,
     };
   }
 

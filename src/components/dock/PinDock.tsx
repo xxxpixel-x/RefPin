@@ -10,6 +10,8 @@ import {
 import { createPortal } from 'react-dom';
 import {
   Eraser,
+  ArrowUpRight,
+  ChevronDown,
   GripVertical,
   PanelBottom,
   PanelLeft,
@@ -18,10 +20,17 @@ import {
   Pin,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CitationBacklink, DockPosition, NormalizedRect, PinnedItem } from '../../types/paper';
+import type { CitationBacklink, DockPosition, InlineCitation, NormalizedRect, PaperAsset, PinnedItem } from '../../types/paper';
+import { currentPageAssets } from '../../engine/backlinks';
+import { useReaderStore } from '../../store/useReaderStore';
 import { PinnedCard } from './PinnedCard';
 
 interface PinDockProps {
+  currentPage: number;
+  citations: InlineCitation[];
+  assetsMap: Record<string, PaperAsset>;
+  onPreviewAsset: (asset: PaperAsset) => void;
+  onPinAsset: (asset: PaperAsset) => void;
   items: PinnedItem[];
   backlinksMap: Record<string, CitationBacklink[]>;
   onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
@@ -96,6 +105,7 @@ function computeNearestEdge(clientX: number, clientY: number, rect: DOMRect): Do
 }
 
 export function PinDock({
+  currentPage, citations, assetsMap, onPreviewAsset, onPinAsset,
   items,
   backlinksMap,
   onJumpToBacklink,
@@ -116,6 +126,12 @@ export function PinDock({
   onRename,
   onClear,
 }: PinDockProps) {
+  const enabled = useReaderStore(state => state.autoSyncEnabled);
+  const setEnabled = useReaderStore(state => state.setAutoSyncEnabled);
+  const [syncCollapsed, setSyncCollapsed] = useState(false);
+  const synced = useMemo(() => enabled ? currentPageAssets(currentPage, citations, assetsMap, items) : [],
+    [enabled, currentPage, citations, assetsMap, items]);
+  const showSynced = enabled && !syncCollapsed;
   const [order, setOrder] = useState<string[]>([]);
   const [isResizing, setIsResizing] = useState(false);
   const [dragDropPreview, setDragDropPreview] = useState<{
@@ -527,7 +543,7 @@ export function PinDock({
   }, [position, zoomOverlay, zoomedItem]);
 
   const allHorizontalCollapsed =
-    isHorizontal && orderedItems.length > 0 && orderedItems.every((item) => Boolean(item.collapsed));
+    isHorizontal && !showSynced && orderedItems.length > 0 && orderedItems.every((item) => Boolean(item.collapsed));
 
   const dockStyle: CSSProperties = isHorizontal
     ? allHorizontalCollapsed
@@ -668,6 +684,53 @@ export function PinDock({
             )}
           </div>
         </div>
+
+        <section aria-label="当前页自动伴读" className={clsx(
+          'flex shrink-0 flex-col border-b border-paper-border bg-paper-bg',
+          showSynced && (isHorizontal ? 'h-24 max-h-[46%]' : 'h-44 max-h-[42%]'),
+        )}>
+          <div className="flex h-8 shrink-0 items-center gap-2 px-3">
+            <button type="button" aria-expanded={showSynced} disabled={!enabled}
+              onClick={() => setSyncCollapsed(value => !value)}
+              className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-paper-ink disabled:text-paper-muted">
+              <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !showSynced && '-rotate-90')} />
+              <span className="truncate">当前页自动伴读 / Auto-Sync</span>
+              <span className="rounded border border-paper-border bg-white px-1 font-mono text-[10px]">{synced.length}</span>
+            </button>
+            <button type="button" role="switch" aria-checked={enabled} aria-label="当前页自动伴读"
+              onClick={() => setEnabled(!enabled)}
+              className={clsx('ml-auto flex h-4 w-7 shrink-0 items-center rounded-full px-0.5', enabled ? 'bg-paper-gold' : 'bg-paper-muted')}>
+              <span className={clsx('h-3 w-3 rounded-full bg-white transition-transform', enabled && 'translate-x-3')} />
+            </button>
+          </div>
+          {showSynced && <div className={clsx('min-h-0 overflow-auto px-2.5 pb-2',
+            isHorizontal ? 'flex gap-2' : 'space-y-1.5')}>
+            {synced.length === 0 && <p className="px-1 py-2 text-[11px] text-paper-muted">P.{currentPage} 没有待钉住的跨页图表或公式</p>}
+            {synced.map(asset => (
+              <article key={asset.key} className={clsx('flex items-center gap-2 rounded-md border border-paper-border bg-white p-1.5',
+                isHorizontal && 'w-56 shrink-0')}>
+                <button type="button" disabled={!asset.imageUrl} aria-label={`放大 ${asset.label}`}
+                  onClick={() => onPreviewAsset(asset)}
+                  className="h-9 w-12 shrink-0 overflow-hidden rounded border border-paper-border bg-paper-bg">
+                  {asset.imageUrl ? <img alt={asset.label} src={asset.imageUrl} className="h-full w-full object-contain" />
+                    : <span className="text-[10px] text-paper-muted">无缩略图</span>}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] font-semibold text-paper-ink">{asset.label}</p>
+                  <button type="button" aria-label={`跳至 ${asset.label} · P.${asset.pageNumber}`}
+                    onClick={() => onJump(asset.pageNumber, asset.cropRect)}
+                    className="flex items-center gap-0.5 font-mono text-[10px] text-paper-muted hover:text-paper-gold">
+                    P.{asset.pageNumber}<ArrowUpRight size={11} />
+                  </button>
+                </div>
+                <button type="button" onClick={() => onPinAsset(asset)} aria-label={`钉住 ${asset.label}`}
+                  className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-[11px] font-medium text-white">
+                  <Pin size={11} />钉住
+                </button>
+              </article>
+            ))}
+          </div>}
+        </section>
 
         {/* 卡片列表 */}
         <div

@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
-import type { InlineCitation, NormalizedRect } from '../../types/paper';
+import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
 import { FreeSnipOverlay } from './FreeSnipOverlay';
 
 export interface FlashHighlight {
@@ -18,11 +18,12 @@ interface Props {
   pageWidth: number;
   pageHeight: number;
   citations: InlineCitation[];
+  glossaryMentions: GlossaryMention[];
   flash?: FlashHighlight | null;
   snipMode: boolean;
-  onCitationHover?: (citation: InlineCitation, anchor: HTMLElement) => void;
-  onCitationLeave?: () => void;
-  onCitationClick?: (citation: InlineCitation) => void;
+  onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
+  onMentionLeave?: () => void;
+  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
 }
 
 export const PdfPageCanvas = memo(function PdfPageCanvas({
@@ -33,17 +34,19 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   pageWidth,
   pageHeight,
   citations,
+  glossaryMentions,
   flash,
   snipMode,
-  onCitationHover,
-  onCitationLeave,
-  onCitationClick,
+  onMentionHover,
+  onMentionLeave,
+  onMentionClick,
 }: Props) {
+  const mentions = useMemo(() => [...citations, ...glossaryMentions], [citations, glossaryMentions]);
   const textRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hotspotsRef = useRef<HTMLDivElement>(null);
   const hoverRef = useRef<HTMLElement | null>(null);
-  const pressRef = useRef<{ x: number; y: number; citation?: InlineCitation; dragged: boolean } | null>(null);
+  const pressRef = useRef<{ x: number; y: number; mention?: ReaderMention; dragged: boolean } | null>(null);
   const renderedScaleRef = useRef<number | null>(null);
   const renderedDocRef = useRef<PDFDocumentProxy | null>(null);
   const renderedPageRef = useRef<number | null>(null);
@@ -115,18 +118,18 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
 
   // Native text selection receives every pointer event, including drags starting on a chip.
   // The overlay buttons provide the visual anchors and native keyboard activation.
-  function citationAt(event: { clientX: number; clientY: number; currentTarget: HTMLElement }) {
+  function mentionAt(event: { clientX: number; clientY: number; currentTarget: HTMLElement }) {
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width;
     const y = (event.clientY - bounds.top) / bounds.height;
-    return citations.findIndex(({ rect }) => x >= rect.x && x <= rect.x + rect.width &&
+    return mentions.findIndex(({ rect }) => x >= rect.x && x <= rect.x + rect.width &&
       y >= rect.y && y <= rect.y + rect.height);
   }
 
-  function leaveCitation() {
+  function leaveMention() {
     if (hoverRef.current) {
       delete hoverRef.current.dataset.hovered;
-      onCitationLeave?.();
+      onMentionLeave?.();
     }
     hoverRef.current = null;
   }
@@ -136,17 +139,18 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
     if (event.buttons) {
       const press = pressRef.current;
       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) press.dragged = true;
-      leaveCitation();
+      leaveMention();
       return;
     }
-    const index = citationAt(event);
+    if (window.getSelection()?.toString().trim()) return leaveMention();
+    const index = mentionAt(event);
     const anchor = hotspotsRef.current?.children[index] as HTMLElement | undefined;
-    if (!anchor) return leaveCitation();
+    if (!anchor) return leaveMention();
     if (anchor !== hoverRef.current) {
       if (hoverRef.current) delete hoverRef.current.dataset.hovered;
       hoverRef.current = anchor;
       anchor.dataset.hovered = '';
-      onCitationHover?.(citations[index], anchor);
+      onMentionHover?.(mentions[index], anchor);
     }
   }
 
@@ -155,22 +159,24 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
       onPointerMove={handlePointerMove}
       onPointerLeave={() => {
         if (pressRef.current) pressRef.current.dragged = true;
-        leaveCitation();
+        leaveMention();
       }}
       onPointerCancel={() => { pressRef.current = null; }}
       onPointerDown={event => {
         if (snipMode || !rendered || event.button !== 0) return;
-        leaveCitation();
+        leaveMention();
         pressRef.current = {
-          x: event.clientX, y: event.clientY, citation: citations[citationAt(event)], dragged: false,
+          x: event.clientX, y: event.clientY, mention: mentions[mentionAt(event)], dragged: false,
         };
       }}
       onClick={event => {
         const press = pressRef.current;
         pressRef.current = null;
-        if (!press?.citation || press.dragged || snipMode || window.getSelection()?.toString().trim()) return;
-        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 4 &&
-            citations[citationAt(event)] === press.citation) onCitationClick?.(press.citation);
+        if (!press?.mention || press.dragged || snipMode || window.getSelection()?.toString().trim()) return;
+        const index = mentionAt(event);
+        const anchor = hotspotsRef.current?.children[index];
+        if (anchor instanceof HTMLElement && Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 4 &&
+            mentions[index] === press.mention) onMentionClick?.(press.mention, anchor);
       }}
       data-page={pageNumber}
       className="relative mx-auto overflow-hidden rounded-sm bg-white shadow-paper ring-1 ring-black/[0.04]"
@@ -186,21 +192,25 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
 
       {isVisible && rendered && !snipMode && (
         <div ref={hotspotsRef} className="pointer-events-none absolute inset-0 z-10 select-none">
-          {citations.map((citation) => (
+          {mentions.map((mention) => (
             <button
-              key={citation.id}
+              key={mention.id}
               type="button"
-              aria-label={`查看引用 ${citation.rawText}`}
-              className="absolute rounded-[3px] border-b border-dashed border-paper-gold/70 bg-paper-gold/[0.13] p-0 transition-colors duration-150 data-[hovered]:bg-paper-gold/30 focus:outline-none focus-visible:bg-paper-gold/30 focus-visible:ring-1 focus-visible:ring-paper-gold"
+              aria-label={`查看${'term' in mention ? '定义' : '引用'} ${mention.rawText}`}
+              className={`absolute border-b p-0 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-paper-gold ${
+                'term' in mention
+                  ? 'border-dotted border-paper-muted/60 bg-transparent data-[hovered]:border-paper-gold data-[hovered]:bg-paper-gold/10'
+                  : 'rounded-[3px] border-dashed border-paper-gold/70 bg-paper-gold/[0.13] data-[hovered]:bg-paper-gold/30 focus-visible:bg-paper-gold/30'
+              }`}
               style={{
-                left: `${citation.rect.x * 100}%`,
-                top: `${citation.rect.y * 100}%`,
-                width: `${citation.rect.width * 100}%`,
-                height: `${citation.rect.height * 100}%`,
+                left: `${mention.rect.x * 100}%`,
+                top: `${mention.rect.y * 100}%`,
+                width: `${mention.rect.width * 100}%`,
+                height: `${mention.rect.height * 100}%`,
               }}
-              onFocus={(event) => onCitationHover?.(citation, event.currentTarget)}
-              onBlur={() => onCitationLeave?.()}
-              onClick={event => { event.stopPropagation(); onCitationClick?.(citation); }}
+              onFocus={(event) => onMentionHover?.(mention, event.currentTarget)}
+              onBlur={() => onMentionLeave?.()}
+              onClick={event => { event.stopPropagation(); onMentionClick?.(mention, event.currentTarget); }}
             />
           ))}
         </div>

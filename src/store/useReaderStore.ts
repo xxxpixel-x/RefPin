@@ -15,7 +15,8 @@ import type {
   ReferenceEntry,
 } from '../types/paper';
 
-export type ParseResultPayload = Omit<ParsePaperResult, 'isImageOnly'> & { isImageOnly?: boolean };
+type NewParseFields = 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
+export type ParseResultPayload = Omit<ParsePaperResult, NewParseFields> & Partial<Pick<ParsePaperResult, NewParseFields>>;
 
 interface ReaderState {
   /* ---------- 文档 ---------- */
@@ -37,10 +38,14 @@ interface ReaderState {
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
   citationsByPage: Record<number, InlineCitation[]>;
+  glossaryMap: ParsePaperResult['glossaryMap'];
+  glossaryMentionsByPage: ParsePaperResult['glossaryMentionsByPage'];
   backlinksMap: Record<string, CitationBacklink[]>;
 
   /* ---------- UI 状态 ---------- */
   pinnedItems: PinnedItem[];
+  autoSyncEnabled: boolean;
+  setAutoSyncEnabled: (enabled: boolean) => void;
   drawerOpen: boolean;
   snipMode: boolean;
   jumpAnchor: JumpAnchor;
@@ -93,6 +98,15 @@ interface ReaderState {
 }
 
 const DOCK_STORAGE_KEY = 'refpin.dock.layout.v1';
+const AUTO_SYNC_KEY = 'refpin.dock.autoSync.v1';
+
+function loadAutoSync(): boolean {
+  try {
+    return typeof window === 'undefined' || window.localStorage.getItem(AUTO_SYNC_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
 
 function loadSavedDockLayout(): {
   dockPosition: DockPosition;
@@ -162,9 +176,16 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   assetsMap: {},
   referencesMap: {},
   citationsByPage: {},
+  glossaryMap: {},
+  glossaryMentionsByPage: {},
   backlinksMap: {},
 
   pinnedItems: [],
+  autoSyncEnabled: loadAutoSync(),
+  setAutoSyncEnabled: enabled => {
+    try { window.localStorage.setItem(AUTO_SYNC_KEY, String(enabled)); } catch { /* Session-only storage. */ }
+    set({ autoSyncEnabled: enabled });
+  },
   drawerOpen: false,
   snipMode: false,
   jumpAnchor: null,
@@ -202,6 +223,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   setParseError: (message) => set({ parseError: message }),
   setParseResult: (payload) => set({
     ...payload,
+    glossaryMap: payload.glossaryMap ?? {},
+    glossaryMentionsByPage: payload.glossaryMentionsByPage ?? {},
     isImageOnly: payload.isImageOnly ?? false,
     backlinksMap: buildBacklinksMap(payload.citationsByPage),
   }),
@@ -403,6 +426,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       assetsMap: {},
       referencesMap: {},
       citationsByPage: {},
+      glossaryMap: {},
+      glossaryMentionsByPage: {},
       backlinksMap: {},
       pinnedItems: [],
       snipMode: false,

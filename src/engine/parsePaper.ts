@@ -4,10 +4,11 @@ import { extractPageLines } from './pdfLoader';
 import { detectCitations } from './citationDetector';
 import { extractAssets, resetAssetCache } from './assetExtractor';
 import { parseReferences } from './referenceParser';
+import { parseGlossary, type GlossaryResult } from './glossaryParser';
 import type { LinesByPage } from './types';
 import { cachePageLines } from './pageLinesCache';
 
-export interface ParsePaperResult {
+export interface ParsePaperResult extends GlossaryResult {
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
   citationsByPage: Record<number, InlineCitation[]>;
@@ -49,9 +50,10 @@ export async function parsePaper(
   const { referencesMap, refRange } = parseReferences(linesByPage);
   onProgress(20);
 
-  const citationsByPage = await detectCitations(doc, linesByPage, { refRange, signal });
+  const citationsByPage = await detectCitations(doc, linesByPage, { refRange, referencesMap, signal });
   signal?.throwIfAborted();
   onProgress(38);
+  const glossary = parseGlossary(linesByPage, { refRange, citationsByPage, signal });
 
   const assetsMap = await extractAssets(doc, linesByPage, {
     refRange,
@@ -64,5 +66,5 @@ export async function parsePaper(
   const isImageOnly = doc.numPages > 0 && Object.values(linesByPage).every((lines) => !lines.length);
   onProgress(100);
 
-  return { assetsMap, referencesMap, citationsByPage, isImageOnly };
+  return { assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
 }
