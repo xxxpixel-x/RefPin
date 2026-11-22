@@ -5,6 +5,8 @@ import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { LandingView } from './components/landing/LandingView';
 import { TopBar } from './components/layout/TopBar';
+import { getCachedPageLines, searchPageLines } from './engine/pageLinesCache';
+import { SearchBar } from './components/layout/SearchBar';
 import { ReturnBanner } from './components/layout/ReturnBanner';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
 import { SelectionToolbar } from './components/peek/SelectionToolbar';
@@ -74,10 +76,25 @@ export default function App() {
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
   const drawerOpen = useReaderStore((state) => state.drawerOpen);
   const snipMode = useReaderStore((state) => state.snipMode);
-  const jumpAnchor = useReaderStore((state) => state.jumpAnchor);
+  const outline = useReaderStore(state => state.outline);
   const dockPosition = useReaderStore((state) => state.dockPosition);
   const dockWidth = useReaderStore((state) => state.dockWidth);
   const dockHeight = useReaderStore((state) => state.dockHeight);
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [matchIndex, setMatchIndex] = useState(0);
+  const lines = pdfDoc ? getCachedPageLines(pdfDoc) : undefined;
+  const matches = useMemo(() => searchPageLines(lines, searchOpen ? query : ''), [lines, query, searchOpen]);
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery('');
+    setMatchIndex(0);
+  }, []);
+  const toggleSearch = useCallback(() => {
+    if (searchOpen) closeSearch();
+    else setSearchOpen(true);
+  }, [searchOpen, closeSearch]);
 
   const viewerRef = useRef<PdfViewerHandle>(null);
   const readerRef = useRef<HTMLElement>(null);
@@ -174,6 +191,7 @@ export default function App() {
 
   const openPaper = useCallback(
     async (input: string | File | PaperArchive, name: string, startPage?: number, sampleId?: string) => {
+      closeSearch();
       const previousSave = flushArchive();
       openControllerRef.current?.abort();
       const controller = new AbortController();
@@ -251,7 +269,7 @@ export default function App() {
         }
       }
     },
-    [flushArchive],
+    [flushArchive, closeSearch],
   );
 
   const handleOpenFile = useCallback(
@@ -265,6 +283,26 @@ export default function App() {
     [openPaper],
   );
 
+  useEffect(() => {
+    if (!('launchQueue' in window)) return;
+    const queue = window.launchQueue as { setConsumer: (consumer: (params: { files?: FileSystemFileHandle[] }) => void) => void };
+    let active = true;
+    let latest = 0;
+    queue.setConsumer(async ({ files }) => {
+      const handle = files?.find(item => item.kind === 'file' && /\.pdf$/i.test(item.name));
+      if (!active || !handle) return;
+      const request = ++latest;
+      const previous = openControllerRef.current;
+      try {
+        const file = await handle.getFile();
+        if (active && request === latest && previous === openControllerRef.current) handleOpenFile(file);
+      } catch (error) {
+        if (active && request === latest && previous === openControllerRef.current) setBootError(describeError(error, message('reader.openFailed')));
+      }
+    });
+    return () => { active = false; };
+  }, [handleOpenFile]);
+
   const handleSelectSample = useCallback(
     (sample: SamplePaperMeta) => {
       void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, sample.id);
@@ -273,6 +311,7 @@ export default function App() {
   );
 
   const handleReset = useCallback(() => {
+    closeSearch();
     void flushArchive();
     openControllerRef.current?.abort();
     openControllerRef.current = null;
@@ -285,7 +324,7 @@ export default function App() {
     activePeekIdRef.current = null;
     nativePreviewCacheRef.current.clear();
     useReaderStore.getState().resetPaper();
-  }, [flushArchive]);
+  }, [flushArchive, closeSearch]);
 
   const handlePinAsset = useCallback(
     (asset: PaperAsset) => {
@@ -321,20 +360,29 @@ export default function App() {
       targetRect?: NormalizedRect,
       sourceRect?: NormalizedRect,
       sourcePage?: number,
+      targetLabel?: string,
     ) => {
       const store = useReaderStore.getState();
-      store.setJumpAnchor({
-        fromPage: sourcePage ?? store.currentPage,
-        fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
-        fromScrollLeft: viewerRef.current?.getScrollLeft() ?? 0,
-        highlightRect: sourceRect,
-        label: t('reader.returnToPage', { page: sourcePage ?? store.currentPage }),
-      });
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      const page = sourcePage ?? store.currentPage;
+      const label = sourceRect && (store.citationsByPage[page]?.find(cite => cite.rect === sourceRect)?.rawText ??
+        store.glossaryMentionsByPage[page]?.find(mention => mention.rect === sourceRect)?.term);
+      const origin = { pageNumber: page, label, scrollTop: viewer.getScrollTop(),
+        scrollLeft: viewer.getScrollLeft(), highlightRect: sourceRect };
+      const target = viewer.scrollToPosition(pageNumber, targetRect, true);
+      if (target) store.recordJump(origin, { ...target, pageNumber, highlightRect: targetRect, label: targetLabel });
       setHoverTrigger(null);
-      viewerRef.current?.scrollToPosition(pageNumber, targetRect, true);
     },
     [],
   );
+
+  const navigateHistory = useCallback((direction: 'back' | 'forward') => {
+    const position = useReaderStore.getState().navigateHistory(direction);
+    if (!position) return;
+    setHoverTrigger(null);
+    viewerRef.current?.scrollToPosition(position.pageNumber, position.scrollTop, true, position.highlightRect, position.scrollLeft);
+  }, []);
 
   const handlePeek = useCallback((mention: ReaderMention) => {
     activePeekIdRef.current = mention.id;
@@ -421,7 +469,9 @@ export default function App() {
         return;
       }
       if (citation.nativeDest) {
-        handleJump(citation.nativeDest.pageNumber, undefined, citation.rect);
+        const y = citation.nativeDest.targetY;
+        handleJump(citation.nativeDest.pageNumber, y === undefined ? undefined : { x: 0.05, y, width: 0.9, height: 0.02 },
+          citation.rect, citation.pageNumber);
       }
     },
     [handleJump, handlePinAsset, handlePinReference],
@@ -506,7 +556,15 @@ export default function App() {
   // 全局快捷键：S 开关框选、[ 开关资产墙、Esc 收起浮窗/灯箱/框选
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const state = useReaderStore.getState();
+      if (!state.pdfDoc || event.isComposing) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        toggleSearch();
+        return;
+      }
       if (event.key === 'Escape') {
+        closeSearch();
         setLightboxAsset(null);
         setHoverTrigger(null);
         if (useReaderStore.getState().snipMode) {
@@ -514,18 +572,31 @@ export default function App() {
         }
         return;
       }
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.ctrlKey || event.metaKey) return;
       const target = event.target as HTMLElement | null;
       if (
         target &&
         (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
         return;
       }
-      const state = useReaderStore.getState();
-      if (!state.pdfDoc) return;
+      if (event.altKey) {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault();
+          navigateHistory(event.key === 'ArrowLeft' ? 'back' : 'forward');
+        } else if (state.readingRulerEnabled && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          event.preventDefault();
+          viewerRef.current?.stepRuler(event.key === 'ArrowUp' ? -1 : 1);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        state.setReadingRulerEnabled(!state.readingRulerEnabled);
+        return;
+      }
 
       if (event.key === 's' || event.key === 'S') {
         event.preventDefault();
@@ -537,7 +608,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [toggleSearch, closeSearch, navigateHistory]);
 
   const assetsList = useMemo(
     () =>
@@ -599,7 +670,8 @@ export default function App() {
         isParsing={isParsing}
         parseProgress={parseProgress}
         assetCount={assetsList.length}
-        onJumpPage={(page) => viewerRef.current?.scrollToPosition(page)}
+        onSearch={toggleSearch}
+        onJumpPage={handleJump}
         onZoom={(nextScale) => useReaderStore.getState().setScale(nextScale)}
         onToggleSnip={() => useReaderStore.getState().setSnipMode(!snipMode)}
         onToggleDrawer={() => useReaderStore.getState().setDrawerOpen(!drawerOpen)}
@@ -614,7 +686,7 @@ export default function App() {
       )}
 
       {isImageOnly && (
-        <div role="status" className="border-b border-paper-border bg-white px-4 py-2 text-xs text-paper-muted">
+        <div role="status" className="border-b border-paper-border bg-paper-card px-4 py-2 text-xs text-paper-muted">
           {t('reader.scanned')}
         </div>
       )}
@@ -629,6 +701,7 @@ export default function App() {
         <AssetDrawer
           open={drawerOpen}
           assets={assetsList}
+          outline={outline}
           references={referencesList}
           backlinksMap={backlinksMap}
           onJumpToBacklink={handleJump}
@@ -638,28 +711,21 @@ export default function App() {
           onClose={() => useReaderStore.getState().setDrawerOpen(false)}
           onPinAsset={handlePinAsset}
           onPinReference={handlePinReference}
-          onLocate={(pageNumber, asset) => handleJump(pageNumber, asset?.cropRect)}
+          onLocate={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
         />
 
         <main ref={readerRef} className="relative min-h-0 min-w-0 flex-1">
-          <ReturnBanner
-            anchor={jumpAnchor}
-            onReturn={(anchor) => {
-              viewerRef.current?.scrollToPosition(
-                anchor.fromPage,
-                anchor.fromScrollTop,
-                true,
-                anchor.highlightRect,
-                anchor.fromScrollLeft,
-              );
-              useReaderStore.getState().clearJumpAnchor();
-            }}
-            onDismiss={() => useReaderStore.getState().clearJumpAnchor()}
-          />
+          <ReturnBanner onNavigate={navigateHistory} />
+          {searchOpen && <SearchBar query={query} index={matchIndex} count={matches.length}
+            onQuery={value => { setQuery(value); setMatchIndex(0); }}
+            onStep={delta => { if (matches.length) setMatchIndex(i => (i + delta + matches.length) % matches.length); }}
+            onClose={closeSearch} />}
 
           <PdfViewer
             ref={viewerRef}
             pdfDoc={pdfDoc}
+            searchMatches={matches}
+            activeMatch={matches[matchIndex]}
             scale={scale}
             citationsByPage={citationsByPage}
             glossaryMentionsByPage={glossaryMentionsByPage}
@@ -719,7 +785,7 @@ export default function App() {
       <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
 
       {toast && (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-white shadow-float">
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-paper-card shadow-float">
           {formatMessage(toast)}
         </div>
       )}

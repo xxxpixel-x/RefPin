@@ -2,6 +2,7 @@ import type { MessageKey } from '../../i18n/types';
 import { t } from '../../i18n/core';
 import { useMemo, useState } from 'react';
 import {
+  ChevronRight,
   FileText,
   Image as ImageIcon,
   LocateFixed,
@@ -11,14 +12,15 @@ import {
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CitationBacklink, NormalizedRect, PaperAsset, ReferenceEntry } from '../../types/paper';
+import type { CitationBacklink, CitationKind, NormalizedRect, OutlineItem, PaperAsset, ReferenceEntry } from '../../types/paper';
 import { BacklinkStrip } from '../BacklinkStrip';
 
-type DrawerTab = 'all' | 'figure' | 'table' | 'reference';
+type DrawerTab = 'all' | CitationKind | 'outline';
 
 interface AssetDrawerProps {
   open: boolean;
   assets: PaperAsset[];
+  outline?: OutlineItem[];
   references: ReferenceEntry[];
   backlinksMap: Record<string, CitationBacklink[]>;
   onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
@@ -28,19 +30,46 @@ interface AssetDrawerProps {
   onClose: () => void;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (reference: ReferenceEntry) => void;
-  onLocate: (pageNumber: number, asset?: PaperAsset) => void;
+  onLocate: (pageNumber: number, rect?: NormalizedRect, label?: string) => void;
 }
 
 const TABS = [
   { key: 'all', label: 'filter.all' },
   { key: 'figure', label: 'filter.figures' },
   { key: 'table', label: 'filter.tables' },
+  { key: 'equation', label: 'filter.equations' },
+  { key: 'algorithm', label: 'filter.algorithms' },
+  { key: 'theorem', label: 'filter.theorems' },
+  { key: 'section', label: 'filter.sections' },
   { key: 'reference', label: 'filter.references' },
 ] as const satisfies ReadonlyArray<{ key: DrawerTab; label: MessageKey }>;
+
+function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: OutlineItem) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  return <li>
+    <div className="flex items-center gap-1 rounded-md hover:bg-paper-bg">
+      {item.children.length > 0
+        ? <button type="button" aria-expanded={expanded} aria-label={t(expanded ? 'outline.collapse' : 'outline.expand', { title: item.title })}
+            onClick={() => setExpanded(!expanded)} className="shrink-0 rounded p-1 text-paper-muted">
+            <ChevronRight size={13} className={expanded ? 'rotate-90' : ''} />
+          </button>
+        : <span className="w-5 shrink-0" />}
+      <button type="button" disabled={item.pageNumber === null} onClick={() => onJump(item)}
+        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 text-left text-xs text-paper-ink disabled:text-paper-muted">
+        <span className="min-w-0 flex-1 break-words">{item.title}</span>
+        {item.pageNumber !== null && <span className="rounded-full border border-paper-border px-1.5 font-mono text-[10px] text-paper-muted">{item.pageNumber}</span>}
+      </button>
+    </div>
+    {expanded && <ul className="ml-2 border-l border-paper-border pl-2">
+      {item.children.map(child => <OutlineBranch key={child.id} item={child} onJump={onJump} />)}
+    </ul>}
+  </li>;
+}
 
 export function AssetDrawer({
   open,
   assets,
+  outline = [],
   references,
   backlinksMap,
   onJumpToBacklink,
@@ -63,11 +92,7 @@ export function AssetDrawer({
   const filteredAssets = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return assets.filter((asset) => {
-      const tabMatch =
-        tab === 'all' ||
-        (tab === 'figure' && asset.kind === 'figure') ||
-        (tab === 'table' && asset.kind === 'table');
-      if (!tabMatch) return false;
+      if (tab !== 'all' && tab !== asset.kind) return false;
       if (!keyword) return true;
       return (
         asset.label.toLowerCase().includes(keyword) ||
@@ -87,29 +112,29 @@ export function AssetDrawer({
     );
   }, [references, tab, query]);
 
-  const figureCount = assets.filter((asset) => asset.kind === 'figure').length;
-  const tableCount = assets.filter((asset) => asset.kind === 'table').length;
-
-  const counts: Record<DrawerTab, number> = {
-    all: assets.length + references.length,
-    figure: figureCount,
-    table: tableCount,
-    reference: references.length,
+  const counts: Record<Exclude<DrawerTab, 'outline'>, number> = {
+    all: assets.length + references.length, reference: references.length,
+    figure: 0, table: 0, equation: 0, algorithm: 0, theorem: 0, section: 0,
   };
+  for (const asset of assets) counts[asset.kind]++;
 
   return (
     <aside
       className={clsx(
-        'absolute inset-y-0 left-0 z-30 flex w-[280px] flex-col border-r border-paper-border bg-white/95 shadow-float backdrop-blur transition-transform duration-200',
-        open ? 'translate-x-0' : '-translate-x-full',
+        'absolute inset-y-0 left-0 z-30 flex w-[280px] flex-col border-r border-paper-border bg-paper-card/95 shadow-float backdrop-blur transition-transform duration-200',
+        open ? 'visible translate-x-0' : 'invisible -translate-x-full',
       )}
       aria-hidden={!open}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-paper-border px-3">
-        <span className="text-xs font-medium text-paper-ink">{t('assets.title')}</span>
-        <span className="rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] text-paper-goldtext">
-          {counts.all}
-        </span>
+        <button type="button" aria-pressed={tab !== 'outline'} onClick={() => setTab('all')}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-paper-muted aria-pressed:bg-paper-bg aria-pressed:font-medium aria-pressed:text-paper-ink">
+          {t('assets.title')}<span className="font-mono text-[10px] text-paper-goldtext">{counts.all}</span>
+        </button>
+        <button type="button" aria-pressed={tab === 'outline'} onClick={() => setTab('outline')}
+          className="rounded-md px-2 py-1 text-xs text-paper-muted aria-pressed:bg-paper-bg aria-pressed:font-medium aria-pressed:text-paper-ink">
+          {t('outline.title')}
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -120,7 +145,7 @@ export function AssetDrawer({
         </button>
       </div>
 
-      <div className="shrink-0 px-2.5 pt-2.5">
+      {tab !== 'outline' && <div className="shrink-0 px-2.5 pt-2.5">
         <label className="flex items-center gap-1.5 rounded-lg border border-paper-border bg-paper-bg px-2 py-1.5">
           <Search className="h-3.5 w-3.5 text-paper-muted" />
           <input
@@ -131,16 +156,17 @@ export function AssetDrawer({
           />
         </label>
 
-        <div className="mt-2 flex items-center gap-1">
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {TABS.map((item) => (
             <button
               key={item.key}
               type="button"
+              aria-pressed={tab === item.key}
               onClick={() => setTab(item.key)}
               className={clsx(
                 'flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition',
                 tab === item.key
-                  ? 'bg-paper-ink text-white'
+                  ? 'bg-paper-ink text-paper-card'
                   : 'text-paper-muted hover:bg-paper-bg hover:text-paper-ink',
               )}
             >
@@ -148,7 +174,7 @@ export function AssetDrawer({
               <span
                 className={clsx(
                   'font-mono text-[9px]',
-                  tab === item.key ? 'text-white/70' : 'text-paper-muted',
+                  tab === item.key ? 'text-paper-card/70' : 'text-paper-muted',
                 )}
               >
                 {counts[item.key]}
@@ -156,7 +182,7 @@ export function AssetDrawer({
             </button>
           ))}
         </div>
-      </div>
+      </div>}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
         {isParsing && (
@@ -165,7 +191,7 @@ export function AssetDrawer({
               <span>{t('assets.parsing')}</span>
               <span className="font-mono">{Math.round(parseProgress)}%</span>
             </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white">
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-paper-card">
               <div
                 className="h-full rounded-full bg-paper-gold transition-all duration-300"
                 style={{ width: `${parseProgress}%` }}
@@ -174,10 +200,10 @@ export function AssetDrawer({
             <div className="mt-2 space-y-1.5">
               {[0, 1].map((row) => (
                 <div key={row} className="flex animate-pulse items-center gap-2">
-                  <div className="h-8 w-12 rounded bg-white/80" />
+                  <div className="h-8 w-12 rounded bg-paper-card/80" />
                   <div className="flex-1 space-y-1">
-                    <div className="h-2 w-2/3 rounded bg-white/80" />
-                    <div className="h-2 w-1/3 rounded bg-white/60" />
+                    <div className="h-2 w-2/3 rounded bg-paper-card/80" />
+                    <div className="h-2 w-1/3 rounded bg-paper-card/60" />
                   </div>
                 </div>
               ))}
@@ -185,25 +211,34 @@ export function AssetDrawer({
           </div>
         )}
 
-        {(tab === 'all' || tab === 'figure' || tab === 'table') && filteredAssets.length > 0 && (
+        {tab === 'outline' && <nav aria-label={t('outline.title')}>
+          {outline.length ? <ul>{outline.map(item => <OutlineBranch key={item.id} item={item} onJump={entry => {
+            if (entry.pageNumber === null) return;
+            onClose();
+            const rect = entry.destY === undefined ? undefined : { x: 0.05, y: entry.destY, width: 0.9, height: 0.018 };
+            onLocate(entry.pageNumber, rect, entry.title);
+          }} />)}</ul> : !isParsing && <p className="px-2 py-8 text-center text-xs text-paper-muted">{t('outline.empty')}</p>}
+        </nav>}
+
+        {filteredAssets.length > 0 && (
           <div className="space-y-1.5">
             {filteredAssets.map((asset) => {
               const pinned = pinnedIds.includes(asset.key);
               return (
                 <div
                   key={asset.key}
-                  className="group flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-paper-border bg-white p-1.5 transition hover:border-paper-goldborder"
+                  className="group flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-paper-border bg-paper-card p-1.5 transition hover:border-paper-goldborder"
                 >
                   <button
                     type="button"
-                    onClick={() => onLocate(asset.pageNumber, asset)}
+                    onClick={() => onLocate(asset.pageNumber, asset.cropRect, asset.label)}
                     className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded border border-paper-border bg-paper-bg"
                   >
                     {asset.imageUrl ? (
                       <img
                         src={asset.imageUrl}
                         alt={asset.label}
-                        className="h-full w-full object-cover"
+                        className="pdf-image h-full w-full object-cover"
                       />
                     ) : asset.kind === 'table' ? (
                       <Table2 className="h-4 w-4 text-paper-muted" />
@@ -222,9 +257,9 @@ export function AssetDrawer({
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-[9px] text-paper-muted">{t('reader.page', { page: asset.pageNumber })}</p>
+                    <p className="truncate text-[9px] text-paper-muted"><span className="mr-1.5 rounded bg-paper-goldbg px-1 text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>{t('reader.page', { page: asset.pageNumber })}</p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
                     <button
                       type="button"
                       onClick={() => onPinAsset(asset)}
@@ -235,7 +270,7 @@ export function AssetDrawer({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onLocate(asset.pageNumber, asset)}
+                      onClick={() => onLocate(asset.pageNumber, asset.cropRect, asset.label)}
                       className="rounded p-1 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                       title={t('assets.source')}
                     >
@@ -261,7 +296,7 @@ export function AssetDrawer({
               return (
                 <div
                   key={reference.key}
-                  className="group flex flex-wrap items-start gap-x-2 gap-y-1.5 rounded-lg border border-transparent px-1.5 py-1.5 transition hover:border-paper-border hover:bg-white"
+                  className="group flex flex-wrap items-start gap-x-2 gap-y-1.5 rounded-lg border border-transparent px-1.5 py-1.5 transition hover:border-paper-border hover:bg-paper-card"
                 >
                   <span className="mt-0.5 w-8 shrink-0 font-mono text-[10px] text-paper-muted">
                     [{reference.index}]
@@ -295,7 +330,7 @@ export function AssetDrawer({
           </div>
         )}
 
-        {!isParsing &&
+        {tab !== 'outline' && !isParsing &&
           filteredAssets.length === 0 &&
           filteredReferences.length === 0 && (
             <p className="px-2 py-8 text-center text-[10px] leading-relaxed text-paper-muted">

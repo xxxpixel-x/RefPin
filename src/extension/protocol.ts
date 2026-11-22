@@ -1,8 +1,8 @@
 import type { DisplayMessage } from '../i18n/types';
 import type { TranslateConfig } from '../services/translator';
-import type { NormalizedRect } from '../types/paper';
+import type { AssetKind, NormalizedRect } from '../types/paper';
 
-export type CompanionAssetKind = 'figure' | 'table' | 'equation';
+export type CompanionAssetKind = AssetKind;
 
 export interface CompanionAsset {
   key: string;

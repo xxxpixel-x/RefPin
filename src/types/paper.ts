@@ -2,7 +2,16 @@
  * RefPin 共享数据结构契约（成员 A 初始化，双方只读）
  */
 
-export type CitationKind = 'figure' | 'table' | 'equation' | 'reference';
+export type AssetKind = 'figure' | 'table' | 'equation' | 'algorithm' | 'theorem' | 'section';
+export type CitationKind = AssetKind | 'reference';
+
+export interface OutlineItem {
+  id: string;
+  title: string;
+  pageNumber: number | null;
+  destY?: number;
+  children: OutlineItem[];
+}
 
 /** 相对页面左上角的归一化坐标（0~1） */
 export interface NormalizedRect {
@@ -56,7 +65,7 @@ export interface CitationBacklink {
 /** 论文中的一张图 / 一个表 / 一条公式 */
 export interface PaperAsset {
   key: string;
-  kind: 'figure' | 'table' | 'equation';
+  kind: AssetKind;
   label: string;
   caption: string;
   pageNumber: number;
@@ -127,6 +136,14 @@ export type JumpAnchor = {
   highlightRect?: NormalizedRect;
   label: string;
 } | null;
+
+export interface JumpPosition {
+  pageNumber: number;
+  scrollTop: number;
+  scrollLeft?: number;
+  highlightRect?: NormalizedRect;
+  label?: string;
+}
 
 export interface ReadingStats {
   savedFlips: number;

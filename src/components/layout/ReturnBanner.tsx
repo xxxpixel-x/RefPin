@@ -1,36 +1,28 @@
-import { t } from '../../i18n/core';
-import { CornerUpLeft, X } from 'lucide-react';
-import type { JumpAnchor } from '../../types/paper';
+import { ArrowLeft, ArrowRight, X } from 'lucide-react';
+import { useI18n } from '../../i18n';
+import { useReaderStore } from '../../store/useReaderStore';
 
-interface ReturnBannerProps {
-  anchor: JumpAnchor | null;
-  onReturn: (anchor: NonNullable<JumpAnchor>) => void;
-  onDismiss: () => void;
-}
-
-export function ReturnBanner({ anchor, onReturn, onDismiss }: ReturnBannerProps) {
-  if (!anchor) return null;
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center">
-      <div className="animate-fade-in-up pointer-events-auto flex items-center gap-1 rounded-full border border-paper-border bg-paper-ink px-1 py-1 pl-3 text-xs text-white shadow-float">
-        <button
-          type="button"
-          onClick={() => onReturn(anchor)}
-          className="flex items-center gap-1.5 pr-1 transition hover:text-paper-goldsoft"
-        >
-          <CornerUpLeft className="h-3.5 w-3.5" />
-          {t('reader.returnToPage', { page: anchor.fromPage })}
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="rounded-full p-1 text-white/60 transition hover:bg-white/10 hover:text-white"
-          aria-label={t('reader.dismissReturn')}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </div>
+export function ReturnBanner({ onNavigate }: { onNavigate: (direction: 'back' | 'forward') => void }) {
+  const { t } = useI18n();
+  const history = useReaderStore(state => state.jumpHistory);
+  const cursor = useReaderStore(state => state.historyCursor);
+  const visible = useReaderStore(state => state.historyVisible);
+  const place = history[cursor - 1]?.origin ?? history[cursor]?.target;
+  if (!visible || !place) return null;
+  return <nav aria-label={t('reader.return')} className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">
+    <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-paper-border bg-paper-card/95 px-2 py-1 text-xs text-paper-ink shadow-float">
+      {(['back', 'forward'] as const).map(direction => {
+        const back = direction === 'back';
+        const Icon = back ? ArrowLeft : ArrowRight;
+        const title = t(back ? 'history.back' : 'history.forward');
+        return <button key={direction} type="button" title={title} aria-label={title}
+          disabled={back ? cursor === 0 : cursor === history.length} onClick={() => onNavigate(direction)}
+          className="rounded-full p-1.5 hover:bg-paper-bg disabled:opacity-30"><Icon size={14} /></button>;
+      })}
+      <span className="max-w-40 truncate border-l border-paper-border px-2">{place.label && place.label + ' · '}{t('reader.page', { page: place.pageNumber })}</span>
+      <kbd className="hidden text-[10px] text-paper-muted sm:inline">Alt+←/→</kbd>
+      <button type="button" onClick={useReaderStore.getState().dismissHistory} aria-label={t('reader.dismissReturn')}
+        className="rounded-full p-1.5 text-paper-muted hover:bg-paper-bg"><X size={12} /></button>
     </div>
-  );
+  </nav>;
 }

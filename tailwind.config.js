@@ -5,16 +5,16 @@ export default {
     extend: {
       colors: {
         paper: {
-          bg: '#F7F6F3',
-          card: '#FFFFFF',
-          border: '#E7E5E4',
-          ink: '#1C1917',
-          muted: '#78716C',
-          gold: '#D97706',
-          goldsoft: '#FEF3C7',
-          goldbg: '#FFFBEB',
-          goldborder: '#FDE68A',
-          goldtext: '#B45309',
+          bg: 'rgb(var(--paper-bg-rgb) / <alpha-value>)',
+          card: 'rgb(var(--paper-card-rgb) / <alpha-value>)',
+          border: 'rgb(var(--paper-border-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--paper-ink-rgb) / <alpha-value>)',
+          muted: 'rgb(var(--paper-muted-rgb) / <alpha-value>)',
+          gold: 'rgb(var(--paper-gold-rgb) / <alpha-value>)',
+          goldsoft: 'rgb(var(--paper-goldsoft-rgb) / <alpha-value>)',
+          goldbg: 'rgb(var(--paper-goldbg-rgb) / <alpha-value>)',
+          goldborder: 'rgb(var(--paper-goldborder-rgb) / <alpha-value>)',
+          goldtext: 'rgb(var(--paper-goldtext-rgb) / <alpha-value>)',
         },
       },
       fontFamily: {

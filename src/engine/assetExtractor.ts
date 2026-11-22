@@ -2,7 +2,7 @@ import { LocalizedError, message } from '../i18n/core';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { NormalizedRect, PaperAsset } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
-import { parseCaptionLabel } from './captionLabel';
+import { parseCaptionLabel, parseStructureHeading } from './captionLabel';
 import { clamp, clampRect, isInsideRefRange, isTwoColumnPage } from './utils';
 
 /** 离屏渲染倍率：2.0 保证钉板与灯箱里的图足够清晰 */
@@ -343,6 +343,95 @@ function collectCaptions(
   return captions;
 }
 
+interface StructureBlock {
+  header: NonNullable<ReturnType<typeof parseStructureHeading>>;
+  line: TextLine;
+  band: [number, number];
+  bottom: number;
+  limit: number;
+}
+
+function collectStructureBlocks(lines: TextLine[], refRange?: RefRange): StructureBlock[] {
+  const ordered = [...lines].sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+  const twoColumns = isTwoColumnPage(lines);
+  const blocks: StructureBlock[] = [];
+  const algorithmSteps = new Set<TextLine>();
+  for (const [index, line] of ordered.entries()) {
+    if (algorithmSteps.has(line) || isInsideRefRange(line.pageNumber, line.baseline, refRange)) continue;
+    // PDF.js sometimes separates the section number from its title at the tab stop.
+    let title = line.text.trim();
+    if (/^(?:\d{1,2}|[A-Z])(?:\.\d+)*\.?$/.test(title)) {
+      const next = ordered[index + 1];
+      const gap = next && next.rect.x - line.rect.x - line.rect.width;
+      if (next && Math.abs(next.baseline - line.baseline) < line.rect.height / 2 && gap >= 0 && gap < 0.085) {
+        title += ' ' + next.text;
+      }
+    }
+    const header = parseStructureHeading(title);
+    if (!header) continue;
+    const band = columnRange(line, twoColumns);
+    const column = ordered.filter(other => overlapsBand(...band, other));
+    // Ignore page numbers and marginal labels when estimating the column edge.
+    const bodyMargins = column.filter(other => other.rect.width >= 0.18 && other.rect.y > 0.04 && other.rect.y < 0.96)
+      .map(other => other.rect.x).sort((a, b) => a - b);
+    const margin = bodyMargins[Math.floor(bodyMargins.length / 4)] ?? band[0] + 0.05;
+    if (header.kind === 'theorem' && line.rect.x > margin + 0.05) continue;
+    // Dotted leaders point to another page, rather than introducing a section here.
+    if (header.kind === 'section' && /\.{2,}|…/.test(title)) continue;
+    let bottom = line.rect.y + line.rect.height;
+    let limit = Math.min(1, line.rect.y + 0.34);
+    if (header.kind === 'section') {
+      bottom = Math.min(1, line.rect.y + 0.24);
+    } else {
+      let hasIndentedBody = false;
+      for (const next of column) {
+        if (next.rect.y <= line.rect.y + line.rect.height * 0.4) continue;
+        if (next.rect.y >= limit) break;
+        const gap = next.rect.y - bottom;
+        const nextHeading = parseStructureHeading(next.text);
+        // Numbered pseudocode steps often start with a capitalized instruction.
+        const headingBoundary = nextHeading && !(header.kind === 'algorithm' &&
+          nextHeading.kind === 'section' && /^\d+[.):]?\s/.test(next.text));
+        const returnsToMargin = header.kind === 'algorithm' && hasIndentedBody && next.rect.x <= line.rect.x + 0.005 &&
+          !/^(?:\d+[.):]?\s|input\b|output\b|return\b|end\b|输入|输出|返回|结束)/i.test(next.text);
+        if (returnsToMargin || gap > Math.max(0.012, line.rect.height * 0.95) ||
+            /^(?:proof\b|证明|证[：:])/i.test(next.text.trim()) || headingBoundary ||
+            parseCaptionLabel(next.text) || isInsideRefRange(line.pageNumber, next.baseline, refRange)) {
+          limit = next.rect.y - 0.002;
+          break;
+        }
+        if (next.rect.x > line.rect.x + 0.012) hasIndentedBody = true;
+        if (header.kind === 'algorithm' && nextHeading?.kind === 'section') algorithmSteps.add(next);
+        bottom = Math.min(limit, Math.max(bottom, next.rect.y + next.rect.height));
+      }
+    }
+    blocks.push({ header, line, band, bottom, limit });
+  }
+  return blocks;
+}
+
+// Long, continuous ink runs identify the horizontal rules enclosing pseudocode.
+function algorithmBounds(bitmap: PageBitmap, block: StructureBlock, top: number, bottom: number) {
+  const [left, right] = block.band;
+  const start = Math.floor(left * bitmap.width);
+  const end = Math.floor(right * bitmap.width);
+  const minRun = (end - start) * 0.45;
+  const headerEnd = block.line.rect.y + block.line.rect.height;
+  for (let y = Math.max(0, Math.floor((top - 0.009) * bitmap.height));
+       y < Math.min(bitmap.height, Math.ceil(block.limit * bitmap.height)); y++) {
+    let run = 0;
+    for (let x = start; x < end; x += 2) {
+      run = pixelIsDark(bitmap.image, x, y) ? run + 2 : 0;
+      if (run < minRun) continue;
+      const pos = y / bitmap.height;
+      if (pos <= block.line.rect.y) top = Math.min(top, pos - 0.003);
+      else if (pos > headerEnd + block.line.rect.height) return [top, pos + 0.004];
+      break;
+    }
+  }
+  return [top, bottom];
+}
+
 export interface ExtractAssetsOptions {
   refRange?: RefRange;
   signal?: AbortSignal;
@@ -392,7 +481,8 @@ export async function extractAssets(
     }
   }
 
-  const total = captions.length + equationCandidates.length;
+  const blocks = Object.values(linesByPage).flatMap(lines => collectStructureBlocks(lines, options.refRange));
+  const total = captions.length + equationCandidates.length + blocks.length;
   let done = 0;
   const report = () => {
     done += 1;
@@ -550,6 +640,27 @@ export async function extractAssets(
     } catch {
       signal?.throwIfAborted();
       // 单张图失败不影响整篇
+    }
+    report();
+  }
+
+  for (const block of blocks) {
+    signal?.throwIfAborted();
+    const { line, header, band } = block;
+    try {
+      if (!assets[header.key]) {
+        const bitmap = await getPageBitmap(doc, line.pageNumber, RENDER_SCALE, signal);
+        signal?.throwIfAborted();
+        let top = line.rect.y - 0.006;
+        let bottom = Math.min(block.limit, block.bottom + 0.005);
+        if (header.kind === 'algorithm') [top, bottom] = algorithmBounds(bitmap, block, top, bottom);
+        const cropRect = clampRect({ x: band[0], y: Math.max(0, top), width: band[1] - band[0], height: bottom - Math.max(0, top) });
+        const imageUrl = cropToDataUrl(bitmap, cropRect.x * bitmap.width, cropRect.y * bitmap.height,
+          cropRect.width * bitmap.width, cropRect.height * bitmap.height);
+        assets[header.key] = { ...header, caption: line.text.trim(), pageNumber: line.pageNumber, cropRect, imageUrl };
+      }
+    } catch {
+      signal?.throwIfAborted();
     }
     report();
   }

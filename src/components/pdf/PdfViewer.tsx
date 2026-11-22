@@ -1,3 +1,4 @@
+import { getCachedPageLines, nearestLineIndex, type SearchMatch } from '../../engine/pageLinesCache';
 import { t } from '../../i18n/core';
 import {
   forwardRef,
@@ -5,6 +6,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -27,7 +29,8 @@ export interface PdfViewerHandle {
     flashHighlight?: boolean,
     flashRect?: NormalizedRect,
     scrollLeft?: number,
-  ) => void;
+  ) => { scrollTop: number; scrollLeft: number } | undefined;
+  stepRuler: (delta: -1 | 1) => void;
   getScrollTop: () => number;
   getScrollLeft: () => number;
 }
@@ -37,6 +40,8 @@ interface Props {
   scale: number;
   citationsByPage: Record<number, InlineCitation[]>;
   glossaryMentionsByPage: Record<number, GlossaryMention[]>;
+  searchMatches: SearchMatch[];
+  activeMatch?: SearchMatch;
   snipMode: boolean;
   /** 文档就绪后自动滚到的起始页（示例论文直达演示页） */
   initialPage?: number;
@@ -54,6 +59,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     scale,
     citationsByPage,
     glossaryMentionsByPage,
+    searchMatches,
+    activeMatch,
     snipMode,
     initialPage,
     initialScrollTop,
@@ -65,6 +72,13 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   },
   ref,
 ) {
+  const rulerEnabled = useReaderStore(state => state.readingRulerEnabled);
+  const [ruler, setRuler] = useState<{ page: number; index: number; rect: NormalizedRect } | null>(null);
+  const pageMatches = useMemo(() => {
+    const byPage: Record<number, SearchMatch[]> = {};
+    for (const match of searchMatches) (byPage[match.pageNumber] ??= []).push(match);
+    return byPage;
+  }, [searchMatches]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const flashTimerRef = useRef<number | null>(null);
   const lastPageRef = useRef(0);
@@ -172,7 +186,9 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
         }
       }
 
-      container.scrollTo({ top: Math.max(0, top), left: Math.max(0, left), behavior: 'smooth' });
+      top = Math.max(0, Math.min(top, container.scrollHeight - container.clientHeight));
+      left = Math.max(0, Math.min(left, container.scrollWidth - container.clientWidth));
+      container.scrollTo({ top, left, behavior: 'smooth' });
 
       if (flashHighlight) {
         if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
@@ -182,18 +198,50 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
         setFlash({ pageNumber, rect: highlightRect, token: Date.now() });
         flashTimerRef.current = window.setTimeout(() => setFlash(null), 1800);
       }
+      return { scrollTop: top, scrollLeft: left };
     },
     [],
   );
+
+  useEffect(() => {
+    if (activeMatch && dims?.length) scrollToPosition(activeMatch.pageNumber, activeMatch.rect);
+  }, [activeMatch, dims, scrollToPosition]);
+
+  const lockRuler = useCallback((page: number, x: number, y: number) => {
+    const lines = getCachedPageLines(pdfDoc)?.[page] ?? [];
+    const index = nearestLineIndex(lines, x, y);
+    setRuler({ page, index, rect: lines[index]?.rect ?? { x: 0.035, y: Math.min(0.984, Math.max(0, y - 0.008)), width: 0.93, height: 0.016 } });
+  }, [pdfDoc]);
+
+  const stepRuler = useCallback((delta: -1 | 1) => {
+    const page = ruler?.page ?? useReaderStore.getState().currentPage;
+    const lines = getCachedPageLines(pdfDoc)?.[page];
+    if (!lines?.length) return;
+    let current = delta > 0 ? -1 : lines.length;
+    if (ruler) current = ruler.index >= 0 ? ruler.index :
+      nearestLineIndex(lines, ruler.rect.x + ruler.rect.width / 2, ruler.rect.y + ruler.rect.height / 2);
+    const index = Math.max(0, Math.min(lines.length - 1, current + delta));
+    const line = lines[index];
+    setRuler({ page, index, rect: line.rect });
+    const container = scrollRef.current;
+    const bounds = container?.querySelector('[data-page="' + page + '"]')?.getBoundingClientRect();
+    if (!bounds || !container) return;
+    const viewport = container.getBoundingClientRect();
+    const x = bounds.left + line.rect.x * bounds.width;
+    const y = bounds.top + line.rect.y * bounds.height;
+    if (y < viewport.top + 16 || y + line.rect.height * bounds.height > viewport.bottom - 16 ||
+        x < viewport.left || x + line.rect.width * bounds.width > viewport.right) scrollToPosition(page, line.rect);
+  }, [pdfDoc, ruler, scrollToPosition]);
 
   useImperativeHandle(
     ref,
     () => ({
       scrollToPosition,
+      stepRuler,
       getScrollTop: () => scrollRef.current?.scrollTop ?? 0,
       getScrollLeft: () => scrollRef.current?.scrollLeft ?? 0,
     }),
-    [scrollToPosition],
+    [scrollToPosition, stepRuler],
   );
 
   const handleScroll = useCallback(() => {
@@ -258,7 +306,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     >
       {snipMode && (
         <div className="pointer-events-none sticky top-3 z-40 flex justify-center">
-          <div className="pointer-events-auto rounded-full border border-amber-200 bg-amber-50/95 px-4 py-1.5 text-xs text-amber-800 shadow-sm backdrop-blur">
+          <div className="pointer-events-auto rounded-full border border-paper-goldborder bg-paper-goldbg/95 px-4 py-1.5 text-xs text-paper-goldtext shadow-sm backdrop-blur">
             {t('snip.instructions')}
           </div>
         </div>
@@ -282,6 +330,10 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
               citations={citationsByPage[index + 1] ?? NO_CITATIONS}
               glossaryMentions={glossaryMentionsByPage[index + 1] ?? NO_GLOSSARY_MENTIONS}
               flash={flash?.pageNumber === index + 1 ? flash : null}
+              searchMatches={pageMatches[index + 1]}
+              activeMatchId={activeMatch?.pageNumber === index + 1 ? activeMatch.id : undefined}
+              rulerRect={rulerEnabled && ruler?.page === index + 1 ? ruler.rect : undefined}
+              onLockRuler={rulerEnabled ? lockRuler : undefined}
               snipMode={snipMode}
               onMentionHover={onMentionHover}
               onMentionLeave={onMentionLeave}

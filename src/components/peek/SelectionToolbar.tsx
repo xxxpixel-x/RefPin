@@ -125,7 +125,7 @@ export function SelectionToolbar({ viewerRef }: { viewerRef: RefObject<HTMLEleme
     selection.addRange(range);
   }
   return createPortal(
-    <div ref={toolbar} className="fixed z-[60] max-w-[calc(100vw-16px)] overflow-y-auto rounded-lg border border-paper-border bg-white text-xs text-paper-ink shadow-float"
+    <div ref={toolbar} className="fixed z-[60] max-w-[calc(100vw-16px)] overflow-y-auto rounded-lg border border-paper-border bg-paper-card text-xs text-paper-ink shadow-float"
       style={{ left: anchor.left, [anchor.above ? 'bottom' : 'top']: anchor.edge, maxHeight: Math.max(48, window.innerHeight - anchor.edge - 8) }}
       onMouseDown={event => { if ((event.target as Element).closest('button')) event.preventDefault(); }}>
       <SelectionActions key={anchor.text} text={anchor.text} restoreSelection={restoreSelection} />
@@ -134,7 +134,7 @@ export function SelectionToolbar({ viewerRef }: { viewerRef: RefObject<HTMLEleme
 }
 
 const actionClass = 'inline-flex items-center gap-1.5 rounded px-2 py-1.5 hover:bg-paper-bg disabled:text-paper-muted';
-const fieldClass = 'mt-1 w-full rounded-md border border-paper-border bg-white px-2 py-1.5 text-paper-ink focus:border-paper-gold focus:outline-none';
+const fieldClass = 'mt-1 w-full rounded-md border border-paper-border bg-paper-card px-2 py-1.5 text-paper-ink focus:border-paper-gold focus:outline-none';
 
 function SelectionActions({ text, restoreSelection }: { text: string; restoreSelection: () => void }) {
   const [config, setConfig] = useState<TranslateConfig>(WEB_TRANSLATE_CONFIG);
@@ -248,7 +248,7 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       <p className="text-[11px] leading-relaxed text-paper-muted">{t('translate.privacy')}</p>
       <div className="flex justify-between">
         <button type="button" className={actionClass} onClick={() => void clearKey()}>{t('settings.clearKey')}</button>
-        <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-white">{t('settings.save')}</button>
+        <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-paper-card">{t('settings.save')}</button>
       </div>
     </form>}
     {!settings && translation && <div className="w-80 max-w-full border-t border-paper-border px-3 py-2">

@@ -8,3 +8,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>,
 );
+
+if (import.meta.env.PROD && location.protocol !== 'chrome-extension:' && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(() => {
+    // Private sessions may disable offline installation.
+  });
+}

@@ -101,10 +101,10 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
         applySelection(null);
       }}
     >
-      <div className="pointer-events-none absolute inset-0 bg-amber-500/[0.04]" />
+      <div className="pointer-events-none absolute inset-0 bg-paper-gold/[0.04]" />
       {selection && (
         <div
-          className="pointer-events-none absolute border border-dashed border-amber-500 bg-amber-400/15"
+          className="pointer-events-none absolute border border-dashed border-paper-gold bg-paper-gold/15"
           style={{
             left: selection.x,
             top: selection.y,
@@ -112,13 +112,13 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
             height: selection.height,
           }}
         >
-          <span className="absolute -top-6 left-0 rounded bg-paper-ink px-1.5 py-0.5 font-mono text-[10px] text-white">
+          <span className="absolute -top-6 left-0 rounded bg-paper-ink px-1.5 py-0.5 font-mono text-[10px] text-paper-card">
             {Math.round(selection.width)} × {Math.round(selection.height)}
           </span>
         </div>
       )}
       {busy && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/60 text-sm text-paper-ink">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-card/60 text-sm text-paper-ink">
           {t('snip.rendering')}
         </div>
       )}

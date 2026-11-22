@@ -16,11 +16,11 @@ import { PinDock } from '../components/dock/PinDock';
 import { LightboxModal } from '../components/dock/LightboxModal';
 import { AssetDrawer } from '../components/drawer/AssetDrawer';
 import { SAMPLES } from '../config/samples';
+import { useReaderStore } from '../store/useReaderStore';
 import { buildBacklinksMap } from '../engine/backlinks';
 import type {
   DockPosition,
   InlineCitation,
-  JumpAnchor,
   PaperAsset,
   PinnedItem,
   ReferenceEntry,
@@ -45,7 +45,6 @@ export function BPreview() {
   const [dockPosition, setDockPosition] = useState<DockPosition>('right');
   const [dockWidth, setDockWidth] = useState(388);
   const [dockHeight, setDockHeight] = useState(264);
-  const [jumpAnchor, setJumpAnchor] = useState<JumpAnchor>(null);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [toast, setToast] = useState<DisplayMessage | null>(null);
@@ -122,11 +121,7 @@ export function BPreview() {
 
   const jumpTo = useCallback(
     (pageNumber: number, _rect?: InlineCitation['rect']) => {
-      setJumpAnchor({
-        fromPage: currentPage,
-        fromScrollTop: 0,
-        label: t('reader.returnToPage', { page: currentPage }),
-      });
+      useReaderStore.getState().recordJump({ pageNumber: currentPage, scrollTop: 0 }, { pageNumber, scrollTop: 0 });
       setCurrentPage(pageNumber);
       setHoverTrigger(null);
     },
@@ -193,7 +188,7 @@ export function BPreview() {
         onZoom={(value) => setScale(Math.min(2.5, Math.max(0.6, value)))}
         onToggleSnip={() => setSnipMode((value) => !value)}
         onToggleDrawer={() => setDrawerOpen((value) => !value)}
-        onReset={() => setView('landing')}
+        onReset={() => { useReaderStore.getState().resetPaper(); setView('landing'); }}
         onOpenFile={(file) => setFileName(file.name)}
       />
 
@@ -216,7 +211,7 @@ export function BPreview() {
           onClose={() => setDrawerOpen(false)}
           onPinAsset={pinAsset}
           onPinReference={pinReference}
-          onLocate={(pageNumber, asset) => jumpTo(pageNumber, asset?.cropRect)}
+          onLocate={jumpTo}
         />
 
         <main
@@ -224,17 +219,13 @@ export function BPreview() {
             drawerOpen ? 'pl-[304px]' : 'pl-6'
           }`}
         >
-          <ReturnBanner
-            anchor={jumpAnchor}
-            onReturn={(anchor) => {
-              setCurrentPage(anchor.fromPage);
-              setJumpAnchor(null);
-            }}
-            onDismiss={() => setJumpAnchor(null)}
-          />
+          <ReturnBanner onNavigate={direction => {
+            const position = useReaderStore.getState().navigateHistory(direction);
+            if (position) setCurrentPage(position.pageNumber);
+          }} />
 
           <div
-            className="mx-auto origin-top bg-white shadow-paper"
+            className="mx-auto origin-top bg-paper-card shadow-paper"
             style={{
               width: 'min(760px, 100%)',
               minHeight: 900,
@@ -382,14 +373,14 @@ export function BPreview() {
 
       {snipMode && (
         <div className="pointer-events-none fixed inset-x-0 top-16 z-30 flex justify-center">
-          <span className="rounded-full bg-paper-ink px-4 py-1.5 text-[11px] text-white shadow-float">
+          <span className="rounded-full bg-paper-ink px-4 py-1.5 text-[11px] text-paper-card shadow-float">
             {t('preview.snip')}
           </span>
         </div>
       )}
 
       {toast && (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-white shadow-float">
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-paper-card shadow-float">
           {formatMessage(toast)}
         </div>
       )}

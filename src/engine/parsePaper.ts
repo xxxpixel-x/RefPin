@@ -1,14 +1,16 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { InlineCitation, PaperAsset, ReferenceEntry } from '../types/paper';
+import type { InlineCitation, OutlineItem, PaperAsset, ReferenceEntry } from '../types/paper';
 import { extractPageLines } from './pdfLoader';
 import { detectCitations } from './citationDetector';
 import { extractAssets, resetAssetCache } from './assetExtractor';
 import { parseReferences } from './referenceParser';
 import { parseGlossary, type GlossaryResult } from './glossaryParser';
 import type { LinesByPage } from './types';
+import { extractPdfOutline } from './outlineParser';
 import { cachePageLines } from './pageLinesCache';
 
 export interface ParsePaperResult extends GlossaryResult {
+  outline: OutlineItem[];
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
   citationsByPage: Record<number, InlineCitation[]>;
@@ -47,6 +49,8 @@ export async function parsePaper(
   }
 
   signal?.throwIfAborted();
+  // Search and the ruler can use all pages while the bitmap crops are still rendering.
+  cachePageLines(doc, linesByPage);
   const { referencesMap, refRange } = parseReferences(linesByPage);
   onProgress(20);
 
@@ -62,9 +66,10 @@ export async function parsePaper(
   });
 
   signal?.throwIfAborted();
-  cachePageLines(doc, linesByPage);
+  const outline = await extractPdfOutline(doc, signal);
+  signal?.throwIfAborted();
   const isImageOnly = doc.numPages > 0 && Object.values(linesByPage).every((lines) => !lines.length);
   onProgress(100);
 
-  return { assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
+  return { outline, assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
 }

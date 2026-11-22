@@ -1,3 +1,4 @@
+import type { SearchMatch } from '../../engine/pageLinesCache';
 import { useI18n } from '../../i18n';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
@@ -20,11 +21,19 @@ interface Props {
   pageHeight: number;
   citations: InlineCitation[];
   glossaryMentions: GlossaryMention[];
+  searchMatches?: SearchMatch[];
+  activeMatchId?: string;
+  rulerRect?: NormalizedRect;
+  onLockRuler?: (page: number, x: number, y: number) => void;
   flash?: FlashHighlight | null;
   snipMode: boolean;
   onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onMentionLeave?: () => void;
   onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
+}
+
+function overlayPosition(rect: NormalizedRect): CSSProperties {
+  return { left: rect.x * 100 + '%', top: rect.y * 100 + '%', width: rect.width * 100 + '%', height: rect.height * 100 + '%' };
 }
 
 export const PdfPageCanvas = memo(function PdfPageCanvas({
@@ -37,6 +46,10 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   citations,
   glossaryMentions,
   flash,
+  searchMatches,
+  activeMatchId,
+  rulerRect,
+  onLockRuler,
   snipMode,
   onMentionHover,
   onMentionLeave,
@@ -174,21 +187,27 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
       onClick={event => {
         const press = pressRef.current;
         pressRef.current = null;
-        if (!press?.mention || press.dragged || snipMode || window.getSelection()?.toString().trim()) return;
+        if (!press || press.dragged || snipMode || window.getSelection()?.toString().trim() ||
+            Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) return;
+        if (!press.mention && mentionAt(event) === -1 && onLockRuler && !(event.target as HTMLElement).closest('button')) {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          onLockRuler(pageNumber, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+          return;
+        }
+        if (!press.mention) return;
         const index = mentionAt(event);
         const anchor = hotspotsRef.current?.children[index];
-        if (anchor instanceof HTMLElement && Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 4 &&
-            mentions[index] === press.mention) onMentionClick?.(press.mention, anchor);
+        if (anchor instanceof HTMLElement && mentions[index] === press.mention) onMentionClick?.(press.mention, anchor);
       }}
       data-page={pageNumber}
-      className="relative mx-auto overflow-hidden rounded-sm bg-white shadow-paper ring-1 ring-black/[0.04]"
+      className="relative mx-auto overflow-hidden rounded-sm bg-paper-card shadow-paper ring-1 ring-black/[0.04]"
       style={{ width: pageWidth, height: pageHeight, '--scale-factor': scale } as CSSProperties}
     >
       {isVisible && !rendered && (
-        <div className="absolute inset-0 animate-pulse bg-gradient-to-b from-[#F4F2EE] to-white" />
+        <div className="absolute inset-0 animate-pulse bg-paper-bg" />
       )}
 
-      <canvas ref={canvasRef} width={0} height={0} className="block h-full w-full select-none" />
+      <canvas ref={canvasRef} width={0} height={0} className="pdf-image block h-full w-full select-none" />
 
       {isVisible && <div ref={textRef} className="textLayer" />}
 
@@ -218,10 +237,15 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         </div>
       )}
 
+      {isVisible && searchMatches?.map(match => <div key={match.id} aria-hidden="true" style={overlayPosition(match.rect)}
+        className={'pointer-events-none absolute z-[5] rounded-sm ' + (match.id === activeMatchId
+          ? 'bg-paper-gold/40 ring-2 ring-paper-gold' : 'bg-paper-gold/25')} />)}
+      {isVisible && rulerRect && <div aria-hidden="true" style={overlayPosition(rulerRect)}
+        className="pointer-events-none absolute z-[6] border-b border-paper-gold/60 bg-paper-gold/15" />}
       {flash && flash.pageNumber === pageNumber && (
         <div
           key={flash.token}
-          className="citation-flash pointer-events-none absolute z-20 rounded-[4px] bg-amber-300/60 ring-2 ring-amber-500/40"
+          className="citation-flash pointer-events-none absolute z-20 rounded-[4px] bg-paper-gold/30 ring-2 ring-paper-gold/40"
           style={{
             left: `${flash.rect.x * 100}%`,
             top: `${flash.rect.y * 100}%`,

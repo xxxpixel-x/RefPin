@@ -1,3 +1,4 @@
+import { usePreviewColor } from '../peek/usePreviewColor';
 import { pinTitle } from '../../i18n/pinTitle';
 import { t } from '../../i18n/core';
 import { useEffect, useRef, useState } from 'react';
@@ -77,6 +78,7 @@ export function PinnedCard({
   onHoverEnd,
   onRequestCloseZoom,
 }: PinnedCardProps) {
+  const { filter, colorToggle } = usePreviewColor(item.id);
   const cardRef = useRef<HTMLElement>(null);
   const [editing, setEditing] = useState(false);
   const displayTitle = pinTitle(item);
@@ -122,7 +124,7 @@ export function PinnedCard({
         onHoverEnd?.(item.id);
       }}
       className={clsx(
-        'group relative overflow-hidden rounded-xl border bg-white will-change-transform',
+        'group relative overflow-hidden rounded-xl border bg-paper-card will-change-transform',
         isHorizontalDock
           ? item.collapsed
             ? 'flex h-auto w-[248px] shrink-0 self-start flex-col'
@@ -130,10 +132,10 @@ export function PinnedCard({
           : 'w-full',
         !isZoomedOverlay &&
           'shadow-paper transition-[transform,box-shadow,border-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-paper-goldborder hover:shadow-float',
-        isZoomedOverlay && 'border-paper-goldborder/90 ring-1 ring-amber-400/25',
+        isZoomedOverlay && 'border-paper-goldborder/90 ring-1 ring-paper-gold/25',
         !isZoomedOverlay &&
           (highlighted
-            ? 'border-paper-gold ring-2 ring-amber-400/50'
+            ? 'border-paper-gold ring-2 ring-paper-gold/50'
             : 'border-paper-border'),
         isLifted && !isZoomedOverlay && 'scale-[0.985] opacity-35',
       )}
@@ -274,7 +276,7 @@ export function PinnedCard({
               <img
                 src={item.imageUrl}
                 alt={displayTitle}
-                style={{ maxHeight: imageMaxHeight }}
+                style={{ maxHeight: imageMaxHeight, filter }}
                 className={clsx(
                   'w-full cursor-zoom-in object-contain transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
                   isHorizontalDock && 'h-full',
@@ -284,6 +286,7 @@ export function PinnedCard({
                   onOpenLightbox(item);
                 }}
               />
+              <div className="absolute right-1.5 top-1.5">{colorToggle}</div>
               <div
                 className={clsx(
                   'absolute inset-x-1.5 bottom-1.5 flex flex-wrap items-center justify-center gap-1 transition-opacity duration-200',
@@ -298,7 +301,7 @@ export function PinnedCard({
                     event.stopPropagation();
                     onExpandCrop(item.id, 'up');
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('crop.upHint')}
                 >
                   <ArrowUpToLine className="h-2.5 w-2.5" /> {t('crop.up')}
@@ -309,7 +312,7 @@ export function PinnedCard({
                     event.stopPropagation();
                     onExpandCrop(item.id, 'down');
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('crop.downHint')}
                 >
                   <ArrowDownToLine className="h-2.5 w-2.5" /> {t('crop.down')}
@@ -334,7 +337,7 @@ export function PinnedCard({
                     onRequestCloseZoom?.();
                     onOpenLightbox(item);
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('lightbox.openHint')}
                 >
                   <Maximize2 className="h-2.5 w-2.5" /> {t('lightbox.open')}
@@ -397,7 +400,7 @@ export function PinnedCard({
                       setCopied(false);
                     }
                   }}
-                  className="flex items-center gap-1 rounded-md border border-paper-border bg-white px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
+                  className="flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
                 >
                   {copied ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
                   {copied ? t('common.copied') : t('reference.copyBibtex')}
@@ -408,7 +411,7 @@ export function PinnedCard({
                   )}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1 rounded-md border border-paper-border bg-white px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
+                  className="flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
                 >
                   <Search className="h-2.5 w-2.5" /> Scholar
                   <ExternalLink className="h-2 w-2 text-paper-muted" />

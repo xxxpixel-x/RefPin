@@ -10,6 +10,34 @@ describe('detectCitations', () => {
     ['Figure 1a', 'figure', ['fig-1a']],
     ['Table 1', 'table', ['tab-1']],
     ['Eq. (3)', 'equation', ['eq-3']],
+    ['Algorithm 1', 'algorithm', ['alg-1']],
+    ['Algorithms 1 and 2', 'algorithm', ['alg-1', 'alg-2']],
+    ['Alg. A.1', 'algorithm', ['alg-a.1']],
+    ['算法 1', 'algorithm', ['alg-1']],
+    ['Theorem 2', 'theorem', ['thm-2']],
+    ['Thm. 2.1', 'theorem', ['thm-2.1']],
+    ['Lemma 1', 'theorem', ['lem-1']],
+    ['Lem. A.1', 'theorem', ['lem-a.1']],
+    ['Proposition 3', 'theorem', ['prop-3']],
+    ['Prop. 3', 'theorem', ['prop-3']],
+    ['Corollary 1', 'theorem', ['cor-1']],
+    ['Cor. 1', 'theorem', ['cor-1']],
+    ['Definition 2', 'theorem', ['def-2']],
+    ['Def. 2', 'theorem', ['def-2']],
+    ['定理 2', 'theorem', ['thm-2']],
+    ['引理 1', 'theorem', ['lem-1']],
+    ['命题 3', 'theorem', ['prop-3']],
+    ['推论 1', 'theorem', ['cor-1']],
+    ['定义 2', 'theorem', ['def-2']],
+    ['Section 3.2', 'section', ['sec-3.2']],
+    ['Sec. 3.2', 'section', ['sec-3.2']],
+    ['Secs. 3 and 4', 'section', ['sec-3', 'sec-4']],
+    ['§3.2', 'section', ['sec-3.2']],
+    ['Appendix A', 'section', ['app-a']],
+    ['Appendix B.1', 'section', ['app-b.1']],
+    ['App. A', 'section', ['app-a']],
+    ['第 3.2 节', 'section', ['sec-3.2']],
+    ['附录 A', 'section', ['app-a']],
     ['[14]', 'reference', ['ref-14']],
     ['[1, 3-5]', 'reference', ['ref-1', 'ref-3', 'ref-4', 'ref-5']],
     ['图 2', 'figure', ['fig-2']],
@@ -33,6 +61,30 @@ describe('detectCitations', () => {
       textLine('[14] A reference entry.', { y: 0.5 }),
     ] }, { refRange: { startPage: 1, startY: 0.48, endPage: 1, endY: 0.65 } });
     expect(hits.map((hit) => hit.rawText)).toEqual(['Figure 1a']);
+  });
+
+  it('ignores unnumbered environments, longer words and references inside the bibliography', async () => {
+    const lines = [textLine('These apps follow a theorem. Lemma A and Proposition 2nd are labels.'),
+      textLine('Algorithm 1 runs in linear time.', { y: 0.3 }),
+      textLine('Theorem 2 (Bound). The bound holds.', { y: 0.4 }),
+      textLine('See Appendix A and Algorithm 9.', { y: 0.5 })];
+    const { 1: hits } = await detectCitations(annotationDoc(), { 1: lines },
+      { refRange: { startPage: 1, endPage: 1, startY: 0.48, endY: 0.8 } });
+    expect(hits.map(hit => hit.targetKeys)).toEqual([['alg-1']]);
+  });
+
+  it('merges a number-only annotation with an inline theorem and infers bare appendix links from their destination', async () => {
+    const line = textLine('See Lemma 3 or B.1');
+    const annotation = (start: number, dest: unknown) => {
+      const r = line.chars[start].rect;
+      return { subtype: 'Link', dest, rect: [r.x, r.y, r.x + r.width, r.y + r.height] };
+    };
+    const doc = annotationDoc([annotation(10, [2, { name: 'Fit' }]), annotation(15, 'appendix.B.1')]);
+    doc.getDestination = async () => [1, { name: 'Fit' }];
+    const { 1: hits } = await detectCitations(doc, { 1: [line] });
+    expect(hits.map(h => [h.kind, h.targetKeys, h.nativeDest?.pageNumber])).toEqual([
+      ['theorem', ['lem-3'], 3], ['section', ['app-b.1'], 2],
+    ]);
   });
 
   it('deduplicates overprinted text and overlapping reference ranges while retaining separate mentions', async () => {

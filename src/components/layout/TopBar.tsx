@@ -1,3 +1,5 @@
+import { ThemeSwitcher } from './ThemeSwitcher';
+import { useReaderStore } from '../../store/useReaderStore';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { t } from '../../i18n/core';
 import { useState } from 'react';
@@ -7,6 +9,8 @@ import {
   PanelLeft,
   Plus,
   Scissors,
+  Ruler,
+  Search,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -20,6 +24,7 @@ interface TopBarProps {
   parseProgress: number;
   assetCount: number;
   onJumpPage: (page: number) => void;
+  onSearch?: () => void;
   onZoom: (nextScale: number) => void;
   onToggleSnip: () => void;
   onToggleDrawer: () => void;
@@ -37,16 +42,18 @@ export function TopBar({
   parseProgress,
   assetCount,
   onJumpPage,
+  onSearch,
   onZoom,
   onToggleSnip,
   onToggleDrawer,
   onReset,
   onOpenFile,
 }: TopBarProps) {
+  const ruler = useReaderStore(state => state.readingRulerEnabled);
   const [pageInput, setPageInput] = useState('');
 
   return (
-    <header className="relative z-30 flex h-[52px] shrink-0 items-center gap-2.5 border-b border-paper-border bg-white/85 px-3 backdrop-blur">
+    <header className="relative z-30 flex min-h-[52px] shrink-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 lg:flex-nowrap border-b border-paper-border bg-paper-card/85 px-3 backdrop-blur">
       <button
         type="button"
         onClick={onToggleDrawer}
@@ -63,11 +70,11 @@ export function TopBar({
       <span className="hidden text-sm font-semibold tracking-tight text-paper-ink md:inline">
         RefPin
       </span>
-      <span className="max-w-[180px] truncate text-xs text-paper-muted lg:max-w-[260px]">
+      <span className="hidden max-w-[180px] truncate text-xs text-paper-muted md:inline lg:max-w-[260px]">
         {fileName}
       </span>
 
-      <span className="ml-1 flex items-center gap-1 rounded-lg border border-paper-border bg-white px-1 py-0.5">
+      <span className="ml-1 flex items-center gap-1 rounded-lg border border-paper-border bg-paper-card px-1 py-0.5">
         <input
           value={pageInput}
           onChange={(event) => setPageInput(event.target.value.replace(/[^\d]/g, ''))}
@@ -86,7 +93,7 @@ export function TopBar({
         <span className="font-mono text-xs text-paper-muted">/ {numPages}</span>
       </span>
 
-      <div className="flex items-center rounded-lg border border-paper-border bg-white">
+      <div className="flex items-center rounded-lg border border-paper-border bg-paper-card">
         <button
           type="button"
           onClick={() => onZoom(scale - 0.15)}
@@ -114,7 +121,7 @@ export function TopBar({
         className={clsx(
           'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs transition',
           snipMode
-            ? 'bg-paper-gold text-white shadow-sm'
+            ? 'bg-paper-gold text-paper-card shadow-sm'
             : 'border border-paper-border text-paper-ink hover:bg-paper-bg',
         )}
         title={t('snip.shortcut')}
@@ -123,7 +130,16 @@ export function TopBar({
         <span className="hidden sm:inline">{t('snip.tool')}</span>
       </button>
 
+      {onSearch && <>
+        <button type="button" title={t('search.find')} aria-label={t('search.find')} onClick={onSearch}
+          className="rounded-md p-1.5 text-paper-muted hover:bg-paper-bg"><Search size={15} /></button>
+        <button type="button" title={t('ruler.toggle')} aria-label={t('ruler.toggle')} aria-pressed={ruler}
+          onClick={() => useReaderStore.getState().setReadingRulerEnabled(!ruler)}
+          className="rounded-md p-1.5 text-paper-muted hover:bg-paper-bg aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"><Ruler size={15} /></button>
+      </>}
+
       <div className="ml-auto flex items-center gap-2">
+        <ThemeSwitcher />
         <LanguageToggle />
         <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">
           <FileUp className="h-3.5 w-3.5" />

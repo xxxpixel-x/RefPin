@@ -4,10 +4,54 @@
 
 :root {
   color-scheme: light;
-  --paper-bg: #f7f6f3;
-  --paper-ink: #1c1917;
-  --paper-gold: #d97706;
+  --paper-bg-rgb: 247 246 243;
+  --paper-card-rgb: 255 255 255;
+  --paper-border-rgb: 231 229 228;
+  --paper-ink-rgb: 28 25 23;
+  --paper-muted-rgb: 120 113 108;
+  --paper-gold-rgb: 217 119 6;
+  --paper-goldsoft-rgb: 254 243 199;
+  --paper-goldbg-rgb: 255 251 235;
+  --paper-goldborder-rgb: 253 230 138;
+  --paper-goldtext-rgb: 180 83 9;
+  --paper-bg: rgb(var(--paper-bg-rgb));
+  --paper-ink: rgb(var(--paper-ink-rgb));
+  --paper-gold: rgb(var(--paper-gold-rgb));
+  --pdf-filter: none;
 }
+
+:root[data-theme="sepia"] {
+  color-scheme: light;
+  --paper-bg-rgb: 241 236 225;
+  --paper-card-rgb: 251 247 238;
+  --paper-border-rgb: 223 214 197;
+  --paper-ink-rgb: 41 35 30;
+  --paper-muted-rgb: 110 100 89;
+  --paper-gold-rgb: 194 106 5;
+  --paper-goldsoft-rgb: 242 226 189;
+  --paper-goldbg-rgb: 248 238 216;
+  --paper-goldborder-rgb: 223 198 147;
+  --paper-goldtext-rgb: 133 76 20;
+  --pdf-filter: sepia(0.24) brightness(0.98) contrast(0.97);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper-bg-rgb: 20 20 19;
+  --paper-card-rgb: 30 29 27;
+  --paper-border-rgb: 46 44 41;
+  --paper-ink-rgb: 236 233 226;
+  --paper-muted-rgb: 156 150 142;
+  --paper-gold-rgb: 245 158 11;
+  --paper-goldsoft-rgb: 73 53 30;
+  --paper-goldbg-rgb: 48 39 28;
+  --paper-goldborder-rgb: 96 70 37;
+  --paper-goldtext-rgb: 241 189 114;
+  --pdf-filter: invert(0.88) hue-rotate(180deg) contrast(0.95);
+}
+.pdf-image { filter: var(--pdf-filter); }
+.original-color-control { display: none; }
+:root:is([data-theme="dark"], [data-theme="sepia"]) .original-color-control { display: inline-flex; }
 
 html,
 body,
@@ -34,12 +78,12 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d6d3d1;
+  background: rgb(var(--paper-muted-rgb) / 35%);
   border: 2px solid var(--paper-bg);
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a29e;
+  background: rgb(var(--paper-muted-rgb) / 65%);
 }
 
 /* 跨页返回原行时的一次性金色柔光 */
@@ -101,7 +145,7 @@ body {
 }
 .textLayer span.markedContent { top: 0; height: 0; }
 .textLayer [role="img"] { user-select: none; }
-.textLayer ::selection { background: rgb(217 119 6 / 30%); }
+.textLayer ::selection { background: rgb(var(--paper-gold-rgb) / 30%); }
 .textLayer br::selection { background: transparent; }
 .textLayer[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
 .textLayer[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }

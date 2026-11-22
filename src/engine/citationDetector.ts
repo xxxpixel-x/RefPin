@@ -1,10 +1,10 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { CitationKind, InlineCitation, NormalizedRect, ReferenceEntry } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
-import { parseCaptionLabel } from './captionLabel';
+import { parseCaptionLabel, parseStructureHeading, structuredMentions } from './captionLabel';
+import { resolveDestination, type NativeTarget } from './outlineParser';
 import { authorNames, normalizeSurname, parseReferenceFields } from './referenceParser';
 import {
-  clamp,
   isInsideRefRange,
   rectDistance,
   rectForRange,
@@ -74,6 +74,10 @@ function inferFromDestName(
   name: string | undefined,
 ): { kind: CitationKind; targetKeys: string[]; label: string } | null {
   if (!name) return null;
+  const destinationLabel = name.replace(/^(?:.*[/:])?(?:sub)*section[.:_-]/i, 'Section ')
+    .replace(/(?:^|[./:_-])(algorithm|alg|theorem|thm|lemma|lem|proposition|prop|corollary|cor|definition|def|appendix|app)[.:_-]/i, ' $1 ');
+  const structured = structuredMentions(destinationLabel)[0];
+  if (structured) return { ...structured, label: structured.rawText };
   const hit = name.match(NAMED_DEST_RE);
   if (!hit) return null;
 
@@ -88,13 +92,14 @@ function inferFromDestName(
   if (family === 'equation' || family === 'eq') {
     return { kind: 'equation', targetKeys: [`eq-${number}`], label: `Eq. (${number})` };
   }
-  // 章节链接没有对应的 PaperAsset，只保留 nativeDest 供目标页兜底预览
-  return { kind: 'reference', targetKeys: [], label: `Section ${number}` };
+  return { kind: 'section', targetKeys: [`sec-${number}`], label: `Section ${number}` };
 }
 
 function inferFromBoxText(
   text: string,
 ): { kind: CitationKind; targetKeys: string[]; label: string } | null {
+  const structured = structuredMentions(text)[0];
+  if (structured) return { ...structured, label: structured.rawText };
   const hit = text.match(BOX_TEXT_RE);
   if (!hit) return null;
   const prefix = hit[0].trim().toLowerCase();
@@ -324,6 +329,13 @@ function collectMatches(line: TextLine, index: ReferenceIndex, authorYear: RawMa
     }
   };
 
+  const heading = parseStructureHeading(trimmed);
+  for (const hit of structuredMentions(text)) {
+    if (heading && hit.start === text.indexOf(trimmed) && hit.rawText !== trimmed) continue;
+    const rect = rectForRange(line, hit.start, hit.start + hit.rawText.length);
+    if (rect) matches.push({ ...hit, rect });
+  }
+
   run(FIGURE_RE, 'figure', (num) => [`fig-${normalizeNumber(num)}`]);
   run(TABLE_RE, 'table', (num) => [`tab-${normalizeNumber(num)}`]);
   run(EQUATION_RE, 'equation', (num) => [`eq-${normalizeNumber(num)}`]);
@@ -385,61 +397,6 @@ function detectFromText(
   }
 
   return { citationsByPage: result, matchesByLine };
-}
-
-interface NativeTarget {
-  pageNumber: number;
-  targetY?: number;
-}
-
-async function resolveDestination(
-  doc: PDFDocumentProxy,
-  dest: unknown,
-): Promise<NativeTarget | null> {
-  let resolved: unknown = dest;
-  if (typeof dest === 'string') {
-    resolved = await doc.getDestination(dest);
-  }
-  if (!Array.isArray(resolved) || resolved.length === 0) return null;
-
-  const pageRef = resolved[0] as unknown;
-  let pageIndex: number | null = null;
-  if (typeof pageRef === 'number') {
-    pageIndex = pageRef;
-  } else if (pageRef && typeof pageRef === 'object') {
-    try {
-      pageIndex = await doc.getPageIndex(
-        pageRef as Parameters<PDFDocumentProxy['getPageIndex']>[0],
-      );
-    } catch {
-      pageIndex = null;
-    }
-  }
-  if (pageIndex === null || pageIndex < 0) return null;
-
-  const pageNumber = pageIndex + 1;
-  const fitName =
-    resolved[1] && typeof resolved[1] === 'object'
-      ? (resolved[1] as { name?: string }).name
-      : undefined;
-
-  let top: number | undefined;
-  if (fitName === 'XYZ') top = (resolved[3] as number | undefined) ?? undefined;
-  if (fitName === 'FitH' || fitName === 'FitBH') {
-    top = (resolved[2] as number | undefined) ?? undefined;
-  }
-
-  if (typeof top !== 'number' || !Number.isFinite(top)) {
-    return { pageNumber };
-  }
-
-  try {
-    const targetPage = await doc.getPage(pageNumber);
-    const viewport = targetPage.getViewport({ scale: 1 });
-    return { pageNumber, targetY: clamp(1 - top / viewport.height, 0, 1) };
-  } catch {
-    return { pageNumber };
-  }
 }
 
 /** 收集链接框内实际覆盖的字符文本与矩形 */

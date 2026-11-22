@@ -25,7 +25,7 @@ export function BacklinkStrip({ backlinks = [], onJumpToBacklink }: BacklinkStri
             key={link.citationId}
             title={label}
             aria-label={label}
-            className="rounded-full border border-paper-border bg-white px-1.5 py-0.5 font-mono leading-none hover:border-paper-gold hover:text-paper-gold focus-visible:outline-paper-gold"
+            className="rounded-full border border-paper-border bg-paper-card px-1.5 py-0.5 font-mono leading-none hover:border-paper-gold hover:text-paper-gold focus-visible:outline-paper-gold"
             onClick={() => onJumpToBacklink(link.pageNumber, link.rect)}
           >
             {t('reader.page', { page: link.pageNumber })}

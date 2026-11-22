@@ -1,3 +1,4 @@
+import { usePreviewColor } from './usePreviewColor';
 import { t } from '../../i18n/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -130,6 +131,7 @@ export function HoverPeekCard({
       ? fallbackPreview
       : null;
 
+  const { filter, colorToggle } = usePreviewColor(asset?.key ?? citation?.id);
   const previewImage = asset?.imageUrl ?? matchedFallback?.imageUrl ?? null;
 
   const recalcPosition = useCallback(() => {
@@ -187,12 +189,12 @@ export function HoverPeekCard({
       onFocus={keepOpen}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose(); }}
       style={{ left: position.left, top: position.top, width: CARD_WIDTH }}
-      className="animate-fade-in-up fixed z-50 overflow-hidden rounded-xl border border-paper-border bg-white shadow-float"
+      className="animate-fade-in-up fixed z-50 overflow-hidden rounded-xl border border-paper-border bg-paper-card shadow-float"
     >
       {definition && (
         <>
           <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg px-3 py-2">
-            <span className="rounded border border-paper-border bg-white px-1.5 py-0.5 font-mono text-xs font-semibold text-paper-ink">{definition.term}</span>
+            <span className="rounded border border-paper-border bg-paper-card px-1.5 py-0.5 font-mono text-xs font-semibold text-paper-ink">{definition.term}</span>
             <span className="rounded-full border border-paper-border px-1.5 text-[10px] text-paper-muted">{t('glossary.title')}</span>
             <span className="ml-auto text-[10px] text-paper-muted">{t('glossary.definedOn', { page: definition.definedPage })}</span>
           </div>
@@ -221,6 +223,7 @@ export function HoverPeekCard({
             citation.pageNumber })}
         </span>
         <span className="truncate text-[11px] text-paper-muted">{citation.rawText}</span>
+        {previewImage && colorToggle}
         <button
           type="button"
           onClick={() => {
@@ -230,11 +233,12 @@ export function HoverPeekCard({
                 activeReference?.pageNumber ??
                 citation.nativeDest?.pageNumber ??
                 citation.pageNumber,
-              asset?.cropRect ?? fallbackPreview?.cropRect,
+              asset?.cropRect ?? matchedFallback?.cropRect,
               citation.rect,
+              citation.pageNumber,
             );
           }}
-          className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-white hover:text-paper-ink"
+          className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-paper-card hover:text-paper-ink"
           title={t('peek.source')}
         >
           <CornerDownRight className="h-3.5 w-3.5" />
@@ -253,7 +257,7 @@ export function HoverPeekCard({
                   className={clsx(
                     'rounded-md px-2 py-0.5 font-mono text-[10px] transition',
                     index === activeRefIndex
-                      ? 'bg-paper-ink text-white'
+                      ? 'bg-paper-ink text-paper-card'
                       : 'bg-paper-bg text-paper-muted hover:text-paper-ink',
                   )}
                 >
@@ -287,7 +291,7 @@ export function HoverPeekCard({
                 <button
                   type="button"
                   onClick={() => onPinReference(activeReference)}
-                  className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-amber-700"
+                  className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90"
                 >
                   <Pin className="h-3 w-3" />
                   {t('reference.pin')}
@@ -313,22 +317,24 @@ export function HoverPeekCard({
                 onClick={() => {
                   closeNow();
                   onJump(
-                    fallbackPreview?.pageNumber ??
+                    matchedFallback?.pageNumber ??
                       citation.nativeDest?.pageNumber ??
                       citation.pageNumber,
-                    fallbackPreview?.cropRect,
+                    matchedFallback?.cropRect,
                     citation.rect,
+                    citation.pageNumber,
                   );
                 }}
                 className="group block w-full overflow-hidden rounded-lg border border-paper-border bg-paper-bg"
               >
                 <img
                   src={previewImage}
+                  style={{ filter }}
                   alt={citation.rawText}
                   onLoad={recalcPosition}
                   className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
                 />
-                <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
+                <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
                   <CornerDownRight className="h-3 w-3" /> {t('peek.follow')}
                 </span>
               </button>
@@ -345,18 +351,20 @@ export function HoverPeekCard({
               onClick={() => {
                 closeNow();
                 if (asset) onOpenLightbox(asset);
-                else if (fallbackPreview) onJump(fallbackPreview.pageNumber);
+                else if (matchedFallback) onJump(matchedFallback.pageNumber, matchedFallback.cropRect, citation.rect, citation.pageNumber);
               }}
               className="group block w-full overflow-hidden rounded-lg border border-paper-border bg-paper-bg"
             >
               <img
                 src={previewImage}
+                style={{ filter }}
                 alt={asset?.label ?? citation.rawText}
                 onLoad={recalcPosition}
                 className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
               />
-              <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
-                <Maximize2 className="h-3 w-3" /> {t('peek.enlarge')}
+              <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
+                {asset ? <Maximize2 className="h-3 w-3" /> : <CornerDownRight className="h-3 w-3" />}
+                {t(asset ? 'peek.enlarge' : 'peek.follow')}
               </span>
             </button>
           ) : (
@@ -374,7 +382,7 @@ export function HoverPeekCard({
               type="button"
               disabled={!asset}
               onClick={() => asset && onPinAsset(asset)}
-              className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-paper-border disabled:text-paper-muted"
+              className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90 disabled:cursor-not-allowed disabled:bg-paper-border disabled:text-paper-muted"
             >
               <Pin className="h-3 w-3" />
               {t('peek.pin')}
@@ -385,8 +393,9 @@ export function HoverPeekCard({
                 closeNow();
                 onJump(
                   asset?.pageNumber ?? citation.nativeDest?.pageNumber ?? citation.pageNumber,
-                  asset?.cropRect ?? fallbackPreview?.cropRect,
+                  asset?.cropRect ?? matchedFallback?.cropRect,
                   citation.rect,
+                  citation.pageNumber,
                 );
               }}
               className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"

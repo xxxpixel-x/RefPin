@@ -155,7 +155,7 @@ export function readingOrder(lines: TextLine[]): TextLine[] {
   for (const line of full) {
     appendBand(bandTop, line.baseline);
     ordered.push(line);
-    bandTop = line.rect.y + line.rect.height;
+    bandTop = line.baseline;
   }
   appendBand(bandTop, Infinity);
 

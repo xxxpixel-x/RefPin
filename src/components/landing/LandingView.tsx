@@ -1,3 +1,4 @@
+import { ThemeSwitcher } from '../layout/ThemeSwitcher';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { getLocale, t } from '../../i18n/core';
 import { useRef, useState } from 'react';
@@ -39,10 +40,10 @@ export function LandingView({
 
   return (
     <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-12">
-      <div className="absolute right-4 top-4"><LanguageToggle /></div>
+      <div className="absolute right-4 top-4 flex items-center gap-2"><ThemeSwitcher /><LanguageToggle /></div>
       <div className="w-full max-w-xl">
         <div className="mb-8 flex items-center justify-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-ink text-[13px] font-semibold text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-ink text-[13px] font-semibold text-paper-card">
             R
           </span>
           <span className="text-base font-semibold tracking-tight text-paper-ink">
@@ -70,10 +71,10 @@ export function LandingView({
             if (file) onOpenFile(file);
           }}
           className={clsx(
-            'group flex w-full flex-col items-center gap-3 rounded-2xl border border-dashed bg-white px-8 py-14 shadow-paper transition-all',
+            'group flex w-full flex-col items-center gap-3 rounded-2xl border border-dashed bg-paper-card px-8 py-14 shadow-paper transition-all',
             dragging
               ? '-translate-y-0.5 border-paper-gold bg-paper-goldbg'
-              : 'border-paper-border hover:-translate-y-0.5 hover:border-amber-300',
+              : 'border-paper-border hover:-translate-y-0.5 hover:border-paper-gold',
           )}
         >
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-paper-bg text-paper-muted transition group-hover:bg-paper-goldbg group-hover:text-paper-gold">
@@ -109,7 +110,7 @@ export function LandingView({
                 key={sample.id}
                 type="button"
                 onClick={() => onSelectSample(sample)}
-                className="group flex items-center gap-2.5 rounded-xl border border-paper-border bg-white px-3.5 py-3 text-left shadow-paper transition hover:-translate-y-0.5 hover:border-amber-300"
+                className="group flex items-center gap-2.5 rounded-xl border border-paper-border bg-paper-card px-3.5 py-3 text-left shadow-paper transition hover:-translate-y-0.5 hover:border-paper-gold"
               >
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-paper-goldbg text-paper-gold">
                   <FileText className="h-3.5 w-3.5" />
@@ -129,7 +130,7 @@ export function LandingView({
             <h2 id="recent-papers" className="mb-3 text-sm font-medium text-paper-ink">
               {t('archive.title')}
             </h2>
-            <ul className="divide-y divide-paper-border rounded-xl border border-paper-border bg-white">
+            <ul className="divide-y divide-paper-border rounded-xl border border-paper-border bg-paper-card">
               {recent.map(entry => {
                 const sample = samples.find(sample => sample.id === entry.sampleId);
                 return <li key={entry.paperHash} className="flex items-center gap-2 px-3">

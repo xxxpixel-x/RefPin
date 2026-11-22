@@ -602,7 +602,7 @@ export function PinDock({
       <aside
         style={dockStyle}
         className={clsx(
-          'relative z-10 flex min-h-0 min-w-0 shrink-0 flex-col border-paper-border bg-[#FBFAF8]',
+          'relative z-10 flex min-h-0 min-w-0 shrink-0 flex-col border-paper-border bg-paper-bg',
           dockOrderClass,
           dockBorderClass,
         )}
@@ -626,7 +626,7 @@ export function PinDock({
                 isHorizontal ? 'h-1 w-10' : 'h-10 w-1',
                 isResizing
                   ? 'bg-paper-gold opacity-100'
-                  : 'bg-stone-300/70 opacity-0 group-hover/resize:bg-paper-gold group-hover/resize:opacity-100',
+                  : 'bg-paper-muted/60 opacity-0 group-hover/resize:bg-paper-gold group-hover/resize:opacity-100',
               )}
             />
           </div>
@@ -646,7 +646,7 @@ export function PinDock({
           </span>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <div className="flex items-center rounded-md border border-paper-border/80 bg-white/80 p-0.5">
+            <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
               {POSITION_OPTIONS.map(({ key, hint, Icon }) => {
                 const active = position === key;
                 return (
@@ -676,7 +676,7 @@ export function PinDock({
                   dismissZoomImmediately();
                   onClear();
                 }}
-                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-muted transition hover:bg-white hover:text-paper-gold"
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-muted transition hover:bg-paper-card hover:text-paper-gold"
                 title={t('dock.clearAll')}
               >
                 <Eraser className="h-3 w-3" />
@@ -696,24 +696,24 @@ export function PinDock({
               className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-paper-ink disabled:text-paper-muted">
               <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !showSynced && '-rotate-90')} />
               <span className="truncate">{t('dock.autoSyncTitle')}</span>
-              <span className="rounded border border-paper-border bg-white px-1 font-mono text-[10px]">{synced.length}</span>
+              <span className="rounded border border-paper-border bg-paper-card px-1 font-mono text-[10px]">{synced.length}</span>
             </button>
             <button type="button" role="switch" aria-checked={enabled} aria-label={t('dock.autoSync')}
               onClick={() => setEnabled(!enabled)}
               className={clsx('ml-auto flex h-4 w-7 shrink-0 items-center rounded-full px-0.5', enabled ? 'bg-paper-gold' : 'bg-paper-muted')}>
-              <span className={clsx('h-3 w-3 rounded-full bg-white transition-transform', enabled && 'translate-x-3')} />
+              <span className={clsx('h-3 w-3 rounded-full bg-paper-card transition-transform', enabled && 'translate-x-3')} />
             </button>
           </div>
           {showSynced && <div className={clsx('min-h-0 overflow-auto px-2.5 pb-2',
             isHorizontal ? 'flex gap-2' : 'space-y-1.5')}>
             {synced.length === 0 && <p className="px-1 py-2 text-[11px] text-paper-muted">{t('dock.noRelatedAssets', { page: currentPage })}</p>}
             {synced.map(asset => (
-              <article key={asset.key} className={clsx('flex items-center gap-2 rounded-md border border-paper-border bg-white p-1.5',
+              <article key={asset.key} className={clsx('flex items-center gap-2 rounded-md border border-paper-border bg-paper-card p-1.5',
                 isHorizontal && 'w-56 shrink-0')}>
                 <button type="button" disabled={!asset.imageUrl} aria-label={t('asset.enlarge', { name: asset.label })}
                   onClick={() => onPreviewAsset(asset)}
                   className="h-9 w-12 shrink-0 overflow-hidden rounded border border-paper-border bg-paper-bg">
-                  {asset.imageUrl ? <img alt={asset.label} src={asset.imageUrl} className="h-full w-full object-contain" />
+                  {asset.imageUrl ? <img alt={asset.label} src={asset.imageUrl} className="pdf-image h-full w-full object-contain" />
                     : <span className="text-[10px] text-paper-muted">{t('asset.noThumbnail')}</span>}
                 </button>
                 <div className="min-w-0 flex-1">
@@ -721,11 +721,11 @@ export function PinDock({
                   <button type="button" aria-label={t('asset.jumpTo', { name: asset.label, page: asset.pageNumber })}
                     onClick={() => onJump(asset.pageNumber, asset.cropRect)}
                     className="flex items-center gap-0.5 font-mono text-[10px] text-paper-muted hover:text-paper-gold">
-                    {t('reader.page', { page: asset.pageNumber })}<ArrowUpRight size={11} />
+                    <span className="mr-1 rounded bg-paper-goldbg px-1 text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>{t('reader.page', { page: asset.pageNumber })}<ArrowUpRight size={11} />
                   </button>
                 </div>
                 <button type="button" onClick={() => onPinAsset(asset)} aria-label={t('asset.pinName', { name: asset.label })}
-                  className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-[11px] font-medium text-white">
+                  className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-[11px] font-medium text-paper-card">
                   <Pin size={11} />{t('common.pin')}
                 </button>
               </article>
@@ -759,7 +759,7 @@ export function PinDock({
                 isHorizontal ? 'flex-row gap-4' : 'flex-col',
               )}
             >
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dashed border-paper-border bg-white text-paper-muted">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dashed border-paper-border bg-paper-card text-paper-muted">
                 <Pin className="h-5 w-5" />
               </span>
               <div className={clsx(isHorizontal ? 'max-w-md text-left' : 'mt-3')}>
@@ -862,7 +862,7 @@ export function PinDock({
                 dragDropPreview.target === 'bottom' && 'inset-x-2 bottom-2 h-[30%] min-h-[130px]',
               )}
             >
-              <span className="rounded-full border border-paper-goldborder bg-white/95 px-3.5 py-1.5 text-xs font-medium text-paper-goldtext shadow-float">
+              <span className="rounded-full border border-paper-goldborder bg-paper-card/95 px-3.5 py-1.5 text-xs font-medium text-paper-goldtext shadow-float">
                 {t(DROP_LABEL[dragDropPreview.target])}
               </span>
             </div>

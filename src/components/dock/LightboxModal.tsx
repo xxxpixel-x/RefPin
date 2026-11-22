@@ -1,3 +1,4 @@
+import { usePreviewColor } from '../peek/usePreviewColor';
 import { t } from '../../i18n/core';
 import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
@@ -10,6 +11,7 @@ interface LightboxModalProps {
 }
 
 export function LightboxModal({ asset, onClose }: LightboxModalProps) {
+  const { filter, colorToggle } = usePreviewColor(asset?.key);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragging = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
@@ -39,30 +41,31 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
       }}
     >
       <div
-        className="flex h-12 shrink-0 items-center gap-3 px-4 text-white"
+        className="flex h-12 shrink-0 items-center gap-3 border-b border-paper-border bg-paper-card px-4 text-paper-ink"
         onClick={(event) => event.stopPropagation()}
       >
-        <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-paper-goldsoft">
+        <span className="rounded bg-paper-bg px-2 py-0.5 text-[11px] uppercase tracking-wide text-paper-goldtext">
           {t(`kind.${asset.kind}`)}
         </span>
         <span className="truncate text-sm">{asset.label}</span>
-        <span className="font-mono text-[11px] text-white/50">{t('reader.page', { page: asset.pageNumber })}</span>
+        <span className="font-mono text-[11px] text-paper-muted">{t('reader.page', { page: asset.pageNumber })}</span>
         <div className="ml-auto flex items-center gap-1">
+          {colorToggle}
           <button
             type="button"
             onClick={() => changeZoom(-0.1)}
-            className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            className="rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
             aria-label={t('reader.zoomOut')}
           >
             <Minus className="h-4 w-4" />
           </button>
-          <span className="w-12 text-center font-mono text-xs text-white/80">
+          <span className="w-12 text-center font-mono text-xs text-paper-ink">
             {Math.round(zoom * 100)}%
           </span>
           <button
             type="button"
             onClick={() => changeZoom(0.1)}
-            className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            className="rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
             aria-label={t('reader.zoomIn')}
           >
             <Plus className="h-4 w-4" />
@@ -73,7 +76,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
               setZoom(1);
               setOffset({ x: 0, y: 0 });
             }}
-            className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            className="rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
             aria-label={t('reader.resetView')}
           >
             <RotateCcw className="h-4 w-4" />
@@ -81,7 +84,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
           <button
             type="button"
             onClick={onClose}
-            className="ml-2 rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+            className="ml-2 rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
             aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
@@ -122,8 +125,9 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
           alt={asset.label}
           draggable={false}
           onClick={(event) => event.stopPropagation()}
-          className="max-h-full max-w-full select-none rounded-lg bg-white shadow-2xl transition-transform duration-150"
+          className="max-h-full max-w-full select-none rounded-lg bg-paper-card shadow-2xl transition-transform duration-150"
           style={{
+            filter,
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
           }}
         />

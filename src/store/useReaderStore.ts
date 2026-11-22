@@ -8,7 +8,8 @@ import type {
   CitationBacklink,
   DockPosition,
   InlineCitation,
-  JumpAnchor,
+  JumpPosition,
+  OutlineItem,
   NormalizedRect,
   PaperAsset,
   PaperArchive,
@@ -17,7 +18,9 @@ import type {
   ReferenceEntry,
 } from '../types/paper';
 
-type NewParseFields = 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
+export type Theme = 'light' | 'sepia' | 'dark';
+
+type NewParseFields = 'outline' | 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
 export type ParseResultPayload = Omit<ParsePaperResult, NewParseFields> & Partial<Pick<ParsePaperResult, NewParseFields>>;
 
 interface ReaderState {
@@ -37,6 +40,7 @@ interface ReaderState {
   isImageOnly: boolean;
 
   /* ---------- 解析产物 ---------- */
+  outline: OutlineItem[];
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
   citationsByPage: Record<number, InlineCitation[]>;
@@ -50,7 +54,16 @@ interface ReaderState {
   setAutoSyncEnabled: (enabled: boolean) => void;
   drawerOpen: boolean;
   snipMode: boolean;
-  jumpAnchor: JumpAnchor;
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
+  readingRulerEnabled: boolean;
+  setReadingRulerEnabled: (enabled: boolean) => void;
+  jumpHistory: { origin: JumpPosition; target: JumpPosition }[];
+  historyCursor: number;
+  historyVisible: boolean;
+  recordJump: (origin: JumpPosition, target: JumpPosition) => void;
+  navigateHistory: (direction: 'back' | 'forward') => JumpPosition | undefined;
+  dismissHistory: () => void;
   stats: ReadingStats;
   dockPosition: DockPosition;
   dockWidth: number;
@@ -87,8 +100,6 @@ interface ReaderState {
   recordSavedFlip: (targetPage: number) => void;
   recordPeek: () => void;
 
-  setJumpAnchor: (anchor: JumpAnchor) => void;
-  clearJumpAnchor: () => void;
 
   setDrawerOpen: (open: boolean) => void;
   setSnipMode: (on: boolean) => void;
@@ -101,6 +112,25 @@ interface ReaderState {
 
 const DOCK_STORAGE_KEY = 'refpin.dock.layout.v1';
 const AUTO_SYNC_KEY = 'refpin.dock.autoSync.v1';
+
+const THEME_KEY = 'refpin.theme.v1';
+const RULER_KEY = 'refpin.readingRuler.v1';
+
+function preference(key: string) {
+  try { return window.localStorage.getItem(key); } catch { return null; }
+}
+
+function savePreference(key: string, value: string) {
+  try { window.localStorage.setItem(key, value); } catch { /* Keep the session preference. */ }
+}
+
+const storedTheme = preference(THEME_KEY);
+const initialTheme: Theme = storedTheme === 'dark' || storedTheme === 'sepia' ? storedTheme : 'light';
+
+function applyTheme(theme: Theme) {
+  if (typeof document !== 'undefined' && document.documentElement) document.documentElement.dataset.theme = theme;
+}
+applyTheme(initialTheme);
 
 function loadAutoSync(): boolean {
   try {
@@ -175,6 +205,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   parseError: null,
   isImageOnly: false,
 
+  outline: [],
   assetsMap: {},
   referencesMap: {},
   citationsByPage: {},
@@ -190,7 +221,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   },
   drawerOpen: false,
   snipMode: false,
-  jumpAnchor: null,
+  jumpHistory: [],
+  historyCursor: 0,
+  historyVisible: false,
   stats: initialStats,
   dockPosition: savedDock.dockPosition,
   dockWidth: savedDock.dockWidth,
@@ -225,6 +258,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   setParseError: (message) => set({ parseError: message }),
   setParseResult: (payload) => set({
     ...payload,
+    outline: payload.outline ?? [],
     glossaryMap: payload.glossaryMap ?? {},
     glossaryMentionsByPage: payload.glossaryMentionsByPage ?? {},
     isImageOnly: payload.isImageOnly ?? false,
@@ -384,8 +418,31 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   recordPeek: () =>
     set((state) => ({ stats: { ...state.stats, peekCount: state.stats.peekCount + 1 } })),
 
-  setJumpAnchor: (anchor) => set({ jumpAnchor: anchor }),
-  clearJumpAnchor: () => set({ jumpAnchor: null }),
+  theme: initialTheme,
+  setTheme: theme => {
+    applyTheme(theme);
+    savePreference(THEME_KEY, theme);
+    set({ theme });
+  },
+  readingRulerEnabled: preference(RULER_KEY) === 'true',
+  setReadingRulerEnabled: enabled => {
+    savePreference(RULER_KEY, String(enabled));
+    set({ readingRulerEnabled: enabled });
+  },
+
+  recordJump: (origin, target) => set(state => {
+    const jumpHistory = [...state.jumpHistory.slice(0, state.historyCursor), { origin, target }].slice(-20);
+    return { jumpHistory, historyCursor: jumpHistory.length, historyVisible: true };
+  }),
+  navigateHistory: direction => {
+    const { jumpHistory, historyCursor } = get();
+    const back = direction === 'back';
+    const step = jumpHistory[back ? historyCursor - 1 : historyCursor];
+    if (!step) return;
+    set({ historyCursor: historyCursor + (back ? -1 : 1), historyVisible: true });
+    return back ? step.origin : step.target;
+  },
+  dismissHistory: () => set({ historyVisible: false }),
 
   setDrawerOpen: (open) => set({ drawerOpen: open }),
   setSnipMode: (on) => set({ snipMode: on }),
@@ -427,6 +484,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       parseProgress: 0,
       parseError: null,
       isImageOnly: false,
+      outline: [],
       assetsMap: {},
       referencesMap: {},
       citationsByPage: {},
@@ -435,7 +493,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       backlinksMap: {},
       pinnedItems: [],
       snipMode: false,
-      jumpAnchor: null,
+      jumpHistory: [],
+      historyCursor: 0,
+      historyVisible: false,
       stats: initialStats,
     });
   },
