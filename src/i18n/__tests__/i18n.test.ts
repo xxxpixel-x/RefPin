@@ -31,17 +31,10 @@ describe('RefPin interface language', () => {
   it.each([
     ['zh-CN', 'zh-CN'], ['zh-TW', 'zh-CN'], ['ZH-hk', 'zh-CN'],
     ['en-US', 'en'], ['fr-FR', 'en'], ['ja-JP', 'en'],
-  ])('opens the website in English for browser language %s (would map to %s)', async (language) => {
+  ])('maps browser language %s to %s', async (language, expected) => {
     vi.stubGlobal('navigator', { language });
     const { detectInitialLocale } = await import('../index');
-    expect(await detectInitialLocale()).toBe('en');
-  });
-
-  it('keeps a saved Chinese choice on the website', async () => {
-    vi.stubGlobal('navigator', { language: 'en-US' });
-    vi.stubGlobal('localStorage', { getItem: vi.fn(() => 'zh-CN'), setItem: vi.fn() });
-    const { detectInitialLocale } = await import('../index');
-    expect(await detectInitialLocale()).toBe('zh-CN');
+    expect(await detectInitialLocale()).toBe(expected);
   });
 
   it('prefers the saved web choice and formats names and multiple numbers literally', async () => {

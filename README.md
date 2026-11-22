@@ -1,4 +1,4 @@
-# RefPin · v0.4.0
+# RefPin · v0.5.0
 
 **Keep the figure beside the paragraph that cites it.** RefPin is a local-first academic PDF reader with a Chrome extension that includes a companion side panel and a full-screen workspace. Hover over a citation for a preview, or pin several figures while you follow the argument.
 
@@ -32,7 +32,7 @@ A paragraph mentions Fig. 2, compares it with Table 1, and applies Eq. (3). By t
 | Reading navigation | Follow the outline, search text, retrace jumps and step through lines with the reading ruler. Choose a light, sepia or dark theme. |
 | Online papers | Paste an arXiv ID, OpenReview link or public PDF URL on the home screen, or share a reader link such as `?arxiv=1706.03762`. |
 | Selection & one-click translation | Clean Copy repairs line breaks and split words. Translate selections on demand, or toggle one-click **in-place** / **side-by-side bilingual** full-paper translation (preserving figures, equations, citation previews, and the pin dock) via zero-config free channels, local Ollama, or OpenAI-compatible APIs. The free public channel asks before sending any text. |
-| Settings and shortcuts | The top-bar **Settings** menu holds the theme, interface language, command palette and shortcut list. Press `?` for the shortcut sheet, or use **Fit width** next to the zoom controls. The web reader opens in English. Switch to 中文 in Settings and RefPin remembers your choice. |
+| Settings and shortcuts | The top-bar **Settings** menu holds the theme, interface language, command palette and shortcut list. Press `?` for the shortcut sheet, or use **Fit width** next to the zoom controls. The interface follows your browser language. Switch between English and 中文 in Settings and RefPin remembers your choice. |
 | Local reading archive | Recent papers remembers your page, zoom, scroll position, and pins in IndexedDB. Crops are stored as coordinates and regenerated when the paper reopens. |
 | Long-document rendering | A shared `IntersectionObserver` tracks nearby pages. Off-screen pages release their canvas buffers and text layers while retaining their place in the layout. |
 
@@ -70,7 +70,7 @@ Works on **Windows, macOS, and Linux** (Chrome 114+, Edge 114+, Brave, Arc, Viva
 
 ### Option B · Run the local web reader from source
 
-Use Node.js 20 or later. From the project directory, run:
+Use Node.js 22 or later. From the project directory, run:
 
 ```sh
 npm install
