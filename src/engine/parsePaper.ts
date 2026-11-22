@@ -73,5 +73,13 @@ export async function parsePaper(
   const isImageOnly = doc.numPages > 0 && Object.values(linesByPage).every((lines) => !lines.length);
   onProgress(100);
 
-  return { backlinksMap: buildBacklinksMap(citationsByPage), outline, assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
+  return {
+    backlinksMap: buildBacklinksMap(citationsByPage, glossary.glossaryMentionsByPage),
+    outline,
+    assetsMap,
+    referencesMap,
+    citationsByPage,
+    isImageOnly,
+    ...glossary,
+  };
 }

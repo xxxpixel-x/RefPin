@@ -23,15 +23,15 @@ A paragraph mentions Fig. 2, compares it with Table 1, and applies Eq. (3). By t
 | In the full reader (web or extension) | What you can do |
 | --- | --- |
 | Dual-path citation recognition | Follow native PDF links and detect citations in the text layer. Patterns cover numeric references such as [14], author–year citations, superscripts, and English and Chinese figure, table, and equation labels. |
-| Hover Peek and glossary | Preview a figure, table, equation, or reference without turning the page. Hover over a defined acronym such as MHA to see its expansion, the defining sentence, and its source page. |
-| Four-way pin dock | Compare several figures at once. Drag the dock to any edge. Current-page **Auto-Sync** suggests cross-page assets cited on that page. Free-snip any region, extend its crop up or down, or reset the original crop in one click. |
+| Hover Peek and glossary | Preview a figure, table, equation, or reference without turning the page. Hover over defined acronyms/symbols or filter **Paper assets → Glossary** with mention backlinks and one-click pinning to the dock. |
+| Four-way collapsible pin dock | Compare several figures at once, drag the dock to any edge, or collapse it into a compact edge rail whenever you want full reading width. Current-page **Auto-Sync** suggests cross-page assets cited on that page. |
 | Citation backlinks | A card lists detected mentions in the text. Select a page chip to jump to the exact occurrence, including multiple mentions on the same page. |
 | Study notes | Choose **Export Notes** in the dock. Copy Markdown or download an Obsidian ZIP with `notes.md` and 2.5× crops. Both formats preserve pin order, citation pages, BibTeX and glossary entries. |
 | Reference metadata | Copy BibTeX offline. Enable enrichment to see the venue, citation count, abstract and open-access PDF when available from OpenAlex or Crossref. |
 | Command palette | Enter `f2`, `alg1`, `[14]` or `:8` to find a figure, algorithm, reference or page. Search outline headings, glossary terms and reader actions in the same field. |
 | Reading navigation | Follow the outline, search text, retrace jumps and step through lines with the reading ruler. Choose a light, sepia or dark theme. |
 | Online papers | Paste an arXiv ID, OpenReview link or public PDF URL on the home screen, or share a reader link such as `?arxiv=1706.03762`. |
-| Selectable text and clean copy | Select text directly on the PDF. Clean Copy repairs line breaks and split words. Translate a selection on demand with an OpenAI-compatible API or a local Ollama model. |
+| Selection & one-click translation | Clean Copy repairs line breaks and split words. Translate selections on demand, or toggle one-click **in-place** / **side-by-side bilingual** full-paper translation (preserving figures, equations, citation previews, and the pin dock) via zero-config free channels, local Ollama, or OpenAI-compatible APIs. |
 | Local reading archive | Recent papers remembers your page, zoom, scroll position, and pins in IndexedDB. Crops are stored as coordinates and regenerated when the paper reopens. |
 | Long-document rendering | A shared `IntersectionObserver` tracks nearby pages. Off-screen pages release their canvas buffers and text layers while retaining their place in the layout. |
 
@@ -100,7 +100,9 @@ For GitHub Pages, select **GitHub Actions** under **Settings → Pages → Sourc
 | `Alt+←/→` | Web reader | Move backward or forward through jump history. |
 | `R`, `Alt+↑/↓` | Web reader | Toggle the reading ruler or move it up or down a line. |
 | `S` | Web reader | Toggle free-snip mode. Drag and release to pin the selection. |
-| `[` | Web reader | Open or close the paper assets drawer. |
+| `[` / `]` | Web reader | Open or close the paper assets drawer / collapse or expand the pin dock. |
+| `G` | Web reader | Open paper assets directly on the Glossary filter. |
+| `T` | Web reader | Toggle one-click full-paper translation. |
 | `Enter` | Web reader page field | Jump to the entered page. |
 | `Esc` | Web reader | Dismiss a preview or lightbox, or cancel snipping. |
 | `Alt` + `S` | Activated HTML paper page | Start a snip on the page. |

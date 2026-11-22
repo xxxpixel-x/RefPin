@@ -16,6 +16,10 @@ import {
   Loader2,
   ArrowUpRight,
   ChevronDown,
+  ChevronsDown,
+  ChevronsLeft,
+  ChevronsRight,
+  ChevronsUp,
   GripVertical,
   PanelBottom,
   PanelLeft,
@@ -42,6 +46,8 @@ interface PinDockProps {
   position: DockPosition;
   width: number;
   height: number;
+  dockCollapsed?: boolean;
+  onDockCollapsedChange?: (collapsed: boolean) => void;
   workspaceRef?: RefObject<HTMLDivElement>;
   onPositionChange: (position: DockPosition) => void;
   onWidthChange: (width: number) => void;
@@ -119,6 +125,8 @@ export function PinDock({
   position,
   width,
   height,
+  dockCollapsed: dockCollapsedProp,
+  onDockCollapsedChange,
   workspaceRef,
   onPositionChange,
   onWidthChange,
@@ -135,6 +143,16 @@ export function PinDock({
 }: PinDockProps) {
   const enabled = useReaderStore(state => state.autoSyncEnabled);
   const setEnabled = useReaderStore(state => state.setAutoSyncEnabled);
+  const storeDockCollapsed = useReaderStore(state => state.dockCollapsed);
+  const setStoreDockCollapsed = useReaderStore(state => state.setDockCollapsed);
+  const isDockCollapsed = dockCollapsedProp ?? storeDockCollapsed;
+  const setDockCollapsed = useCallback(
+    (next: boolean) => {
+      if (onDockCollapsedChange) onDockCollapsedChange(next);
+      else setStoreDockCollapsed(next);
+    },
+    [onDockCollapsedChange, setStoreDockCollapsed],
+  );
   const [syncCollapsed, setSyncCollapsed] = useState(false);
   const synced = useMemo(() => enabled ? currentPageAssets(currentPage, citations, assetsMap, items) : [],
     [enabled, currentPage, citations, assetsMap, items]);
@@ -219,10 +237,10 @@ export function PinDock({
     }
   }, [items, zoomOverlay, dismissZoomImmediately]);
 
-  // 切换停靠方向时收起悬浮放大
+  // 切换停靠方向或收起钉板时关闭悬浮放大
   useEffect(() => {
     dismissZoomImmediately();
-  }, [position, dismissZoomImmediately]);
+  }, [position, isDockCollapsed, dismissZoomImmediately]);
 
   // 监听窗口大小变化以动态夹紧宽度/高度
   useEffect(() => {
@@ -586,6 +604,72 @@ export function PinDock({
     };
   };
 
+  const CollapseIcon =
+    position === 'right'
+      ? ChevronsRight
+      : position === 'left'
+        ? ChevronsLeft
+        : position === 'top'
+          ? ChevronsUp
+          : ChevronsDown;
+  const ExpandIcon =
+    position === 'right'
+      ? ChevronsLeft
+      : position === 'left'
+        ? ChevronsRight
+        : position === 'top'
+          ? ChevronsDown
+          : ChevronsUp;
+
+  if (isDockCollapsed) {
+    return (
+      <aside
+        className={clsx(
+          'relative z-10 flex shrink-0 border-paper-border bg-paper-card/90',
+          dockOrderClass,
+          dockBorderClass,
+          isHorizontal ? 'h-9 w-full flex-row items-center' : 'h-full w-9 flex-col items-center',
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setDockCollapsed(false)}
+          title={t('dock.expand')}
+          aria-label={t('dock.expand')}
+          aria-expanded={false}
+          className={clsx(
+            'group flex h-full w-full items-center gap-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink',
+            isHorizontal ? 'flex-row px-3' : 'flex-col py-3',
+          )}
+        >
+          <ExpandIcon className="h-3.5 w-3.5 shrink-0 transition group-hover:text-paper-gold" />
+          <Pin className="h-3.5 w-3.5 shrink-0 text-paper-gold" />
+          {isHorizontal ? (
+            <span className="text-xs font-medium text-paper-ink">
+              {t('dock.title')}
+              <span className="ml-1 font-mono text-[10px] text-paper-muted">({items.length})</span>
+            </span>
+          ) : (
+            <>
+              <span className="rounded-full border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] font-medium text-paper-goldtext">
+                {items.length}
+              </span>
+              <span className="mt-0.5 select-none text-[10px] font-medium tracking-widest text-paper-muted [writing-mode:vertical-rl] group-hover:text-paper-ink">
+                {t('dock.title')}
+              </span>
+            </>
+          )}
+          {synced.length > 0 && (
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-paper-gold"
+              title={`${t('dock.autoSyncTitle')}: ${synced.length}`}
+            />
+          )}
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <>
       <aside
@@ -640,7 +724,7 @@ export function PinDock({
                 disabled={exporting} onClick={() => setExportMenu(!exportMenu)}
                 className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-ink hover:bg-paper-card">
                 {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                {(isHorizontal || clampedWidth >= 360) && t('notes.export')}
+                {(isHorizontal || clampedWidth >= 410) && t('notes.export')}
               </button>
               {exportMenu && <div className={clsx('absolute z-30 w-max rounded-lg border border-paper-border bg-paper-card p-1 shadow-float',
                 position === 'bottom' ? 'bottom-full mb-1' : 'top-full mt-1', position === 'left' ? 'left-0' : 'right-0')}>
@@ -683,9 +767,24 @@ export function PinDock({
                 title={t('dock.clearAll')}
               >
                 <Eraser className="h-3 w-3" />
-                {(isHorizontal || clampedWidth >= 320) && <span>{t('common.clear')}</span>}
+                {(isHorizontal || clampedWidth >= 380) && <span>{t('common.clear')}</span>}
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                dismissZoomImmediately();
+                setDockCollapsed(true);
+              }}
+              title={t('dock.collapse')}
+              aria-label={t('dock.collapse')}
+              aria-expanded
+              className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10px] font-medium text-paper-ink transition hover:border-paper-goldborder hover:bg-paper-goldbg hover:text-paper-goldtext"
+            >
+              {(isHorizontal || clampedWidth >= 280) && <span>{t('common.collapse')}</span>}
+              <CollapseIcon className="h-3 w-3" />
+            </button>
           </div>
         </div>
 

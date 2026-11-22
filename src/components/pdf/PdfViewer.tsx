@@ -1,5 +1,7 @@
 import { getCachedPageLines, nearestLineIndex, type SearchMatch } from '../../engine/pageLinesCache';
+import type { TranslatedBlock } from '../../engine/pdfParagraphs';
 import { t } from '../../i18n/core';
+import type { TranslateDisplayMode } from '../../services/translator';
 import {
   forwardRef,
   useCallback,
@@ -43,6 +45,9 @@ interface Props {
   searchMatches: SearchMatch[];
   activeMatch?: SearchMatch;
   snipMode: boolean;
+  translateMode?: TranslateDisplayMode;
+  translatedBlocksByPage?: Record<number, TranslatedBlock[]>;
+  onVisiblePagesChange?: (pages: Set<number>) => void;
   /** 文档就绪后自动滚到的起始页（示例论文直达演示页） */
   initialPage?: number;
   initialScrollTop?: number;
@@ -62,6 +67,9 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     searchMatches,
     activeMatch,
     snipMode,
+    translateMode = 'off',
+    translatedBlocksByPage,
+    onVisiblePagesChange,
     initialPage,
     initialScrollTop,
     onScrollTopChange,
@@ -86,6 +94,26 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   const [dims, setDims] = useState<Array<{ width: number; height: number }> | null>(null);
   const [flash, setFlash] = useState<FlashHighlight | null>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
+  const [containerWidth, setContainerWidth] = useState<number>(1040);
+  const visibleCallbackRef = useRef(onVisiblePagesChange);
+  visibleCallbackRef.current = onVisiblePagesChange;
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const updateWidth = () => {
+      if (root.clientWidth > 0) setContainerWidth(root.clientWidth);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    visibleCallbackRef.current?.(visiblePages);
+  }, [visiblePages]);
 
   useEffect(() => {
     didInitialScrollRef.current = false;
@@ -135,7 +163,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     }, { root, rootMargin: '900px 0px 900px 0px' });
     root.querySelectorAll('[data-page]').forEach(page => observer.observe(page));
     return () => observer.disconnect();
-  }, [dims]);
+  }, [dims, translateMode]);
 
   useEffect(
     () => () => {
@@ -318,28 +346,70 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
         </div>
       ) : (
         <div data-page-list className="flex w-max min-w-full flex-col items-center gap-7 px-6 py-8">
-          {dims.map((dim, index) => (
-            <PdfPageCanvas
-              key={index + 1}
-              pdfDoc={pdfDoc}
-              pageNumber={index + 1}
-              isVisible={visiblePages.has(index + 1)}
-              scale={scale}
-              pageWidth={dim.width * scale}
-              pageHeight={dim.height * scale}
-              citations={citationsByPage[index + 1] ?? NO_CITATIONS}
-              glossaryMentions={glossaryMentionsByPage[index + 1] ?? NO_GLOSSARY_MENTIONS}
-              flash={flash?.pageNumber === index + 1 ? flash : null}
-              searchMatches={pageMatches[index + 1]}
-              activeMatchId={activeMatch?.pageNumber === index + 1 ? activeMatch.id : undefined}
-              rulerRect={rulerEnabled && ruler?.page === index + 1 ? ruler.rect : undefined}
-              onLockRuler={rulerEnabled ? lockRuler : undefined}
-              snipMode={snipMode}
-              onMentionHover={onMentionHover}
-              onMentionLeave={onMentionLeave}
-              onMentionClick={onMentionClick}
-            />
-          ))}
+          {dims.map((dim, index) => {
+            const pageNumber = index + 1;
+            const isVisible = visiblePages.has(pageNumber);
+            const pageBlocks = translatedBlocksByPage?.[pageNumber];
+            const isBilingual = translateMode === 'bilingual';
+            const fitSingleScale = Math.min(
+              1.35,
+              Math.max(0.48, (Math.max(520, containerWidth - 68) / 2) / Math.max(1, dim.width)),
+            );
+            const effectiveScale = isBilingual ? fitSingleScale * (scale / 1.25) : scale;
+            const pageWidth = dim.width * effectiveScale;
+            const pageHeight = dim.height * effectiveScale;
+
+            const primaryCanvas = (
+              <PdfPageCanvas
+                key={isBilingual ? `${pageNumber}-orig` : pageNumber}
+                pdfDoc={pdfDoc}
+                pageNumber={pageNumber}
+                isVisible={isVisible}
+                scale={effectiveScale}
+                pageWidth={pageWidth}
+                pageHeight={pageHeight}
+                citations={citationsByPage[pageNumber] ?? NO_CITATIONS}
+                glossaryMentions={glossaryMentionsByPage[pageNumber] ?? NO_GLOSSARY_MENTIONS}
+                flash={flash?.pageNumber === pageNumber ? flash : null}
+                searchMatches={pageMatches[pageNumber]}
+                activeMatchId={activeMatch?.pageNumber === pageNumber ? activeMatch.id : undefined}
+                rulerRect={rulerEnabled && ruler?.page === pageNumber ? ruler.rect : undefined}
+                onLockRuler={rulerEnabled ? lockRuler : undefined}
+                snipMode={snipMode}
+                translatedBlocks={translateMode === 'translated' ? pageBlocks : undefined}
+                showTranslationOverlay={translateMode === 'translated'}
+                onMentionHover={onMentionHover}
+                onMentionLeave={onMentionLeave}
+                onMentionClick={onMentionClick}
+              />
+            );
+
+            if (!isBilingual) return primaryCanvas;
+
+            return (
+              <div key={pageNumber} className="flex items-start justify-center gap-5">
+                {primaryCanvas}
+                <PdfPageCanvas
+                  key={`${pageNumber}-tr`}
+                  pdfDoc={pdfDoc}
+                  pageNumber={pageNumber}
+                  isVisible={isVisible}
+                  scale={effectiveScale}
+                  pageWidth={pageWidth}
+                  pageHeight={pageHeight}
+                  citations={citationsByPage[pageNumber] ?? NO_CITATIONS}
+                  glossaryMentions={NO_GLOSSARY_MENTIONS}
+                  snipMode={false}
+                  translatedBlocks={pageBlocks}
+                  showTranslationOverlay
+                  isCompanionPage
+                  onMentionHover={onMentionHover}
+                  onMentionLeave={onMentionLeave}
+                  onMentionClick={onMentionClick}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

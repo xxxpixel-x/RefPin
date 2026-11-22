@@ -1,7 +1,9 @@
 import type { SearchMatch } from '../../engine/pageLinesCache';
+import type { TranslatedBlock } from '../../engine/pdfParagraphs';
 import { useI18n } from '../../i18n';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
+import clsx from 'clsx';
 import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
 import { FreeSnipOverlay } from './FreeSnipOverlay';
 
@@ -27,6 +29,9 @@ interface Props {
   onLockRuler?: (page: number, x: number, y: number) => void;
   flash?: FlashHighlight | null;
   snipMode: boolean;
+  translatedBlocks?: TranslatedBlock[];
+  showTranslationOverlay?: boolean;
+  isCompanionPage?: boolean;
   onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onMentionLeave?: () => void;
   onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
@@ -34,6 +39,17 @@ interface Props {
 
 function overlayPosition(rect: NormalizedRect): CSSProperties {
   return { left: rect.x * 100 + '%', top: rect.y * 100 + '%', width: rect.width * 100 + '%', height: rect.height * 100 + '%' };
+}
+
+function isRectCenterInside(inner: NormalizedRect, outer: NormalizedRect): boolean {
+  const cx = inner.x + inner.width / 2;
+  const cy = inner.y + inner.height / 2;
+  return (
+    cx >= outer.x - 0.004 &&
+    cx <= outer.x + outer.width + 0.004 &&
+    cy >= outer.y - 0.004 &&
+    cy <= outer.y + outer.height + 0.004
+  );
 }
 
 export const PdfPageCanvas = memo(function PdfPageCanvas({
@@ -51,12 +67,23 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   rulerRect,
   onLockRuler,
   snipMode,
+  translatedBlocks,
+  showTranslationOverlay = false,
+  isCompanionPage = false,
   onMentionHover,
   onMentionLeave,
   onMentionClick,
 }: Props) {
   const { t } = useI18n();
-  const mentions = useMemo(() => [...citations, ...glossaryMentions], [citations, glossaryMentions]);
+  const activeTranslatedBlocks = useMemo(
+    () => (showTranslationOverlay && translatedBlocks ? translatedBlocks.filter((b) => Boolean(b.translated)) : []),
+    [showTranslationOverlay, translatedBlocks],
+  );
+  const mentions = useMemo(() => {
+    const all = [...citations, ...glossaryMentions];
+    if (!activeTranslatedBlocks.length) return all;
+    return all.filter((m) => !activeTranslatedBlocks.some((block) => isRectCenterInside(m.rect, block.rect)));
+  }, [citations, glossaryMentions, activeTranslatedBlocks]);
   const textRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hotspotsRef = useRef<HTMLDivElement>(null);
@@ -100,8 +127,10 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         renderedScaleRef.current = scale;
       }
       setRendered(true);
-      textTask = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport });
-      await textTask.render();
+      if (!isCompanionPage) {
+        textTask = new TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport });
+        await textTask.render();
+      }
     }
     void render(canvas, container).catch(() => {
       // Scrolling, zooming or closing a document can cancel either task.
@@ -199,8 +228,12 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         const anchor = hotspotsRef.current?.children[index];
         if (anchor instanceof HTMLElement && mentions[index] === press.mention) onMentionClick?.(press.mention, anchor);
       }}
-      data-page={pageNumber}
-      className="relative mx-auto overflow-hidden rounded-sm bg-paper-card shadow-paper ring-1 ring-black/[0.04]"
+      data-page={isCompanionPage ? undefined : pageNumber}
+      className={clsx(
+        'relative shrink-0 rounded-sm bg-paper-card shadow-paper ring-1 ring-black/[0.04]',
+        !isCompanionPage && 'mx-auto',
+        activeTranslatedBlocks.length > 0 && !snipMode ? 'overflow-visible' : 'overflow-hidden',
+      )}
       style={{ width: pageWidth, height: pageHeight, '--scale-factor': scale } as CSSProperties}
     >
       {isVisible && !rendered && (
@@ -209,7 +242,79 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
 
       <canvas ref={canvasRef} width={0} height={0} className="pdf-image block h-full w-full select-none" />
 
-      {isVisible && <div ref={textRef} className="textLayer" />}
+      {isVisible && (
+        <div
+          ref={textRef}
+          className={clsx('textLayer', (isCompanionPage || activeTranslatedBlocks.length > 0) && 'pointer-events-none select-none opacity-0')}
+        />
+      )}
+
+      {isVisible && rendered && activeTranslatedBlocks.length > 0 && !snipMode && (
+        <div className="pointer-events-none absolute inset-0 z-[8]">
+          {activeTranslatedBlocks.map((block) => {
+            const boxH = block.rect.height * pageHeight;
+            const boxW = block.rect.width * pageWidth;
+            const avgLinePx = boxH / Math.max(1, block.lineCount);
+            const fontSize = block.isHeading
+              ? Math.min(20, Math.max(10.5, avgLinePx * 0.78))
+              : block.isCaption
+                ? Math.min(13, Math.max(8.5, avgLinePx * 0.72))
+                : Math.min(15, Math.max(8.8, avgLinePx * 0.74));
+            const padX = Math.min(3, boxW * 0.015);
+            const padY = 1.5;
+
+            const seenKeys = new Set<string>();
+            const blockCitations = citations.filter((cite) => {
+              if (!isRectCenterInside(cite.rect, block.rect)) return false;
+              const dedupKey = cite.targetKeys.join(',') || cite.rawText;
+              if (seenKeys.has(dedupKey)) return false;
+              seenKeys.add(dedupKey);
+              return true;
+            });
+
+            return (
+              <div
+                key={block.id}
+                style={{
+                  left: `${Math.max(0, block.rect.x * pageWidth - padX)}px`,
+                  top: `${Math.max(0, block.rect.y * pageHeight - padY)}px`,
+                  width: `${Math.min(pageWidth, boxW + padX * 2)}px`,
+                  minHeight: `${boxH + padY * 2}px`,
+                  fontSize: `${fontSize.toFixed(1)}px`,
+                  lineHeight: block.isHeading ? 1.28 : 1.38,
+                }}
+                className={clsx(
+                  'pointer-events-auto absolute select-text overflow-hidden bg-paper-card px-0.5 text-justify text-paper-ink transition-shadow hover:z-30 hover:h-auto hover:overflow-visible hover:rounded hover:shadow-float',
+                  block.isHeading && 'font-semibold text-left',
+                )}
+              >
+                <span>{block.translated}</span>
+                {blockCitations.length > 0 && (
+                  <span className="ml-1 inline-flex flex-wrap items-center gap-0.5 align-baseline">
+                    {blockCitations.map((cite) => (
+                      <button
+                        key={cite.id}
+                        type="button"
+                        onMouseEnter={(e) => onMentionHover?.(cite, e.currentTarget)}
+                        onMouseLeave={() => onMentionLeave?.()}
+                        onFocus={(e) => onMentionHover?.(cite, e.currentTarget)}
+                        onBlur={() => onMentionLeave?.()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onMentionClick?.(cite, e.currentTarget);
+                        }}
+                        className="inline-flex items-center rounded border border-paper-goldborder bg-paper-goldbg px-1 py-0 text-[0.82em] font-medium leading-tight text-paper-goldtext transition hover:bg-paper-goldsoft"
+                      >
+                        {cite.rawText}
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {isVisible && rendered && !snipMode && (
         <div ref={hotspotsRef} className="pointer-events-none absolute inset-0 z-10 select-none">

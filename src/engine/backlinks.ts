@@ -1,4 +1,8 @@
-import type { CitationBacklink, InlineCitation, PaperAsset, PinnedItem } from '../types/paper';
+import type { CitationBacklink, GlossaryMention, InlineCitation, PaperAsset, PinnedItem } from '../types/paper';
+
+export function glossaryPinId(term: string): string {
+  return `term-${term}`;
+}
 
 function basePanelKey(key: string): string {
   return key.replace(/^((?:fig|tab)-\d+(?:[.-]\d+)*)[a-z]$/i, '$1');
@@ -38,6 +42,7 @@ export function findAssetForCitation(
 
 export function buildBacklinksMap(
   citationsByPage: Record<number, InlineCitation[]>,
+  glossaryMentionsByPage?: Record<number, GlossaryMention[]>,
 ): Record<string, CitationBacklink[]> {
   const byTarget = new Map<string, Map<string, CitationBacklink>>();
   for (const citations of Object.values(citationsByPage)) {
@@ -51,6 +56,26 @@ export function buildBacklinksMap(
           byTarget.set(key, links);
         }
         if (!links.has(id)) links.set(id, backlink);
+      }
+    }
+  }
+  if (glossaryMentionsByPage) {
+    for (const mentions of Object.values(glossaryMentionsByPage)) {
+      for (const mention of mentions) {
+        const key = glossaryPinId(mention.term);
+        let links = byTarget.get(key);
+        if (!links) {
+          links = new Map();
+          byTarget.set(key, links);
+        }
+        if (!links.has(mention.id)) {
+          links.set(mention.id, {
+            citationId: mention.id,
+            pageNumber: mention.pageNumber,
+            rect: mention.rect,
+            rawText: mention.rawText,
+          });
+        }
       }
     }
   }

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useReaderStore } from '../../store/useReaderStore';
-import type { NormalizedRect, OutlineItem, PaperAsset, ReferenceEntry } from '../../types/paper';
+import type { GlossaryEntry, NormalizedRect, OutlineItem, PaperAsset, ReferenceEntry } from '../../types/paper';
+import type { TranslateDisplayMode } from '../../services/translator';
 import { pageQuery, rankCommands, type SearchableCommand } from './commandMatcher';
 
 export interface Command extends SearchableCommand { category: string; run: () => void; pin?: () => void }
@@ -11,12 +12,26 @@ interface Props {
   onJump: (page: number, rect?: NormalizedRect, label?: string) => void;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (ref: ReferenceEntry) => void;
+  onPinGlossary?: (entry: GlossaryEntry) => void;
+  onToggleTranslate?: () => void;
+  onSetTranslateMode?: (mode: TranslateDisplayMode) => void;
   onExport: (mode: 'copy' | 'zip') => void;
   onHome: () => void;
   onSearch: () => void;
 }
 
-export function CommandPalette({ onClose, onJump, onPinAsset, onPinReference, onExport, onHome, onSearch }: Props) {
+export function CommandPalette({
+  onClose,
+  onJump,
+  onPinAsset,
+  onPinReference,
+  onPinGlossary,
+  onToggleTranslate,
+  onSetTranslateMode,
+  onExport,
+  onHome,
+  onSearch,
+}: Props) {
   const { t, locale, setLocale } = useI18n();
   const assets = useReaderStore(s => s.assetsMap);
   const refs = useReaderStore(s => s.referencesMap);
@@ -33,7 +48,12 @@ export function CommandPalette({ onClose, onJump, onPinAsset, onPinReference, on
       ['scholar.toggle', () => state().setScholarLookupEnabled(!state().scholarLookupEnabled)],
       ['notes.copy', () => onExport('copy')], ['notes.zip', () => onExport('zip')],
       ['language.switch', () => setLocale(locale === 'en' ? 'zh-CN' : 'en')],
-      ['search.find', onSearch], ['assets.title', () => state().setDrawerOpen(!state().drawerOpen)],
+      ['search.find', onSearch],
+      ['assets.title', () => state().toggleDrawerSection('assets')],
+      ['glossary.title', () => state().toggleDrawerSection('glossary')],
+      ['dock.toggle', () => state().toggleDockCollapsed()],
+      ...(onToggleTranslate ? [['translate.oneClick', onToggleTranslate] as const] : []),
+      ...(onSetTranslateMode ? [['translate.bilingual', () => onSetTranslateMode('bilingual')] as const] : []),
       ['dock.clearAll', () => state().clearPinnedItems()], ['reader.home', onHome],
     ] as const;
     const rows: Command[] = [];
@@ -61,11 +81,13 @@ export function CommandPalette({ onClose, onJump, onPinAsset, onPinReference, on
       run: () => onJump(ref.pageNumber, undefined, t('reference.number', { index: ref.index })), pin: () => onPinReference(ref),
     });
     for (const entry of Object.values(glossary)) rows.push({
-      id: 'term-' + entry.term, label: entry.term + ' · ' + entry.expansion, category: t('glossary.title'),
+      id: 'term-' + entry.term, label: entry.term + ' · ' + entry.expansion,
+      keywords: entry.contextSentence, category: t('glossary.title'),
       run: () => onJump(entry.definedPage, entry.definedRect, entry.term),
+      pin: onPinGlossary ? () => onPinGlossary(entry) : undefined,
     });
     return rows;
-  }, [assets, refs, outline, glossary, numPages, locale, setLocale, t, onJump, onPinAsset, onPinReference, onExport, onSearch, onHome]);
+  }, [assets, refs, outline, glossary, numPages, locale, setLocale, t, onJump, onPinAsset, onPinReference, onPinGlossary, onToggleTranslate, onSetTranslateMode, onExport, onSearch, onHome]);
 
   return <CommandDialog commands={commands} numPages={numPages} onJump={onJump} onClose={onClose} />;
 }

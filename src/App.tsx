@@ -19,9 +19,10 @@ import { LightboxModal } from './components/dock/LightboxModal';
 import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
 import { loadReaderPdf } from './engine/pdfLoader';
-import { findAssetForCitation } from './engine/backlinks';
+import { findAssetForCitation, glossaryPinId } from './engine/backlinks';
 import { parsePaper } from './engine/parsePaper';
 import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
+import { usePaperTranslation } from './services/usePaperTranslation';
 import { useReaderStore } from './store/useReaderStore';
 import { SAMPLES, getSampleById } from './config/samples';
 import {
@@ -29,6 +30,7 @@ import {
   MAX_PDF_BYTES, savePaperArchive, savePdfBlob,
 } from './storage/paperDb';
 import type {
+  GlossaryEntry,
   InlineCitation,
   NormalizedRect,
   PaperAsset,
@@ -79,11 +81,16 @@ export default function App() {
   const backlinksMap = useReaderStore((state) => state.backlinksMap);
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
   const drawerOpen = useReaderStore((state) => state.drawerOpen);
+  const drawerSection = useReaderStore((state) => state.drawerSection);
   const snipMode = useReaderStore((state) => state.snipMode);
   const outline = useReaderStore(state => state.outline);
   const dockPosition = useReaderStore((state) => state.dockPosition);
   const dockWidth = useReaderStore((state) => state.dockWidth);
   const dockHeight = useReaderStore((state) => state.dockHeight);
+  const dockCollapsed = useReaderStore((state) => state.dockCollapsed);
+
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set([1, 2]));
+  const translation = usePaperTranslation(pdfDoc, numPages, currentPage, visiblePages);
 
   const [sharedArxiv, setSharedArxiv] = useState(() => {
     const params = new URLSearchParams(location.search);
@@ -204,6 +211,9 @@ export default function App() {
   }, [showToast]);
 
   const flashPinnedCard = useCallback((id: string) => {
+    if (useReaderStore.getState().dockCollapsed) {
+      useReaderStore.getState().setDockCollapsed(false);
+    }
     setHighlightedPinId(id);
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
     highlightTimerRef.current = window.setTimeout(() => setHighlightedPinId(null), 1400);
@@ -412,6 +422,21 @@ export default function App() {
     [flashPinnedCard, showToast],
   );
 
+  const handlePinGlossary = useCallback(
+    (entry: GlossaryEntry) => {
+      const store = useReaderStore.getState();
+      const id = glossaryPinId(entry.term);
+      if (store.pinnedItems.some((item) => item.id === id)) {
+        flashPinnedCard(id);
+        showToast(message('dock.alreadyPinnedTerm', { term: entry.term }));
+        return;
+      }
+      store.pinGlossary(entry);
+      showToast(message('dock.pinnedTerm', { term: entry.term }));
+    },
+    [flashPinnedCard, showToast],
+  );
+
   const handleJump = useCallback(
     (
       pageNumber: number,
@@ -602,7 +627,7 @@ export default function App() {
     if (!item.imageUrl) return;
     setLightboxAsset({
       key: item.id,
-      kind: item.kind === 'snip' || item.kind === 'reference' ? 'figure' : item.kind,
+      kind: item.kind === 'snip' || item.kind === 'reference' || item.kind === 'glossary' ? 'figure' : item.kind,
       label: pinTitle(item),
       caption: item.subtitle ?? '',
       pageNumber: item.pageNumber,
@@ -611,7 +636,7 @@ export default function App() {
     });
   }, []);
 
-  // 全局快捷键：S 开关框选、[ 开关资产墙、Esc 收起浮窗/灯箱/框选
+  // 全局快捷键：S 开关框选、[ 开关资产墙、G 开关术语栏、T 一键翻译、Esc 收起浮窗/灯箱/框选
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useReaderStore.getState();
@@ -631,6 +656,7 @@ export default function App() {
         closeSearch();
         setLightboxAsset(null);
         setHoverTrigger(null);
+        translation.setSettingsOpen(false);
         if (useReaderStore.getState().snipMode) {
           useReaderStore.getState().setSnipMode(false);
         }
@@ -668,11 +694,20 @@ export default function App() {
       } else if (event.key === '[') {
         event.preventDefault();
         state.setDrawerOpen(!state.drawerOpen);
+      } else if (event.key === ']') {
+        event.preventDefault();
+        state.toggleDockCollapsed();
+      } else if (event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        state.toggleDrawerSection('glossary');
+      } else if (event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        translation.toggleTranslate();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bootingName, paletteOpen, toggleSearch, closeSearch, navigateHistory]);
+  }, [bootingName, paletteOpen, toggleSearch, closeSearch, navigateHistory, translation]);
 
   const assetsList = useMemo(
     () =>
@@ -687,11 +722,30 @@ export default function App() {
     [referencesMap],
   );
 
+  const glossaryList = useMemo(
+    () =>
+      Object.values(glossaryMap).sort(
+        (a, b) => a.definedPage - b.definedPage || a.definedRect.y - b.definedRect.y,
+      ),
+    [glossaryMap],
+  );
+
   const pinnedIds = useMemo(() => pinnedItems.map((item) => item.id), [pinnedItems]);
 
-  const palette = paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} onExport={handleExport}
-    onJump={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
-    onPinAsset={handlePinAsset} onPinReference={handlePinReference} onHome={handleReset} onSearch={() => setSearchOpen(true)} />;
+  const palette = paletteOpen && (
+    <CommandPalette
+      onClose={() => setPaletteOpen(false)}
+      onExport={handleExport}
+      onJump={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
+      onPinAsset={handlePinAsset}
+      onPinReference={handlePinReference}
+      onPinGlossary={handlePinGlossary}
+      onToggleTranslate={translation.toggleTranslate}
+      onSetTranslateMode={translation.setMode}
+      onHome={handleReset}
+      onSearch={() => setSearchOpen(true)}
+    />
+  );
 
   if (!pdfDoc) {
     if (bootingName) {
@@ -740,20 +794,25 @@ export default function App() {
         snipMode={snipMode}
         isParsing={isParsing}
         parseProgress={parseProgress}
-        assetCount={assetsList.length}
+        assetCount={assetsList.length + glossaryList.length + referencesList.length}
+        pinCount={pinnedItems.length}
+        drawerOpen={drawerOpen}
+        dockCollapsed={dockCollapsed}
+        translation={translation}
         onPalette={() => setPaletteOpen(true)}
         onSearch={toggleSearch}
         onJumpPage={handleJump}
         onZoom={(nextScale) => useReaderStore.getState().setScale(nextScale)}
         onToggleSnip={() => useReaderStore.getState().setSnipMode(!snipMode)}
         onToggleDrawer={() => useReaderStore.getState().setDrawerOpen(!drawerOpen)}
+        onToggleDock={() => useReaderStore.getState().toggleDockCollapsed()}
         onReset={handleReset}
         onOpenFile={(file) => void handleOpenFile(file)}
       />
 
-      {(parseError || bootError) && (
+      {(parseError || bootError || translation.error) && (
         <div role="alert" className="border-b border-paper-goldborder bg-paper-goldbg px-4 py-1.5 text-xs text-paper-ink">
-          {formatMessage(parseError || bootError)}
+          {formatMessage(parseError || bootError || translation.error)}
         </div>
       )}
 
@@ -772,8 +831,11 @@ export default function App() {
       >
         <AssetDrawer
           open={drawerOpen}
+          section={drawerSection}
+          onSectionChange={(sec) => useReaderStore.getState().setDrawerSection(sec)}
           assets={assetsList}
           outline={outline}
+          glossary={glossaryList}
           references={referencesList}
           backlinksMap={backlinksMap}
           onJumpToBacklink={handleJump}
@@ -783,6 +845,7 @@ export default function App() {
           onClose={() => useReaderStore.getState().setDrawerOpen(false)}
           onPinAsset={handlePinAsset}
           onPinReference={handlePinReference}
+          onPinGlossary={handlePinGlossary}
           onLocate={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
         />
 
@@ -802,6 +865,9 @@ export default function App() {
             citationsByPage={citationsByPage}
             glossaryMentionsByPage={glossaryMentionsByPage}
             snipMode={snipMode}
+            translateMode={translation.displayMode}
+            translatedBlocksByPage={translation.blocksByPage}
+            onVisiblePagesChange={setVisiblePages}
             initialPage={initialPage}
             initialScrollTop={initialScrollTop}
             onScrollTopChange={handleScrollTop}
@@ -826,6 +892,8 @@ export default function App() {
           position={dockPosition}
           width={dockWidth}
           height={dockHeight}
+          dockCollapsed={dockCollapsed}
+          onDockCollapsedChange={(collapsed) => useReaderStore.getState().setDockCollapsed(collapsed)}
           workspaceRef={workspaceRef}
           onPositionChange={(pos) => useReaderStore.getState().setDockPosition(pos)}
           onWidthChange={(w) => useReaderStore.getState().setDockWidth(w)}
@@ -851,6 +919,7 @@ export default function App() {
         referencesMap={referencesMap}
         onPinAsset={handlePinAsset}
         onPinReference={handlePinReference}
+        onPinGlossary={handlePinGlossary}
         onJump={handleJump}
         onOpenLightbox={setLightboxAsset}
         onPeek={handlePeek}

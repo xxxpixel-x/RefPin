@@ -32,6 +32,7 @@ interface HoverPeekCardProps {
   glossaryMap?: Record<string, GlossaryEntry>;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (reference: ReferenceEntry) => void;
+  onPinGlossary?: (entry: GlossaryEntry) => void;
   onJump: (
     pageNumber: number,
     targetRect?: InlineCitation['rect'],
@@ -60,6 +61,7 @@ export function HoverPeekCard({
   glossaryMap,
   onPinAsset,
   onPinReference,
+  onPinGlossary,
   onJump,
   onOpenLightbox,
   onPeek,
@@ -206,13 +208,25 @@ export function HoverPeekCard({
           <div className="p-3">
             <p className="text-[13px] font-semibold text-paper-ink">{definition.expansion}</p>
             <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">{definition.contextSentence}</p>
-            <button type="button" className="mt-3 flex items-center gap-1 rounded-md border border-paper-border px-2 py-1 text-[11px] text-paper-ink hover:bg-paper-bg"
-              onClick={() => {
-                closeNow();
-                onJump(definition.definedPage, definition.definedRect, mention.rect, mention.pageNumber);
-              }}>
-              <CornerDownRight size={13} />{t('glossary.jump')}
-            </button>
+            <div className="mt-3 flex items-center gap-2">
+              {onPinGlossary && (
+                <button
+                  type="button"
+                  onClick={() => onPinGlossary(definition)}
+                  className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90"
+                >
+                  <Pin className="h-3 w-3" />
+                  {t('glossary.pin')}
+                </button>
+              )}
+              <button type="button" className="flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink hover:bg-paper-bg"
+                onClick={() => {
+                  closeNow();
+                  onJump(definition.definedPage, definition.definedRect, mention.rect, mention.pageNumber);
+                }}>
+                <CornerDownRight size={13} />{t('glossary.jump')}
+              </button>
+            </div>
           </div>
         </>
       )}

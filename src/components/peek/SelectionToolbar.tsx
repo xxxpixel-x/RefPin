@@ -4,7 +4,12 @@ import { useEffect, useRef, useState, type RefObject, type FormEvent } from 'rea
 import { createPortal } from 'react-dom';
 import { Check, Copy, Languages, Settings } from 'lucide-react';
 import { cleanPdfSelectedText } from '../../utils/textCleanup';
-import { selectionTranslator, WEB_TRANSLATE_CONFIG, type TranslateConfig } from '../../services/translator';
+import {
+  DEFAULT_TRANSLATE_CONFIG,
+  selectionTranslator,
+  TRANSLATE_PRESETS,
+  type TranslateConfig,
+} from '../../services/translator';
 
 // PDF.js uses positioned spans and explicit <br> elements. Reading only those
 // layers keeps page numbers and citation controls out of cross-page selections.
@@ -138,7 +143,7 @@ const actionClass = 'inline-flex items-center gap-1.5 rounded px-2 py-1.5 hover:
 const fieldClass = 'mt-1 w-full rounded-md border border-paper-border bg-paper-card px-2 py-1.5 text-paper-ink focus:border-paper-gold focus:outline-none';
 
 function SelectionActions({ text, restoreSelection }: { text: string; restoreSelection: () => void }) {
-  const [config, setConfig] = useState<TranslateConfig>(WEB_TRANSLATE_CONFIG);
+  const [config, setConfig] = useState<TranslateConfig>(DEFAULT_TRANSLATE_CONFIG);
   const [draft, setDraft] = useState(config);
   const [settings, setSettings] = useState(false);
   const [ready, setReady] = useState(false);
@@ -157,7 +162,11 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       setDraft(initial);
       setReady(true);
     });
-    return () => { active = false; window.clearTimeout(timer.current); };
+    const unsubscribe = selectionTranslator.subscribeConfig(next => {
+      setConfig(next);
+      setDraft(next);
+    });
+    return () => { active = false; unsubscribe(); window.clearTimeout(timer.current); };
   }, []);
 
   async function copy(value: string, kind: 'source' | 'translation') {
@@ -233,28 +242,41 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       </button>
     </div>
     {settings && <form onSubmit={save} className="grid w-80 max-w-full gap-2.5 border-t border-paper-border p-3">
-      {IS_EXTENSION_PAGE && <label>{t('translate.settings')}
-        <select className={fieldClass} value={draft.provider}
-          onChange={e => setDraft({ ...draft, provider: e.target.value as TranslateConfig['provider'] })}>
-          <option value="free">{t('translate.free')}</option><option value="openai">{t('translate.custom')}</option>
-        </select>
-      </label>}
-      {draft.provider !== 'free' && <label>{t('translate.endpoint')}
-        <input type="url" required className={fieldClass} placeholder="http://localhost:11434/v1" value={draft.apiBaseUrl}
-          onChange={e => setDraft({ ...draft, apiBaseUrl: e.target.value })} />
-      </label>}
       <div className="grid grid-cols-[1fr_auto] gap-2">
-        {draft.provider !== 'free' && <label>{t('translate.model')}<input required className={fieldClass} placeholder={t('translate.modelHint')} value={draft.model}
-          onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>}
+        <label>{t('translate.settings')}
+          <select className={fieldClass} value={draft.provider}
+            onChange={e => setDraft({ ...draft, provider: e.target.value as TranslateConfig['provider'] })}>
+            <option value="free">{t('translate.free')}</option><option value="openai">{t('translate.custom')}</option>
+          </select>
+        </label>
         <label>{t('translate.target')}<select className={fieldClass} value={draft.targetLang}
           onChange={e => setDraft({ ...draft, targetLang: e.target.value as TranslateConfig['targetLang'] })}>
           <option value="zh-CN">{t('language.chinese')}</option><option value="en">{t('language.english')}</option>
         </select></label>
       </div>
-      {draft.provider !== 'free' && <label>{t('translate.optionalKey')}<input type="password" autoComplete="off" className={fieldClass} value={draft.apiKey}
-        onChange={e => setDraft({ ...draft, apiKey: e.target.value })} /></label>}
-      <p className="text-[11px] leading-relaxed text-paper-muted">{t(draft.provider === 'free' ? 'translate.freeNotice' :
-        IS_EXTENSION_PAGE && !draft.apiKey ? 'translate.keyFallback' : 'translate.privacy')}</p>
+      {draft.provider !== 'free' && <>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-1 text-[10px] text-paper-muted">{t('translate.presets')}</span>
+          {TRANSLATE_PRESETS.map(preset => (
+            <button key={preset.id} type="button"
+              onClick={() => setDraft({ ...draft, provider: 'openai', apiBaseUrl: preset.apiBaseUrl, model: preset.model })}
+              className="rounded border border-paper-border bg-paper-bg px-1.5 py-0.5 text-[10px] text-paper-ink transition hover:border-paper-gold">
+              {t(preset.labelKey)}
+            </button>
+          ))}
+        </div>
+        <label>{t('translate.endpoint')}
+          <input type="url" required className={fieldClass} placeholder="http://localhost:11434/v1" value={draft.apiBaseUrl}
+            onChange={e => setDraft({ ...draft, apiBaseUrl: e.target.value })} />
+        </label>
+        <label>{t('translate.model')}<input required className={fieldClass} placeholder={t('translate.modelHint')} value={draft.model}
+          onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>
+        <label>{t('translate.optionalKey')}<input type="password" autoComplete="off" className={fieldClass} value={draft.apiKey}
+          onChange={e => setDraft({ ...draft, apiKey: e.target.value })} /></label>
+      </>}
+      <p className="text-[11px] leading-relaxed text-paper-muted">{t(draft.provider === 'free'
+        ? (IS_EXTENSION_PAGE ? 'translate.freeNotice' : 'translate.webFreeNotice')
+        : (!draft.apiKey && !/^http:\/\/(?:localhost|127\.0\.0\.1)\b/i.test(draft.apiBaseUrl) ? 'translate.keyFallback' : 'translate.privacy'))}</p>
       <div className="flex justify-between">
         <button type="button" disabled={!config.apiKey} className={actionClass} onClick={() => void clearKey()}>{t('settings.clearKey')}</button>
         <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-paper-card">{t('settings.save')}</button>

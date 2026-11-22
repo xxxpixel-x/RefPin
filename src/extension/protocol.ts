@@ -71,8 +71,8 @@ export const STORAGE_KEY_PENDING_PIN = 'refpin_pending_pin';
 export { STORAGE_KEY_TRANSLATE_CONFIG } from '../services/translator';
 
 export { DEFAULT_TRANSLATE_CONFIG } from '../services/translator';
-export type { TranslateConfig, TranslateProvider, TranslateTargetLang } from '../services/translator';
-export type TranslateDisplayMode = 'off' | 'bilingual' | 'translated';
+export type { TranslateConfig, TranslateDisplayMode, TranslateProvider, TranslateTargetLang } from '../services/translator';
+import type { TranslateDisplayMode, TranslateTargetLang } from '../services/translator';
 
 export interface PageTranslateStatus {
   active: boolean;
@@ -115,6 +115,11 @@ export type ExtensionMessage =
       type: 'REFPIN_TRANSLATE_BATCH';
       texts: string[];
       config?: Partial<TranslateConfig>;
+    }
+  | {
+      type: 'REFPIN_WEB_TRANSLATE';
+      texts: string[];
+      targetLang: TranslateTargetLang;
     }
   | {
       type: 'REFPIN_PAGE_TRANSLATE_START';

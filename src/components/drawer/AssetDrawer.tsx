@@ -1,6 +1,6 @@
 import type { MessageKey } from '../../i18n/types';
 import { t } from '../../i18n/core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronRight,
   FileText,
@@ -12,15 +12,29 @@ import {
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CitationBacklink, CitationKind, NormalizedRect, OutlineItem, PaperAsset, ReferenceEntry } from '../../types/paper';
+import { glossaryPinId } from '../../engine/backlinks';
+import type { DrawerSection } from '../../store/useReaderStore';
+import type {
+  CitationBacklink,
+  CitationKind,
+  GlossaryEntry,
+  NormalizedRect,
+  OutlineItem,
+  PaperAsset,
+  ReferenceEntry,
+} from '../../types/paper';
 import { BacklinkStrip } from '../BacklinkStrip';
 
-type DrawerTab = 'all' | CitationKind | 'outline';
+type DrawerTab = 'all' | CitationKind | 'outline' | 'glossary';
+type GlossaryFilter = 'all' | GlossaryEntry['kind'];
 
 interface AssetDrawerProps {
   open: boolean;
+  section?: DrawerSection;
+  onSectionChange?: (section: DrawerSection) => void;
   assets: PaperAsset[];
   outline?: OutlineItem[];
+  glossary?: GlossaryEntry[];
   references: ReferenceEntry[];
   backlinksMap: Record<string, CitationBacklink[]>;
   onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
@@ -30,6 +44,7 @@ interface AssetDrawerProps {
   onClose: () => void;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (reference: ReferenceEntry) => void;
+  onPinGlossary?: (entry: GlossaryEntry) => void;
   onLocate: (pageNumber: number, rect?: NormalizedRect, label?: string) => void;
 }
 
@@ -41,8 +56,9 @@ const TABS = [
   { key: 'algorithm', label: 'filter.algorithms' },
   { key: 'theorem', label: 'filter.theorems' },
   { key: 'section', label: 'filter.sections' },
+  { key: 'glossary', label: 'filter.glossary' },
   { key: 'reference', label: 'filter.references' },
-] as const satisfies ReadonlyArray<{ key: DrawerTab; label: MessageKey }>;
+] as const satisfies ReadonlyArray<{ key: Exclude<DrawerTab, 'outline'>; label: MessageKey }>;
 
 export function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: OutlineItem) => void }) {
   const [expanded, setExpanded] = useState(false);
@@ -68,8 +84,11 @@ export function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (it
 
 export function AssetDrawer({
   open,
+  section = 'assets',
+  onSectionChange,
   assets,
   outline = [],
+  glossary = [],
   references,
   backlinksMap,
   onJumpToBacklink,
@@ -79,10 +98,25 @@ export function AssetDrawer({
   onClose,
   onPinAsset,
   onPinReference,
+  onPinGlossary,
   onLocate,
 }: AssetDrawerProps) {
-  const [tab, setTab] = useState<DrawerTab>('all');
+  const [tab, setTab] = useState<DrawerTab>(() => (
+    section === 'outline' ? 'outline' : section === 'glossary' ? 'glossary' : 'all'
+  ));
   const [query, setQuery] = useState('');
+  const [glossaryFilter, setGlossaryFilter] = useState<GlossaryFilter>('all');
+
+  useEffect(() => {
+    if (section === 'outline' && tab !== 'outline') setTab('outline');
+    else if (section === 'glossary' && tab !== 'glossary') setTab('glossary');
+    else if (section === 'assets' && tab === 'outline') setTab('all');
+  }, [section]);
+
+  const selectSection = (nextSection: DrawerSection, nextTab: DrawerTab) => {
+    setTab(nextTab);
+    onSectionChange?.(nextSection);
+  };
 
   const jumpToCitation = (pageNumber: number, rect: NormalizedRect) => {
     onClose();
@@ -90,6 +124,7 @@ export function AssetDrawer({
   };
 
   const filteredAssets = useMemo(() => {
+    if (tab === 'outline' || tab === 'glossary' || tab === 'reference') return [];
     const keyword = query.trim().toLowerCase();
     return assets.filter((asset) => {
       if (tab !== 'all' && tab !== asset.kind) return false;
@@ -112,26 +147,46 @@ export function AssetDrawer({
     );
   }, [references, tab, query]);
 
+  const filteredGlossary = useMemo(() => {
+    if (tab !== 'all' && tab !== 'glossary') return [];
+    const keyword = query.trim().toLowerCase();
+    return glossary.filter((entry) => {
+      if (tab === 'glossary' && glossaryFilter !== 'all' && entry.kind !== glossaryFilter) return false;
+      if (!keyword) return true;
+      return (
+        entry.term.toLowerCase().includes(keyword) ||
+        entry.expansion.toLowerCase().includes(keyword) ||
+        entry.contextSentence.toLowerCase().includes(keyword)
+      );
+    });
+  }, [glossary, tab, glossaryFilter, query]);
+
   const counts: Record<Exclude<DrawerTab, 'outline'>, number> = {
-    all: assets.length + references.length, reference: references.length,
+    all: assets.length + glossary.length + references.length,
+    glossary: glossary.length,
+    reference: references.length,
     figure: 0, table: 0, equation: 0, algorithm: 0, theorem: 0, section: 0,
   };
   for (const asset of assets) counts[asset.kind]++;
+  const acronymCount = useMemo(() => glossary.filter((e) => e.kind === 'acronym').length, [glossary]);
+  const symbolCount = glossary.length - acronymCount;
+
+  const isAssetSection = tab !== 'outline';
 
   return (
     <aside
       className={clsx(
-        'absolute inset-y-0 left-0 z-30 flex w-[280px] flex-col border-r border-paper-border bg-paper-card/95 shadow-float backdrop-blur transition-transform duration-200',
+        'absolute inset-y-0 left-0 z-30 flex w-[288px] flex-col border-r border-paper-border bg-paper-card/95 shadow-float backdrop-blur transition-transform duration-200',
         open ? 'visible translate-x-0' : 'invisible -translate-x-full',
       )}
       aria-hidden={!open}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-paper-border px-3">
-        <button type="button" aria-pressed={tab !== 'outline'} onClick={() => setTab('all')}
+        <button type="button" aria-pressed={isAssetSection} onClick={() => selectSection('assets', 'all')}
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-paper-muted aria-pressed:bg-paper-bg aria-pressed:font-medium aria-pressed:text-paper-ink">
           {t('assets.title')}<span className="font-mono text-[10px] text-paper-goldtext">{counts.all}</span>
         </button>
-        <button type="button" aria-pressed={tab === 'outline'} onClick={() => setTab('outline')}
+        <button type="button" aria-pressed={tab === 'outline'} onClick={() => selectSection('outline', 'outline')}
           className="rounded-md px-2 py-1 text-xs text-paper-muted aria-pressed:bg-paper-bg aria-pressed:font-medium aria-pressed:text-paper-ink">
           {t('outline.title')}
         </button>
@@ -145,15 +200,21 @@ export function AssetDrawer({
         </button>
       </div>
 
-      {tab !== 'outline' && <div className="shrink-0 px-2.5 pt-2.5">
+      {isAssetSection && <div className="shrink-0 px-2.5 pt-2.5">
         <label className="flex items-center gap-1.5 rounded-lg border border-paper-border bg-paper-bg px-2 py-1.5">
           <Search className="h-3.5 w-3.5 text-paper-muted" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t('assets.search')}
+            aria-label={t('assets.search')}
             className="w-full bg-transparent text-[11px] text-paper-ink outline-none placeholder:text-paper-muted"
           />
+          {query && (
+            <button type="button" onClick={() => setQuery('')} className="text-paper-muted hover:text-paper-ink">
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </label>
 
         <div className="mt-2 flex flex-wrap items-center gap-1">
@@ -162,7 +223,7 @@ export function AssetDrawer({
               key={item.key}
               type="button"
               aria-pressed={tab === item.key}
-              onClick={() => setTab(item.key)}
+              onClick={() => selectSection(item.key === 'glossary' ? 'glossary' : 'assets', item.key)}
               className={clsx(
                 'flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition',
                 tab === item.key
@@ -182,6 +243,34 @@ export function AssetDrawer({
             </button>
           ))}
         </div>
+
+        {tab === 'glossary' && glossary.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-paper-border/60 pt-1.5">
+            {(
+              [
+                { key: 'all', label: t('filter.all'), count: glossary.length },
+                { key: 'acronym', label: t('glossary.acronyms'), count: acronymCount },
+                { key: 'symbol', label: t('glossary.symbols'), count: symbolCount },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={glossaryFilter === item.key}
+                onClick={() => setGlossaryFilter(item.key)}
+                className={clsx(
+                  'flex items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] transition',
+                  glossaryFilter === item.key
+                    ? 'border border-paper-goldborder bg-paper-goldbg font-medium text-paper-goldtext'
+                    : 'text-paper-muted hover:bg-paper-bg hover:text-paper-ink',
+                )}
+              >
+                {item.label}
+                <span className="font-mono text-[9px]">{item.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
@@ -284,9 +373,81 @@ export function AssetDrawer({
           </div>
         )}
 
+        {(tab === 'all' || tab === 'glossary') && filteredGlossary.length > 0 && (
+          <div className={clsx('space-y-1.5', tab === 'all' && filteredAssets.length > 0 && 'mt-2.5')}>
+            {tab === 'all' && (
+              <p className="px-1 pb-0.5 text-[9px] font-medium uppercase tracking-wider text-paper-muted">
+                {t('glossary.title')}
+              </p>
+            )}
+            {filteredGlossary.map((entry) => {
+              const pinId = glossaryPinId(entry.term);
+              const pinned = pinnedIds.includes(pinId);
+              return (
+                <article
+                  key={entry.term}
+                  className="group rounded-lg border border-paper-border bg-paper-card p-2 transition hover:border-paper-goldborder"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onLocate(entry.definedPage, entry.definedRect, entry.term)}
+                      className="shrink-0 rounded border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-paper-goldtext transition hover:bg-paper-goldsoft"
+                    >
+                      {entry.term}
+                    </button>
+                    <span className="rounded bg-paper-bg px-1.5 py-0.5 text-[9px] text-paper-muted">
+                      {t(entry.kind === 'acronym' ? 'glossary.acronyms' : 'glossary.symbols')}
+                    </span>
+                    {pinned && (
+                      <span className="rounded bg-paper-goldbg px-1 text-[8px] text-paper-goldtext">
+                        {t('pin.pinned')}
+                      </span>
+                    )}
+                    <span className="ml-auto font-mono text-[9.5px] text-paper-muted">
+                      {t('reader.page', { page: entry.definedPage })}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
+                      {onPinGlossary && (
+                        <button
+                          type="button"
+                          onClick={() => onPinGlossary(entry)}
+                          className="rounded p-1 text-paper-muted transition hover:bg-paper-goldbg hover:text-paper-gold"
+                          title={t('glossary.pin')}
+                          aria-label={t('glossary.pin')}
+                        >
+                          <Pin className="h-3 w-3" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onLocate(entry.definedPage, entry.definedRect, entry.term)}
+                        className="rounded p-1 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                        title={t('glossary.jump')}
+                        aria-label={t('glossary.jump')}
+                      >
+                        <LocateFixed className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[11px] font-medium leading-snug text-paper-ink">
+                    {entry.expansion}
+                  </p>
+                  {entry.contextSentence && (
+                    <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-paper-muted">
+                      {entry.contextSentence}
+                    </p>
+                  )}
+                  <BacklinkStrip backlinks={backlinksMap[pinId]} onJumpToBacklink={jumpToCitation} />
+                </article>
+              );
+            })}
+          </div>
+        )}
+
         {(tab === 'all' || tab === 'reference') && filteredReferences.length > 0 && (
-          <div className="mt-2 space-y-1">
-            {(tab === 'all' || filteredAssets.length > 0) && (
+          <div className="mt-2.5 space-y-1">
+            {(tab === 'all' || filteredAssets.length > 0 || filteredGlossary.length > 0) && (
               <p className="px-1 pb-1 text-[9px] font-medium uppercase tracking-wider text-paper-muted">
                 {t('reference.title')}
               </p>
@@ -330,11 +491,12 @@ export function AssetDrawer({
           </div>
         )}
 
-        {tab !== 'outline' && !isParsing &&
+        {isAssetSection && !isParsing &&
           filteredAssets.length === 0 &&
+          filteredGlossary.length === 0 &&
           filteredReferences.length === 0 && (
             <p className="px-2 py-8 text-center text-[10px] leading-relaxed text-paper-muted">
-              {t('assets.noMatches')}
+              {t(tab === 'glossary' ? 'panel.glossaryEmpty' : 'assets.noMatches')}
             </p>
           )}
       </div>

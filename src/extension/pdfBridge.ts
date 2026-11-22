@@ -3,7 +3,7 @@ import { fetchPdfBytes, isBridgePdfUrl } from '../services/arxivFetch';
 export const grantKey = (tabId: number) => 'refpin.readerGrant.' + tabId;
 export const dismissedKey = (tabId: number) => 'refpin.badgeDismissed.' + tabId;
 
-async function trustedReader(sender: chrome.runtime.MessageSender) {
+export async function trustedReader(sender: chrome.runtime.MessageSender) {
   if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || sender.tab?.id === undefined || !sender.url) return false;
   const url = new URL(sender.url);
   if (url.origin === 'https://xxxpixel-x.github.io' && /^\/RefPin(?:\/|$)/.test(url.pathname)) return true;
@@ -39,9 +39,23 @@ export function installWebBridge() {
     const data = event.data;
     if (data?.source !== 'refpin-web' || typeof data.requestId !== 'string' || data.requestId.length > 80) return;
     const ping = data.type === 'REFPIN_EXT_PING';
-    if (!ping && (data.type !== 'REFPIN_EXT_FETCH_PDF' || typeof data.url !== 'string' || !isBridgePdfUrl(data.url))) return;
-    const reply = await chrome.runtime.sendMessage<{ ok: boolean; base64?: string }>(ping
-      ? { type: 'REFPIN_READER_PING' } : { type: 'REFPIN_FETCH_REMOTE_PDF', url: data.url }).catch(() => ({ ok: false }));
+    const isPdf = data.type === 'REFPIN_EXT_FETCH_PDF' && typeof data.url === 'string' && isBridgePdfUrl(data.url);
+    const isTranslate =
+      data.type === 'REFPIN_EXT_TRANSLATE' &&
+      Array.isArray(data.texts) &&
+      data.texts.length > 0 &&
+      data.texts.length <= 20 &&
+      data.texts.every((item: unknown) => typeof item === 'string' && item.length <= 6000) &&
+      (data.targetLang === 'zh-CN' || data.targetLang === 'en');
+    if (!ping && !isPdf && !isTranslate) return;
+    const messagePayload = ping
+      ? { type: 'REFPIN_READER_PING' }
+      : isPdf
+        ? { type: 'REFPIN_FETCH_REMOTE_PDF', url: data.url }
+        : { type: 'REFPIN_WEB_TRANSLATE', texts: data.texts, targetLang: data.targetLang };
+    const reply = await chrome.runtime
+      .sendMessage<{ ok: boolean; base64?: string; translations?: string[] }>(messagePayload)
+      .catch(() => ({ ok: false }));
     window.postMessage({ ...reply, source: 'refpin-extension', type: data.type, requestId: data.requestId }, location.origin);
   });
   window.postMessage({ source: 'refpin-extension', type: 'REFPIN_EXT_READY' }, location.origin);

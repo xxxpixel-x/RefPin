@@ -6,8 +6,12 @@ const ARCHIVE_LIMIT = 30;
 const PDF_LIMIT = 5;
 
 export function stripPinnedItemForStorage(item: PinnedItem): PersistedPinnedItem {
-  const { id, kind, title, subtitle, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt } = item;
-  return { id, kind, title, ...(item.automaticTitle && { automaticTitle: true }), subtitle, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt };
+  const { id, kind, title, subtitle, textPreview, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt } = item;
+  return {
+    id, kind, title, ...(item.automaticTitle && { automaticTitle: true }),
+    subtitle, ...(textPreview !== undefined && { textPreview }),
+    pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt,
+  };
 }
 
 export function computeLruEvictions(

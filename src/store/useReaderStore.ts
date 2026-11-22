@@ -2,11 +2,12 @@ import type { DisplayMessage } from '../i18n/types';
 import { t } from '../i18n/core';
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { buildBacklinksMap } from '../engine/backlinks';
+import { buildBacklinksMap, glossaryPinId } from '../engine/backlinks';
 import type { ParsePaperResult } from '../engine/parsePaper';
 import type {
   CitationBacklink,
   DockPosition,
+  GlossaryEntry,
   InlineCitation,
   JumpPosition,
   OutlineItem,
@@ -19,6 +20,7 @@ import type {
 } from '../types/paper';
 
 export type Theme = 'light' | 'sepia' | 'dark';
+export type DrawerSection = 'assets' | 'outline' | 'glossary';
 
 type NewParseFields = 'backlinksMap' | 'outline' | 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
 export type ParseResultPayload = Omit<ParsePaperResult, NewParseFields> & Partial<Pick<ParsePaperResult, NewParseFields>>;
@@ -55,6 +57,7 @@ interface ReaderState {
   autoSyncEnabled: boolean;
   setAutoSyncEnabled: (enabled: boolean) => void;
   drawerOpen: boolean;
+  drawerSection: DrawerSection;
   snipMode: boolean;
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -70,6 +73,7 @@ interface ReaderState {
   dockPosition: DockPosition;
   dockWidth: number;
   dockHeight: number;
+  dockCollapsed: boolean;
 
   /* ---------- actions ---------- */
   setPdfDocument: (doc: PDFDocumentProxy, fileName: string, paperHash: string, url: string | null, archive?: PaperArchive) => void;
@@ -84,6 +88,7 @@ interface ReaderState {
 
   pinAsset: (asset: PaperAsset) => void;
   pinReference: (reference: ReferenceEntry) => void;
+  pinGlossary: (entry: GlossaryEntry) => void;
   pinSnip: (input: {
     pageNumber: number;
     cropRect: NormalizedRect;
@@ -104,10 +109,14 @@ interface ReaderState {
 
 
   setDrawerOpen: (open: boolean) => void;
+  setDrawerSection: (section: DrawerSection) => void;
+  toggleDrawerSection: (section: DrawerSection) => void;
   setSnipMode: (on: boolean) => void;
   setDockPosition: (position: DockPosition) => void;
   setDockWidth: (width: number) => void;
   setDockHeight: (height: number) => void;
+  setDockCollapsed: (collapsed: boolean) => void;
+  toggleDockCollapsed: () => void;
 
   resetPaper: () => void;
 }
@@ -147,8 +156,9 @@ function loadSavedDockLayout(): {
   dockPosition: DockPosition;
   dockWidth: number;
   dockHeight: number;
+  dockCollapsed: boolean;
 } {
-  const defaults = { dockPosition: 'right' as DockPosition, dockWidth: 388, dockHeight: 264 };
+  const defaults = { dockPosition: 'right' as DockPosition, dockWidth: 388, dockHeight: 264, dockCollapsed: false };
   if (typeof window === 'undefined') return defaults;
   try {
     const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
@@ -165,18 +175,19 @@ function loadSavedDockLayout(): {
       typeof parsed.dockHeight === 'number' && Number.isFinite(parsed.dockHeight)
         ? Math.max(148, Math.round(parsed.dockHeight))
         : defaults.dockHeight;
-    return { dockPosition: validPos, dockWidth, dockHeight };
+    const dockCollapsed = parsed.dockCollapsed === true;
+    return { dockPosition: validPos, dockWidth, dockHeight, dockCollapsed };
   } catch {
     return defaults;
   }
 }
 
-function saveDockLayout(dockPosition: DockPosition, dockWidth: number, dockHeight: number) {
+function saveDockLayout(dockPosition: DockPosition, dockWidth: number, dockHeight: number, dockCollapsed = false) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(
       DOCK_STORAGE_KEY,
-      JSON.stringify({ dockPosition, dockWidth, dockHeight }),
+      JSON.stringify({ dockPosition, dockWidth, dockHeight, dockCollapsed }),
     );
   } catch {
     // 隐私模式或配额受限时静默忽略
@@ -237,6 +248,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({ autoSyncEnabled: enabled });
   },
   drawerOpen: false,
+  drawerSection: 'assets',
   snipMode: false,
   jumpHistory: [],
   historyCursor: 0,
@@ -245,6 +257,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   dockPosition: savedDock.dockPosition,
   dockWidth: savedDock.dockWidth,
   dockHeight: savedDock.dockHeight,
+  dockCollapsed: savedDock.dockCollapsed,
 
   setPdfDocument: (doc, fileName, paperHash, url, archive) =>
     set({
@@ -257,7 +270,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       scale: archive?.scale ?? get().scale,
       pinnedItems: (archive?.pinnedItems ?? []).map(item => ({
         ...item,
-        previewStatus: item.kind !== 'reference' && item.cropRect ? 'restoring' : undefined,
+        previewStatus: item.kind !== 'reference' && item.kind !== 'glossary' && item.cropRect ? 'restoring' : undefined,
       })),
       parseError: null,
     }),
@@ -279,12 +292,16 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     glossaryMap: payload.glossaryMap ?? {},
     glossaryMentionsByPage: payload.glossaryMentionsByPage ?? {},
     isImageOnly: payload.isImageOnly ?? false,
-    backlinksMap: payload.backlinksMap ?? buildBacklinksMap(payload.citationsByPage),
+    backlinksMap: payload.backlinksMap ?? buildBacklinksMap(payload.citationsByPage, payload.glossaryMentionsByPage),
   }),
 
   pinAsset: (asset) => {
-    const { pinnedItems } = get();
-    if (pinnedItems.some((item) => item.id === asset.key)) return;
+    const { pinnedItems, dockPosition, dockWidth, dockHeight, dockCollapsed } = get();
+    if (dockCollapsed) saveDockLayout(dockPosition, dockWidth, dockHeight, false);
+    if (pinnedItems.some((item) => item.id === asset.key)) {
+      if (dockCollapsed) set({ dockCollapsed: false });
+      return;
+    }
     const item: PinnedItem = {
       id: asset.key,
       kind: asset.kind,
@@ -298,14 +315,19 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       createdAt: Date.now(),
     };
     set((state) => ({
+      dockCollapsed: false,
       pinnedItems: [item, ...state.pinnedItems],
       stats: { ...state.stats, pinCount: state.stats.pinCount + 1 },
     }));
   },
 
   pinReference: (reference) => {
-    const { pinnedItems } = get();
-    if (pinnedItems.some((item) => item.id === reference.key)) return;
+    const { pinnedItems, dockPosition, dockWidth, dockHeight, dockCollapsed } = get();
+    if (dockCollapsed) saveDockLayout(dockPosition, dockWidth, dockHeight, false);
+    if (pinnedItems.some((item) => item.id === reference.key)) {
+      if (dockCollapsed) set({ dockCollapsed: false });
+      return;
+    }
     const item: PinnedItem = {
       id: reference.key,
       kind: 'reference',
@@ -317,12 +339,40 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       createdAt: Date.now(),
     };
     set((state) => ({
+      dockCollapsed: false,
+      pinnedItems: [item, ...state.pinnedItems],
+      stats: { ...state.stats, pinCount: state.stats.pinCount + 1 },
+    }));
+  },
+
+  pinGlossary: (entry) => {
+    const id = glossaryPinId(entry.term);
+    const { pinnedItems, dockPosition, dockWidth, dockHeight, dockCollapsed } = get();
+    if (dockCollapsed) saveDockLayout(dockPosition, dockWidth, dockHeight, false);
+    if (pinnedItems.some((item) => item.id === id)) {
+      if (dockCollapsed) set({ dockCollapsed: false });
+      return;
+    }
+    const item: PinnedItem = {
+      id,
+      kind: 'glossary',
+      title: entry.term,
+      subtitle: entry.expansion,
+      textPreview: entry.contextSentence,
+      pageNumber: entry.definedPage,
+      cropRect: entry.definedRect,
+      createdAt: Date.now(),
+    };
+    set((state) => ({
+      dockCollapsed: false,
       pinnedItems: [item, ...state.pinnedItems],
       stats: { ...state.stats, pinCount: state.stats.pinCount + 1 },
     }));
   },
 
   pinSnip: ({ pageNumber, cropRect, imageUrl, title, subtitle }) => {
+    const { dockPosition, dockWidth, dockHeight, dockCollapsed } = get();
+    if (dockCollapsed) saveDockLayout(dockPosition, dockWidth, dockHeight, false);
     const item: PinnedItem = {
       id: `snip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       kind: 'snip',
@@ -337,6 +387,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       createdAt: Date.now(),
     };
     set((state) => ({
+      dockCollapsed: false,
       pinnedItems: [item, ...state.pinnedItems],
       stats: { ...state.stats, pinCount: state.stats.pinCount + 1 },
     }));
@@ -454,23 +505,40 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   dismissHistory: () => set({ historyVisible: false }),
 
   setDrawerOpen: (open) => set({ drawerOpen: open }),
+  setDrawerSection: (drawerSection) => set({ drawerSection }),
+  toggleDrawerSection: (section) => set((state) => (
+    state.drawerOpen && state.drawerSection === section
+      ? { drawerOpen: false }
+      : { drawerOpen: true, drawerSection: section }
+  )),
   setSnipMode: (on) => set({ snipMode: on }),
   setDockPosition: (dockPosition) => {
-    const { dockWidth, dockHeight } = get();
-    saveDockLayout(dockPosition, dockWidth, dockHeight);
+    const { dockWidth, dockHeight, dockCollapsed } = get();
+    saveDockLayout(dockPosition, dockWidth, dockHeight, dockCollapsed);
     set({ dockPosition });
   },
   setDockWidth: (width) => {
     const clamped = Math.max(220, Math.round(width));
-    const { dockPosition, dockHeight } = get();
-    saveDockLayout(dockPosition, clamped, dockHeight);
+    const { dockPosition, dockHeight, dockCollapsed } = get();
+    saveDockLayout(dockPosition, clamped, dockHeight, dockCollapsed);
     set({ dockWidth: clamped });
   },
   setDockHeight: (height) => {
     const clamped = Math.max(148, Math.round(height));
-    const { dockPosition, dockWidth } = get();
-    saveDockLayout(dockPosition, dockWidth, clamped);
+    const { dockPosition, dockWidth, dockCollapsed } = get();
+    saveDockLayout(dockPosition, dockWidth, clamped, dockCollapsed);
     set({ dockHeight: clamped });
+  },
+  setDockCollapsed: (dockCollapsed) => {
+    const { dockPosition, dockWidth, dockHeight } = get();
+    saveDockLayout(dockPosition, dockWidth, dockHeight, dockCollapsed);
+    set({ dockCollapsed });
+  },
+  toggleDockCollapsed: () => {
+    const { dockPosition, dockWidth, dockHeight, dockCollapsed } = get();
+    const next = !dockCollapsed;
+    saveDockLayout(dockPosition, dockWidth, dockHeight, next);
+    set({ dockCollapsed: next });
   },
 
   resetPaper: () => {

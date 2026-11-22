@@ -74,8 +74,9 @@ function md(value: string) {
 
 export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, string>, exportedAt = new Date()): string {
   const title = notes.fileName.replace(/\.pdf$/i, '') || 'RefPin';
-  const visuals = notes.pinnedItems.filter(item => item.kind !== 'reference');
+  const visuals = notes.pinnedItems.filter(item => item.kind !== 'reference' && item.kind !== 'glossary');
   const references = notes.pinnedItems.filter(item => item.reference);
+  const pinnedTerms = notes.pinnedItems.filter(item => item.kind === 'glossary');
   const summary = notes.currentPage > 0 ? t('notes.summary', { page: notes.currentPage, pages: notes.numPages, visuals: visuals.length, refs: references.length })
     : notes.numPages ? t('notes.paperSummary', { pages: notes.numPages, visuals: visuals.length, refs: references.length })
     : t('notes.unpagedSummary', { visuals: visuals.length, refs: references.length });
@@ -129,7 +130,24 @@ export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, 
     const fence = '\x60'.repeat(longest + 1);
     lines.push('', fence + 'bibtex', entry, fence);
   }
-  const terms = Object.values(notes.glossaryMap).sort((a,b) => a.definedPage - b.definedPage).slice(0, 24);
+  const seenTerms = new Set<string>();
+  const mergedTerms: Array<{ term: string; expansion: string; definedPage: number }> = [];
+  for (const pin of pinnedTerms) {
+    if (seenTerms.has(pin.title)) continue;
+    seenTerms.add(pin.title);
+    const known = notes.glossaryMap[pin.title];
+    mergedTerms.push({
+      term: pin.title,
+      expansion: known?.expansion || pin.subtitle || pin.textPreview || '',
+      definedPage: known?.definedPage || pin.pageNumber,
+    });
+  }
+  for (const entry of Object.values(notes.glossaryMap).sort((a, b) => a.definedPage - b.definedPage)) {
+    if (seenTerms.has(entry.term)) continue;
+    seenTerms.add(entry.term);
+    mergedTerms.push(entry);
+  }
+  const terms = mergedTerms.slice(0, Math.max(24, pinnedTerms.length));
   if (terms.length) {
     lines.push('', '## ' + t('notes.glossary'), '', notes.numPages ? t('notes.columns') : t('notes.termColumns'), notes.numPages ? '| --- | --- | --- |' : '| --- | --- |');
     for (const term of terms) lines.push('| ' + md(term.term) + ' | ' + md(term.expansion) + (notes.numPages ? ' | P.' + term.definedPage : '') + ' |');
@@ -174,7 +192,7 @@ export async function exportStudyPackZip(notes: StudyNotes, pdfDoc: PDFDocumentP
   let missing = 0, number = 0;
   for (const item of notes.pinnedItems) {
     signal?.throwIfAborted();
-    if (item.kind === 'reference') continue;
+    if (item.kind === 'reference' || item.kind === 'glossary') continue;
     number++;
     let fresh: string | undefined;
     if (pdfDoc && item.cropRect) {

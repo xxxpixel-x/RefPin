@@ -342,7 +342,7 @@ export function BPreview() {
           onOpenLightbox={(item) =>
             setLightboxAsset({
               key: item.id,
-              kind: item.kind === 'snip' || item.kind === 'reference' ? 'figure' : item.kind,
+              kind: item.kind === 'snip' || item.kind === 'reference' || item.kind === 'glossary' ? 'figure' : item.kind,
               label: item.title,
               caption: item.subtitle ?? '',
               pageNumber: item.pageNumber,

@@ -393,6 +393,39 @@ export function PinnedCard({
                 </a>
               </div>
             </div>
+          ) : item.kind === 'glossary' ? (
+            <div
+              className={clsx(
+                'rounded-lg bg-paper-bg px-2.5 py-2',
+                isHorizontalDock && 'flex min-h-0 flex-1 flex-col overflow-y-auto',
+              )}
+            >
+              {item.subtitle && (
+                <p
+                  className={clsx(
+                    'font-medium leading-snug text-paper-ink',
+                    isZoomedOverlay ? 'text-xs' : 'text-[11px]',
+                    isHorizontalDock && 'line-clamp-2',
+                  )}
+                >
+                  {item.subtitle}
+                </p>
+              )}
+              {item.textPreview && (
+                <p
+                  className={clsx(
+                    'mt-1.5 leading-relaxed text-paper-muted',
+                    isZoomedOverlay
+                      ? 'max-h-[34vh] overflow-y-auto text-[11px]'
+                      : isHorizontalDock
+                        ? 'line-clamp-2 text-[10px]'
+                        : 'line-clamp-3 text-[10px]',
+                  )}
+                >
+                  {item.textPreview}
+                </p>
+              )}
+            </div>
           ) : (
             <p className="rounded-lg bg-paper-bg px-2.5 py-2 text-[10px] text-paper-muted">
               {item.previewStatus === 'restoring' ? t('pin.restoring') :

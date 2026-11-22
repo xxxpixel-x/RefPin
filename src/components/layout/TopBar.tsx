@@ -1,5 +1,7 @@
 import { ThemeSwitcher } from './ThemeSwitcher';
+import { TranslateControl } from './TranslateControl';
 import { useReaderStore } from '../../store/useReaderStore';
+import type { PaperTranslationController } from '../../services/usePaperTranslation';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { t } from '../../i18n/core';
 import { useState } from 'react';
@@ -7,6 +9,7 @@ import {
   FileUp,
   Minus,
   PanelLeft,
+  PanelRight,
   Plus,
   Scissors,
   Ruler,
@@ -23,12 +26,17 @@ interface TopBarProps {
   isParsing: boolean;
   parseProgress: number;
   assetCount: number;
+  pinCount?: number;
+  drawerOpen?: boolean;
+  dockCollapsed?: boolean;
+  translation?: PaperTranslationController;
   onJumpPage: (page: number) => void;
   onSearch?: () => void;
   onPalette?: () => void;
   onZoom: (nextScale: number) => void;
   onToggleSnip: () => void;
   onToggleDrawer: () => void;
+  onToggleDock?: () => void;
   onReset: () => void;
   onOpenFile: (file: File) => void;
 }
@@ -42,12 +50,17 @@ export function TopBar({
   isParsing,
   parseProgress,
   assetCount,
+  pinCount = 0,
+  drawerOpen = false,
+  dockCollapsed = false,
+  translation,
   onJumpPage,
   onSearch,
   onPalette,
   onZoom,
   onToggleSnip,
   onToggleDrawer,
+  onToggleDock,
   onReset,
   onOpenFile,
 }: TopBarProps) {
@@ -58,8 +71,9 @@ export function TopBar({
     <header className="relative z-30 flex min-h-[52px] shrink-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 lg:flex-nowrap border-b border-paper-border bg-paper-card/85 px-3 backdrop-blur">
       <button
         type="button"
+        aria-pressed={drawerOpen}
         onClick={onToggleDrawer}
-        className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
+        className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg aria-pressed:border-paper-goldborder aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"
         title={t('reader.toggleAssets')}
       >
         <PanelLeft className="h-3.5 w-3.5" />
@@ -132,6 +146,8 @@ export function TopBar({
         <span className="hidden sm:inline">{t('snip.tool')}</span>
       </button>
 
+      {translation && <TranslateControl translation={translation} numPages={numPages} />}
+
       {onPalette && <button type="button" title={t('palette.title')} aria-label={t('palette.title')} onClick={onPalette}
         className="shrink-0 rounded-md border border-paper-border px-1.5 py-1 font-mono text-[10px] text-paper-muted hover:bg-paper-bg">
         {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'}
@@ -145,6 +161,21 @@ export function TopBar({
       </>}
 
       <div className="ml-auto flex items-center gap-2">
+        {onToggleDock && (
+          <button
+            type="button"
+            aria-pressed={!dockCollapsed}
+            onClick={onToggleDock}
+            className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg aria-pressed:border-paper-goldborder aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"
+            title={t('dock.toggle')}
+          >
+            <PanelRight className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t('panel.pins')}</span>
+            <span className="rounded bg-paper-goldbg px-1 font-mono text-[10px] text-paper-goldtext">
+              {pinCount}
+            </span>
+          </button>
+        )}
         <ThemeSwitcher />
         <LanguageToggle />
         <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">

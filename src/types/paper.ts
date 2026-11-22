@@ -96,10 +96,11 @@ export type DockPosition = 'right' | 'left' | 'top' | 'bottom';
 /** 对照钉板中的一项 */
 export interface PinnedItem {
   id: string;
-  kind: CitationKind | 'snip';
+  kind: CitationKind | 'snip' | 'glossary';
   title: string;
   automaticTitle?: boolean;
   subtitle?: string;
+  textPreview?: string;
   pageNumber: number;
   imageUrl?: string;
   cropRect?: NormalizedRect;
@@ -114,7 +115,7 @@ export interface PinnedItem {
 }
 
 export type PersistedPinnedItem = Pick<PinnedItem,
-  'id' | 'kind' | 'title' | 'automaticTitle' | 'subtitle' | 'pageNumber' | 'cropRect' |
+  'id' | 'kind' | 'title' | 'automaticTitle' | 'subtitle' | 'textPreview' | 'pageNumber' | 'cropRect' |
   'originalCropRect' | 'collapsed' | 'reference' | 'createdAt'
 >;
 

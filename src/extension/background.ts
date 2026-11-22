@@ -7,7 +7,7 @@ import {
 } from './protocol';
 import { translateTexts } from './translator';
 
-import { dismissedKey, grantKey, handleBridge } from './pdfBridge';
+import { dismissedKey, grantKey, handleBridge, trustedReader } from './pdfBridge';
 import { inspectTabUrl } from './urlRules';
 
 const MENU_FULL_READER = 'refpin-open-full-reader';
@@ -184,6 +184,25 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
       .finally(() => {
         sendResponse({ ok: true });
       });
+    return true;
+  }
+
+  if (request.type === 'REFPIN_WEB_TRANSLATE' && Array.isArray(request.texts)) {
+    const texts = request.texts;
+    const targetLang = request.targetLang === 'en' ? 'en' : 'zh-CN';
+    void (async () => {
+      if (!(await trustedReader(sender))) {
+        sendResponse({ ok: false });
+        return;
+      }
+      const translations = await translateTexts(texts, { provider: 'free', targetLang });
+      sendResponse({ ok: true, translations });
+    })().catch((error: unknown) =>
+      sendResponse({
+        ok: false,
+        error: describeError(error, message('translate.requestFailed')),
+      }),
+    );
     return true;
   }
 
