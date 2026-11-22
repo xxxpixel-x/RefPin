@@ -3,12 +3,13 @@
     "message": "RefPin — Academic Paper Companion"
   },
   "extDescription": {
-    "message": "Preview citations, pin figures side by side, and snip regions while reading papers on the web or in a PDF."
+    "message": "Read papers in the full Reader or side panel with citation backlinks, pins, outline, glossary and Markdown study notes."
   },
   "actionTitle": {
     "message": "Toggle RefPin Companion Side Panel"
   },
   "menuAllowReader": { "message": "Allow academic PDF downloads in this RefPin reader tab" },
+  "menuOpenFullReader": { "message": "Open in RefPin Full Reader" },
   "menuOpenPanel": {
     "message": "Open RefPin Companion Side Panel"
   },

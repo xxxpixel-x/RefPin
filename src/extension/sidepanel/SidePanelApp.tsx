@@ -1,4 +1,13 @@
-import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from '../../i18n';
+import { openRemotePdf } from '../../services/arxivFetch';
+import { openFullReader } from '../fullReader';
+import { CompanionCommands, flattenOutline } from './CompanionCommands';
+import { ThemeSwitcher } from '../../components/layout/ThemeSwitcher';
+import { OutlineBranch } from '../../components/drawer/AssetDrawer';
+import { usePreviewColor } from '../../components/peek/usePreviewColor';
+import { ReferenceDetails } from '../../components/peek/ReferenceDetails';
+import { BacklinkStrip } from '../../components/BacklinkStrip';
+import { buildStudyNotesMarkdown, exportStudyPackZip, type StudyNotes } from '../../services/noteExporter';
+import { describeError, formatMessage, message, useI18n, type DisplayMessage } from '../../i18n';
 import { pinTitle, timedSnipTitle } from '../../i18n/pinTitle';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import {
@@ -15,10 +24,8 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
-  Check,
   ChevronDown,
   ChevronRight,
-  Copy,
   Crosshair,
   ExternalLink,
   FileSearch,
@@ -47,6 +54,7 @@ import type { NormalizedRect, PaperAsset } from '../../types/paper';
 import {
   DEFAULT_TRANSLATE_CONFIG,
   STORAGE_KEY_PENDING_PIN,
+  type CompanionIndex,
   type CompanionAsset,
   type CompanionPinItem,
   type CompanionReference,
@@ -65,8 +73,8 @@ import { loadTranslateConfig, saveTranslateConfig } from '../translator';
 import { ViewportSnipModal } from './ViewportSnipModal';
 import { TranslateSettingsBar } from './TranslateSettingsBar';
 
-type MainTab = 'pins' | 'assets';
-type AssetFilter = 'all' | 'figure' | 'table' | 'equation' | 'reference';
+type MainTab = 'pins' | 'assets' | 'outline' | 'glossary';
+type AssetFilter = 'all' | CompanionAsset['kind'] | 'reference';
 type SourceMode = 'idle' | 'dom' | 'pdf';
 
 interface ZoomOverlayState {
@@ -82,23 +90,19 @@ interface ZoomOverlayState {
   phase: 'entering' | 'open' | 'leaving';
 }
 
-function buildBibtex(ref: CompanionReference): string {
-  return `@inproceedings{${ref.key},\n  title={${ref.title || ''}},\n  author={${ref.authors || ''}},\n  year={${ref.year || ''}}\n}`;
+const emptyIndex: CompanionIndex = { backlinksMap: {}, outline: [], glossaryMap: {} };
+
+function CardImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+  const { filter, colorToggle } = usePreviewColor(src);
+  return <>
+    <img src={src} alt={alt} className={className} style={{ filter }} />
+    <span className="absolute bottom-1 right-1">{colorToggle}</span>
+  </>;
 }
 
-function hasPdfSignature(buffer: ArrayBuffer): boolean {
-  const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 1024));
-  for (let i = 0; i <= bytes.length - 4; i += 1) {
-    if (
-      bytes[i] === 0x25 &&
-      bytes[i + 1] === 0x50 &&
-      bytes[i + 2] === 0x44 &&
-      bytes[i + 3] === 0x46
-    ) {
-      return true;
-    }
-  }
-  return false;
+function PanelReferenceDetails({ reference }: { reference: CompanionReference }) {
+  const entry = useMemo(() => ({ ...reference, pageNumber: reference.pageNumber ?? 0 }), [reference]);
+  return <ReferenceDetails reference={entry} deferUntilVisible />;
 }
 
 export function SidePanelApp() {
@@ -108,6 +112,7 @@ export function SidePanelApp() {
     document.title = t('panel.title');
   }, [locale, t]);
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
+  const panelWindow = useRef<number>();
   const [activeWindowId, setActiveWindowId] = useState<number | undefined>(undefined);
   const [docKey, setDocKey] = useState<string>('');
   const [paperTitle, setDocTitle] = useState('');
@@ -116,6 +121,26 @@ export function SidePanelApp() {
   const [sourceMode, setSourceMode] = useState<SourceMode>('idle');
   const [linkedPdfUrl, setLinkedPdfUrl] = useState<string | null>(null);
 
+  const [index, setIndex] = useState<CompanionIndex>(emptyIndex);
+  const headings = useMemo(() => flattenOutline(index.outline), [index.outline]);
+  const [termQuery, setTermQuery] = useState('');
+  const terms = Object.values(index.glossaryMap);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportMenu = useRef<HTMLDetailsElement>(null);
+  const exportJob = useRef<AbortController | null>(null);
+  const localFile = useRef<File | null>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => () => exportJob.current?.abort(), [docKey]);
   const [assets, setAssets] = useState<CompanionAsset[]>([]);
   const [references, setReferences] = useState<CompanionReference[]>([]);
   const [pinsByDoc, setPinsByDoc] = useState<Record<string, CompanionPinItem[]>>({});
@@ -132,7 +157,6 @@ export function SidePanelApp() {
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
   const [editingPinId, setEditingPinId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string>('');
-  const [copiedRefId, setCopiedRefId] = useState<string | null>(null);
   const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   const [pageZoomActiveId, setPageZoomActiveId] = useState<string | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
@@ -154,6 +178,8 @@ export function SidePanelApp() {
   });
 
   const syncRequestRef = useRef(0);
+  const pdfJob = useRef<AbortController | null>(null);
+  const parsedPdf = useRef<PDFDocumentProxy | null>(null);
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const docKeyRef = useRef<string>('');
   const toastTimerRef = useRef<number | null>(null);
@@ -218,6 +244,8 @@ export function SidePanelApp() {
   );
 
   const destroyCurrentPdf = useCallback(() => {
+    pdfJob.current?.abort();
+    parsedPdf.current = null;
     if (pdfDocRef.current) {
       void pdfDocRef.current.destroy().catch(() => {});
       pdfDocRef.current = null;
@@ -226,8 +254,14 @@ export function SidePanelApp() {
 
   const parsePdfBuffer = useCallback(
     async (buffer: ArrayBuffer, displayName: string, requestId: number) => {
+      if (requestId !== syncRequestRef.current) return;
       destroyCurrentPdf();
+      const job = new AbortController();
+      pdfJob.current = job;
       setSourceMode('pdf');
+      setIndex(emptyIndex);
+      setAssets([]);
+      setReferences([]);
       setDocTitle(displayName);
       setIsLoading(true);
       setProgress(12);
@@ -235,7 +269,7 @@ export function SidePanelApp() {
       setErrorMessage(null);
 
       try {
-        const doc = await loadPdfDocument(buffer);
+        const doc = await loadPdfDocument(buffer, job.signal);
         if (requestId !== syncRequestRef.current) {
           void doc.destroy().catch(() => {});
           return;
@@ -245,7 +279,7 @@ export function SidePanelApp() {
           if (requestId === syncRequestRef.current) {
             setProgress(Math.max(15, pct));
           }
-        });
+        }, job.signal);
         if (requestId !== syncRequestRef.current) return;
 
         const nextAssets: CompanionAsset[] = Object.values(result.assetsMap)
@@ -273,6 +307,8 @@ export function SidePanelApp() {
             pageNumber: ref.pageNumber,
           }));
 
+        parsedPdf.current = doc;
+        setIndex({ outline: result.outline, backlinksMap: result.backlinksMap, glossaryMap: result.glossaryMap });
         setAssets(nextAssets);
         setReferences(nextRefs);
         setProgress(100);
@@ -299,29 +335,17 @@ export function SidePanelApp() {
       setStatusMessage('panel.fetching');
       setErrorMessage(null);
 
+      pdfJob.current?.abort();
+      const job = new AbortController();
+      pdfJob.current = job;
       try {
-        const res = await fetch(pdfUrl, {
-          credentials: pdfUrl.startsWith('file://') ? 'omit' : 'include',
-        });
-        if (requestId !== syncRequestRef.current) return;
-
-        if (!res.ok) {
-          throw new LocalizedError(message('panel.fetchHttp', { status: res.status }));
-        }
-
-        const buffer = await res.arrayBuffer();
-        if (requestId !== syncRequestRef.current) return;
-
-        if (buffer.byteLength === 0 || !hasPdfSignature(buffer)) {
-          throw new LocalizedError(message('panel.invalidPdf'));
-        }
-
+        const file = await openRemotePdf({ pdfUrl, displayName }, job.signal);
+        const buffer = await file.arrayBuffer();
         await parsePdfBuffer(buffer, displayName, requestId);
       } catch (error) {
         if (requestId !== syncRequestRef.current) return;
         setIsLoading(false);
-        const needsFileAccess = pdfUrl.startsWith('file://') && error instanceof Error && /failed to fetch/i.test(error.message);
-        setErrorMessage(needsFileAccess ? message('panel.fileAccess') : describeError(error, message('panel.fetchFailed')));
+        setErrorMessage(describeError(error, message('panel.fetchFailed')));
       }
     },
     [parsePdfBuffer],
@@ -336,11 +360,13 @@ export function SidePanelApp() {
       setActiveWindowId(tab?.windowId);
 
       const pdfTrPrefix = chrome.runtime.getURL('pdf-translate.html');
-      const onPdfTrPage = tabUrl.startsWith(pdfTrPrefix);
+      const onPdfTrPage = tabUrl.split('?')[0] === pdfTrPrefix;
+      const onReaderPage = tabUrl.split('?')[0] === chrome.runtime.getURL('reader.html');
+      localFile.current = null;
       setIsPdfTranslateTab(onPdfTrPage);
 
       let effectiveUrl = tabUrl;
-      if (onPdfTrPage) {
+      if (onPdfTrPage || onReaderPage) {
         try {
           const parsedTrUrl = new URL(tabUrl);
           effectiveUrl = parsedTrUrl.searchParams.get('url') || '';
@@ -362,6 +388,7 @@ export function SidePanelApp() {
         setLinkedPdfUrl(null);
         setAssets([]);
         setReferences([]);
+        setIndex(emptyIndex);
         setErrorMessage(null);
         setPageTranslateStatus({
           active: false,
@@ -378,20 +405,21 @@ export function SidePanelApp() {
       const urlInfo = inspectTabUrl(effectiveUrl);
       const fallbackTitle = deriveDisplayName(
         effectiveUrl,
-        onPdfTrPage
+        onPdfTrPage || onReaderPage
           ? new URL(tabUrl).searchParams.get('title') || urlInfo.suggestedTitle
           : tab?.title || urlInfo.suggestedTitle,
       );
 
       const sameDocAsLoaded = docKeyRef.current === nextDocKey;
+      if (!sameDocAsLoaded) setTermQuery('');
       setDocKey(nextDocKey);
       setDocTitle(fallbackTitle);
-      setLinkedPdfUrl(urlInfo.pdfUrl ?? (onPdfTrPage ? effectiveUrl : null));
+      setLinkedPdfUrl((onPdfTrPage || onReaderPage) ? effectiveUrl : urlInfo.pdfUrl ?? null);
       setErrorMessage(null);
 
       // 情况 1：当前标签页是原生 PDF，或正处于主标签页的沉浸式 PDF 译文视图
-      if (onPdfTrPage || (urlInfo.kind === 'pdf' && urlInfo.pdfUrl)) {
-        const targetPdf = onPdfTrPage ? effectiveUrl : urlInfo.pdfUrl!;
+      if (onPdfTrPage || onReaderPage || (urlInfo.kind === 'pdf' && urlInfo.pdfUrl)) {
+        const targetPdf = onPdfTrPage || onReaderPage ? effectiveUrl : urlInfo.pdfUrl!;
         if (onPdfTrPage) {
           const initialMode =
             new URL(tabUrl).searchParams.get('mode') === 'bilingual'
@@ -429,7 +457,7 @@ export function SidePanelApp() {
         }
 
         // 若同一篇 PDF 在“原生 PDF ↔ 主页 PDF 译文”之间切换且已解析过资产，保留现有资产与钉板不重复解析
-        if (sameDocAsLoaded && pdfDocRef.current && !forceDomScan) {
+        if (sameDocAsLoaded && parsedPdf.current && !forceDomScan) {
           setSourceMode('pdf');
           setIsLoading(false);
           return;
@@ -437,6 +465,7 @@ export function SidePanelApp() {
 
         setAssets([]);
         setReferences([]);
+        setIndex(emptyIndex);
         if (/^https?:/i.test(targetPdf) && !onPdfTrPage && !forceDomScan) {
           // Merely switching the active tab must not download a remote paper.
           destroyCurrentPdf();
@@ -448,6 +477,7 @@ export function SidePanelApp() {
         return;
       }
 
+      setIndex(emptyIndex);
       // 情况 2：HTML 网页（学术 HTML 全文 / 摘要页 / 任意网页）
       destroyCurrentPdf();
       setAssets([]);
@@ -469,6 +499,7 @@ export function SidePanelApp() {
         }
       }
 
+      if (requestId !== syncRequestRef.current) return;
       const effectivePdfUrl = domPayload?.pdfUrl || urlInfo.pdfUrl || null;
       setLinkedPdfUrl(effectivePdfUrl);
 
@@ -481,6 +512,7 @@ export function SidePanelApp() {
       ) {
         setSourceMode('dom');
         setDocTitle(domPayload.title || fallbackTitle);
+        setIndex({ outline: domPayload.outline ?? [], backlinksMap: domPayload.backlinksMap ?? {}, glossaryMap: domPayload.glossaryMap ?? {} });
         setAssets(domPayload.assets);
         setReferences(domPayload.references);
         setIsLoading(false);
@@ -514,10 +546,13 @@ export function SidePanelApp() {
 
   // 初始化 + 监听标签页切换与更新 + 接收来自原网页的钉住消息
   useEffect(() => {
+    let mounted = true;
     const loadActive = () => {
       void chrome.tabs
         .query({ active: true, currentWindow: true })
         .then((tabs) => {
+          if (!mounted) return;
+          panelWindow.current = tabs[0]?.windowId;
           void syncWithTab(tabs[0], false);
         });
     };
@@ -535,10 +570,8 @@ export function SidePanelApp() {
       }
     });
 
-    const onActivated = (activeInfo: { tabId: number }) => {
-      void chrome.tabs.get(activeInfo.tabId).then((tab) => {
-        void syncWithTab(tab, false);
-      });
+    const onActivated = (info: { tabId: number; windowId: number }) => {
+      if (info.windowId === panelWindow.current) loadActive();
     };
 
     const onUpdated = (
@@ -546,7 +579,7 @@ export function SidePanelApp() {
       changeInfo: { status?: string; url?: string },
       tab: chrome.tabs.Tab,
     ) => {
-      if (!tab.active) return;
+      if (!tab.active || tab.windowId !== panelWindow.current) return;
       if (changeInfo.status === 'complete' || changeInfo.url) {
         void syncWithTab(tab, false);
       }
@@ -588,9 +621,11 @@ export function SidePanelApp() {
     chrome.runtime.onMessage.addListener(onMessage);
 
     return () => {
+      mounted = false;
       chrome.tabs.onActivated.removeListener(onActivated);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.runtime.onMessage.removeListener(onMessage);
+      ++syncRequestRef.current;
       destroyCurrentPdf();
     };
   }, [addPinForDoc, destroyCurrentPdf, syncWithTab]);
@@ -762,8 +797,11 @@ export function SidePanelApp() {
     }
     const requestId = ++syncRequestRef.current;
     const localKey = `local:${file.name}:${file.size}`;
-    setDocKey(localKey);
     const buffer = await file.arrayBuffer();
+    if (requestId !== syncRequestRef.current) return;
+    localFile.current = file;
+    setDocKey(localKey);
+    setLinkedPdfUrl(null);
     await parsePdfBuffer(buffer, file.name, requestId);
   };
 
@@ -1022,19 +1060,6 @@ export function SidePanelApp() {
     };
   }, [zoomOverlay, zoomedItem]);
 
-  const handleCopyBibtex = async (ref: CompanionReference) => {
-    try {
-      await navigator.clipboard.writeText(buildBibtex(ref));
-      setCopiedRefId(ref.key);
-      showToast(message('reference.bibtexCopied'));
-      window.setTimeout(() => {
-        setCopiedRefId((curr) => (curr === ref.key ? null : curr));
-      }, 1600);
-    } catch {
-      showToast(message('copy.error'));
-    }
-  };
-
   // ---- 整篇翻译控制（始终直接作用于左侧主页面：HTML 就地替换 / PDF 原位译文覆盖）----
   const handleUpdateTranslateConfig = (next: TranslateConfig) => {
     setTranslateConfig(next);
@@ -1055,6 +1080,7 @@ export function SidePanelApp() {
     await chrome.tabs.update(tabId, { url: targetUrl.href });
   };
 
+  const hasPdfSource = sourceMode === 'pdf' || (sourceMode === 'idle' && inspectTabUrl(docKey).kind === 'pdf');
   const handleStartTranslate = async (
     displayMode: Exclude<TranslateDisplayMode, 'off'> = 'translated',
   ) => {
@@ -1071,7 +1097,7 @@ export function SidePanelApp() {
     }
 
     // 情况 2：原生 PDF 页面 -> 在左侧主标签页切入原位 PDF 译文视图
-    if (sourceMode === 'pdf' && linkedPdfUrl) {
+    if (hasPdfSource && linkedPdfUrl) {
       await openPdfTranslateInMainTab(linkedPdfUrl, displayMode);
       return;
     }
@@ -1103,7 +1129,7 @@ export function SidePanelApp() {
       return;
     }
 
-    if (sourceMode === 'pdf' && linkedPdfUrl) {
+    if (hasPdfSource && linkedPdfUrl) {
       if (displayMode !== 'off') {
         await openPdfTranslateInMainTab(linkedPdfUrl, displayMode);
       }
@@ -1149,7 +1175,7 @@ export function SidePanelApp() {
       void handleChangeTranslateMode('off');
       return;
     }
-    if (sourceMode === 'pdf' && linkedPdfUrl) {
+    if (hasPdfSource && linkedPdfUrl) {
       void openPdfTranslateInMainTab(linkedPdfUrl, 'translated');
       return;
     }
@@ -1191,17 +1217,78 @@ export function SidePanelApp() {
     });
   }, [references, assetFilter, query]);
 
+  function launchReader(page?: number) {
+    const file = localFile.current;
+    if (file) {
+      // The copy stays available while the new tab reads it, including after tab activation.
+      const url = URL.createObjectURL(file);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      void openFullReader(url, file.name, page);
+    } else void openFullReader(linkedPdfUrl, docTitle, page);
+  }
+
+  function jump(page?: number | null, anchor?: string) {
+    if (anchor) handleLocateOnPage(anchor);
+    else if (page) launchReader(page);
+  }
+
+  function backlinks(key: string) {
+    return <BacklinkStrip backlinks={index.backlinksMap[key]} onJumpToBacklink={(page, _rect, anchor) => jump(page, anchor)} />;
+  }
+
+  const referencesMap = useMemo(() => Object.fromEntries(references.map(ref => [ref.key, ref])), [references]);
+  async function exportNotes(mode: 'copy' | 'zip') {
+    if (exportMenu.current) exportMenu.current.open = false;
+    if (exportJob.current) return;
+    const job = new AbortController();
+    exportJob.current = job;
+    setExporting(true);
+    const doc = pdfDocRef.current;
+    const notes: StudyNotes = {
+      fileName: docTitle, numPages: doc?.numPages ?? 0, currentPage: 0,
+      backlinksMap: index.backlinksMap, glossaryMap: index.glossaryMap,
+      tableRows: Object.fromEntries(pinnedItems.filter(item => item.tableHtml).map(item => {
+        const table = document.createElement('template');
+        table.innerHTML = item.tableHtml!;
+        return [item.id, Array.from(table.content.querySelectorAll('tr'), row =>
+          Array.from(row.cells, cell => cell.textContent ?? ''))];
+      })),
+      pinnedItems: pinnedItems.map(item => {
+        const ref = item.reference ?? referencesMap[item.id];
+        return { ...item, title: pinTitle(item), automaticTitle: false, kind: item.kind === 'glossary' ? 'snip' : item.kind,
+          pageNumber: item.pageNumber ?? 0, createdAt: item.pinnedAt,
+          subtitle: [item.subtitle, item.textPreview !== item.subtitle && item.textPreview].filter(Boolean).join(' — '),
+          reference: ref && { ...ref, pageNumber: ref.pageNumber ?? 0 } };
+      }),
+    };
+    try {
+      if (mode === 'copy') {
+        await navigator.clipboard.writeText(buildStudyNotesMarkdown(notes));
+        if (!job.signal.aborted) showToast(message('notes.copied'));
+      } else {
+        const missing = await exportStudyPackZip(notes, doc, job.signal);
+        showToast(missing ? message('notes.partial', { count: missing }) : message('notes.saved'));
+      }
+    } catch {
+      if (!job.signal.aborted) showToast(message(mode === 'copy' ? 'notes.copyFailed' : 'notes.failed'));
+    } finally {
+      exportJob.current = null;
+      setExporting(false);
+    }
+  }
+
+  const visibleTerms = terms.filter(entry => [entry.term, entry.expansion, entry.contextSentence].join(' ').toLowerCase().includes(termQuery.trim().toLowerCase()));
   const totalAssetsCount = assets.length + references.length;
 
   return (
     <div className="flex h-screen flex-col bg-paper-bg text-paper-ink">
       {/* 顶栏 */}
-      <header className="relative shrink-0 border-b border-paper-border bg-white/90 px-3 py-2.5 backdrop-blur">
-        <div className="flex items-center justify-between gap-2">
+      <header className="relative z-20 shrink-0 border-b border-paper-border bg-paper-card px-3 py-2.5 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-white">
+            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-paper-card">
               R
-              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-white bg-paper-gold" />
+              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-paper-border bg-paper-gold" />
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
@@ -1225,8 +1312,8 @@ export function SidePanelApp() {
               className={clsx(
                 'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition',
                 pageTranslateStatus.active || isPdfTranslateTab
-                  ? 'bg-paper-ink text-white'
-                  : 'border border-paper-border bg-white text-paper-ink hover:border-amber-300',
+                  ? 'bg-paper-ink text-paper-card'
+                  : 'border border-paper-border bg-paper-card text-paper-ink hover:border-paper-gold',
               )}
               title={t('translate.pageHint')}
             >
@@ -1236,7 +1323,7 @@ export function SidePanelApp() {
             <button
               type="button"
               onClick={() => void handleStartSnip()}
-              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2 py-1 text-[11px] font-medium text-white shadow-sm transition hover:bg-amber-700"
+              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2 py-1 text-[11px] font-medium text-paper-card shadow-sm transition hover:opacity-90"
               title={t('snip.free')}
             >
               <Scissors className="h-3 w-3" />
@@ -1249,7 +1336,7 @@ export function SidePanelApp() {
                 'rounded-lg border p-1.5 transition',
                 showTranslateSettings
                   ? 'border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
-                  : 'border-paper-border bg-white text-paper-muted hover:bg-paper-bg hover:text-paper-ink',
+                  : 'border-paper-border bg-paper-card text-paper-muted hover:bg-paper-bg hover:text-paper-ink',
               )}
               title={t('translate.settings')}
               aria-label={t('translate.settings')}
@@ -1263,7 +1350,7 @@ export function SidePanelApp() {
                   .query({ active: true, currentWindow: true })
                   .then((tabs) => void syncWithTab(tabs[0], true));
               }}
-              className="rounded-lg border border-paper-border bg-white p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+              className="rounded-lg border border-paper-border bg-paper-card p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
               title={t('panel.rescan')}
               aria-label={t('panel.rescan')}
             >
@@ -1272,6 +1359,23 @@ export function SidePanelApp() {
           </div>
         </div>
 
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <button type="button" onClick={() => launchReader()}
+            className="inline-flex items-center gap-1 rounded-md bg-paper-ink px-2 py-1 text-xs font-medium text-paper-card">
+            <BookOpen size={13} />{t('panel.fullReader')}
+          </button>
+          <ThemeSwitcher />
+          <button type="button" title={t('palette.title')} aria-label={t('palette.title')} onClick={() => setPaletteOpen(true)}
+            className="rounded-md border border-paper-border px-1.5 py-1 font-mono text-[11px]">⌘K</button>
+          <details ref={exportMenu} className="relative ml-auto text-[11px]">
+            <summary className="cursor-pointer rounded-md border border-paper-border px-2 py-1">{t('panel.export')}</summary>
+            <div className="absolute right-0 z-20 mt-1 grid w-max gap-1 rounded-md border border-paper-border bg-paper-card p-1 shadow-float">
+              {(['copy', 'zip'] as const).map(mode => <button key={mode} disabled={exporting || !docKey} type="button"
+                className="rounded px-2 py-1.5 text-left hover:bg-paper-bg disabled:opacity-50"
+                onClick={() => void exportNotes(mode)}>{t(mode === 'copy' ? 'notes.copy' : 'notes.zip')}</button>)}
+            </div>
+          </details>
+        </div>
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <p className="min-w-0 flex-1 truncate text-[11px] text-paper-muted" title={docTitle}>
             {docTitle}
@@ -1283,7 +1387,7 @@ export function SidePanelApp() {
                 const requestId = ++syncRequestRef.current;
                 void fetchAndParsePdfUrl(linkedPdfUrl, docTitle, requestId);
               }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-paper-border bg-white px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:border-amber-300 hover:text-paper-ink"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:border-paper-gold hover:text-paper-ink"
             >
               <FileSearch className="h-3 w-3" />
               {t('panel.extractPdf')}
@@ -1304,7 +1408,7 @@ export function SidePanelApp() {
       {/* 原页面翻译快捷控制条（仅在开启翻译时出现） */}
       {(pageTranslateStatus.active || isPdfTranslateTab || pageTranslateStatus.running) && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-paper-border bg-paper-goldbg/60 px-3 py-1.5">
-          <div className="flex rounded-md bg-white/90 p-0.5 text-[10.5px] shadow-sm">
+          <div className="flex rounded-md bg-paper-card p-0.5 text-[10.5px] shadow-sm">
             {(
               [
                 { id: 'translated', label: t('translate.only') },
@@ -1319,7 +1423,7 @@ export function SidePanelApp() {
                 className={clsx(
                   'rounded px-2 py-0.5 font-medium transition',
                   pageTranslateStatus.displayMode === opt.id
-                    ? 'bg-paper-ink text-white'
+                    ? 'bg-paper-ink text-paper-card'
                     : 'text-paper-muted hover:text-paper-ink',
                 )}
               >
@@ -1338,7 +1442,7 @@ export function SidePanelApp() {
             <button
               type="button"
               onClick={() => void handleStopTranslate()}
-              className="rounded border border-paper-goldborder bg-white p-1 text-paper-ink transition hover:bg-paper-bg"
+              className="rounded border border-paper-goldborder bg-paper-card p-1 text-paper-ink transition hover:bg-paper-bg"
               title={t('translate.stop')}
             >
               <Square className="h-2.5 w-2.5 fill-current" />
@@ -1356,43 +1460,15 @@ export function SidePanelApp() {
         />
       )}
 
-      {/* 双分页签：钉板 / 资产 */}
-      <div className="shrink-0 border-b border-paper-border bg-white px-3 py-2">
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-paper-bg p-1">
-          <button
-            type="button"
-            onClick={() => setMainTab('pins')}
-            className={clsx(
-              'flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition',
-              mainTab === 'pins'
-                ? 'bg-white text-paper-ink shadow-sm'
-                : 'text-paper-muted hover:text-paper-ink',
-            )}
-          >
-            <Pin className="h-3.5 w-3.5 text-paper-gold" />
-            {t('dock.title')}
-            <span className="rounded-full bg-paper-goldbg px-1.5 font-mono text-[10px] text-paper-goldtext">
-              {pinnedItems.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMainTab('assets')}
-            className={clsx(
-              'flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition',
-              mainTab === 'assets'
-                ? 'bg-white text-paper-ink shadow-sm'
-                : 'text-paper-muted hover:text-paper-ink',
-            )}
-          >
-            <BookOpen className="h-3.5 w-3.5" />
-            {t('assets.title')}
-            <span className="rounded-full bg-stone-200/80 px-1.5 font-mono text-[10px] text-paper-muted">
-              {totalAssetsCount}
-            </span>
-          </button>
-        </div>
-      </div>
+      <nav className="grid shrink-0 grid-cols-4 gap-0.5 border-b border-paper-border bg-paper-card px-2 py-2">
+        {([
+          ['pins', t('panel.pins'), pinnedItems.length], ['assets', t('panel.assets'), totalAssetsCount],
+          ['outline', t('outline.title'), headings.length], ['glossary', t('panel.glossary'), terms.length],
+        ] as const).map(([tab, label, count]) => <button key={tab} type="button" aria-pressed={mainTab === tab}
+          onClick={() => setMainTab(tab)} className="flex flex-wrap items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-paper-muted aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext">
+          {label}<span className="rounded-full bg-paper-bg px-1 font-mono text-[10px]">{count}</span>
+        </button>)}
+      </nav>
 
       {/* 错误提示 */}
       {(errorMessage || pageTranslateStatus.error) && (
@@ -1418,10 +1494,28 @@ export function SidePanelApp() {
             </p>
             <p className="font-mono text-[11px] text-paper-muted">{progress}%</p>
           </div>
+        ) : mainTab === 'outline' ? (
+          index.outline.length ? <ul>{index.outline.map(item => <OutlineBranch key={item.id} item={item}
+            onJump={heading => jump(heading.pageNumber, heading.domAnchorId)} />)}</ul>
+            : <p className="py-6 text-center text-xs text-paper-muted">{t('panel.outlineEmpty')}</p>
+        ) : mainTab === 'glossary' ? (
+          <section className="space-y-2">
+            <input type="search" value={termQuery} onChange={e => setTermQuery(e.target.value)}
+              aria-label={t('panel.glossarySearch')} placeholder={t('panel.glossarySearch')}
+              className="w-full rounded-lg border border-paper-border bg-paper-card px-3 py-2 text-xs" />
+            {visibleTerms.length === 0 && <p className="py-6 text-center text-xs text-paper-muted">{t('panel.glossaryEmpty')}</p>}
+            {visibleTerms.map(entry => <article key={entry.term} className="space-y-1 rounded-lg border border-paper-border bg-paper-card p-2.5 text-xs">
+              <h3 className="font-semibold">{entry.term} · {entry.expansion}</h3>
+              <p className="text-paper-muted">{entry.contextSentence}</p>
+              <button className="text-paper-goldtext" onClick={() => jump(entry.definedPage, entry.domAnchorId)}>
+                {entry.domAnchorId ? t('glossary.jump') : t('glossary.definedOn', { page: entry.definedPage })} ↗
+              </button>
+            </article>)}
+          </section>
         ) : mainTab === 'pins' ? (
           /* ---- 对照钉板 ---- */
           pinnedItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-paper-border bg-white px-5 py-10 text-center">
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-paper-border bg-paper-card px-5 py-10 text-center">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-paper-goldbg text-paper-gold">
                 <Pin className="h-4 w-4" />
               </span>
@@ -1432,14 +1526,14 @@ export function SidePanelApp() {
                 <button
                   type="button"
                   onClick={() => setMainTab('assets')}
-                  className="rounded-lg border border-paper-border bg-paper-bg px-3 py-1.5 text-[11px] font-medium text-paper-ink transition hover:border-amber-300"
+                  className="rounded-lg border border-paper-border bg-paper-bg px-3 py-1.5 text-[11px] font-medium text-paper-ink transition hover:border-paper-gold"
                 >
                   {t('panel.fromAssets')}
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleStartSnip()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-amber-700"
+                  className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1.5 text-[11px] font-medium text-paper-card transition hover:opacity-90"
                 >
                   <Scissors className="h-3 w-3" />
                   {t('snip.action')}
@@ -1470,14 +1564,14 @@ export function SidePanelApp() {
                   onMouseEnter={(event) => handlePinHoverStart(item, event.currentTarget)}
                   onMouseLeave={() => handlePinHoverEnd(item.id)}
                   className={clsx(
-                    'overflow-hidden rounded-xl border bg-white shadow-paper will-change-transform transition-[transform,box-shadow,border-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-paper-goldborder hover:shadow-float',
+                    'overflow-hidden rounded-xl border bg-paper-card shadow-paper will-change-transform transition-[transform,box-shadow,border-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-paper-goldborder hover:shadow-float',
                     highlightedPinId === item.id || isPageZoomed
                       ? 'border-paper-gold ring-2 ring-paper-goldsoft'
                       : 'border-paper-border',
                     isLifted && 'scale-[0.985] opacity-35',
                   )}
                 >
-                  <div className="flex items-center gap-1.5 border-b border-stone-100 bg-stone-50/70 px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 border-b border-paper-border bg-paper-bg px-2.5 py-2">
                     <button
                       type="button"
                       onClick={() =>
@@ -1519,7 +1613,7 @@ export function SidePanelApp() {
                           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                           if (e.key === 'Escape') setEditingPinId(null);
                         }}
-                        className="min-w-0 flex-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 text-xs font-medium text-paper-ink outline-none"
+                        className="min-w-0 flex-1 rounded border border-paper-gold bg-paper-card px-1.5 py-0.5 text-xs font-medium text-paper-ink outline-none"
                       />
                     ) : (
                       <span
@@ -1534,6 +1628,7 @@ export function SidePanelApp() {
                       </span>
                     )}
 
+                    <span className="shrink-0 rounded bg-paper-goldbg px-1 text-[9px] text-paper-goldtext">{t(`kind.${item.kind}`)}</span>
                     {item.pageNumber && (
                       <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] text-paper-goldtext">
                         {t('reader.page', { page: item.pageNumber })}
@@ -1545,7 +1640,7 @@ export function SidePanelApp() {
                         <button
                           type="button"
                           onClick={() => handleMovePin(item.id, -1)}
-                          className="rounded p-1 text-paper-muted hover:bg-stone-200/70 hover:text-paper-ink"
+                          className="rounded p-1 text-paper-muted hover:bg-paper-bg hover:text-paper-ink"
                           title={t('pin.moveUp')}
                         >
                           <ArrowUp className="h-3 w-3" />
@@ -1555,7 +1650,7 @@ export function SidePanelApp() {
                         <button
                           type="button"
                           onClick={() => handleMovePin(item.id, 1)}
-                          className="rounded p-1 text-paper-muted hover:bg-stone-200/70 hover:text-paper-ink"
+                          className="rounded p-1 text-paper-muted hover:bg-paper-bg hover:text-paper-ink"
                           title={t('pin.moveDown')}
                         >
                           <ArrowDown className="h-3 w-3" />
@@ -1588,14 +1683,14 @@ export function SidePanelApp() {
                               item.pageNumber,
                             )
                           }
-                          className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-stone-100 bg-paper-bg p-1.5"
+                          className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1.5"
                         >
-                          <img
+                          <CardImage
                             src={item.imageUrl}
                             alt={pinTitle(item)}
                             className="mx-auto max-h-56 w-full object-contain"
                           />
-                          <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-white opacity-0 transition group-hover:opacity-100">
+                          <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-paper-card opacity-0 transition group-hover:opacity-100">
                             <Maximize2 className="h-3 w-3" />
                           </span>
                         </div>
@@ -1603,7 +1698,7 @@ export function SidePanelApp() {
 
                       {!item.imageUrl && item.tableHtml && (
                         <div
-                          className="max-h-48 overflow-auto rounded-lg border border-paper-border bg-white text-[10.5px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-stone-200 [&_td]:px-1.5 [&_td]:py-1 [&_th]:border [&_th]:border-stone-200 [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
+                          className="max-h-48 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[10.5px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-1 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
                           dangerouslySetInnerHTML={{ __html: item.tableHtml }}
                         />
                       )}
@@ -1626,7 +1721,7 @@ export function SidePanelApp() {
                                 .join(' · ')}
                             </p>
                           )}
-                          <p className="rounded-lg bg-paper-bg p-2 text-[11px] leading-relaxed text-stone-600">
+                          <p className="rounded-lg bg-paper-bg p-2 text-[11px] leading-relaxed text-paper-ink">
                             {item.reference.rawText}
                           </p>
                         </div>
@@ -1638,13 +1733,14 @@ export function SidePanelApp() {
                         )
                       )}
 
+                      {backlinks(item.id)}
                       {/* 卡片底部操作条 */}
-                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-stone-100 pt-2">
-                        {item.domAnchorId && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-paper-border pt-2">
+                        {(item.domAnchorId || item.pageNumber) && (
                           <button
                             type="button"
-                            onClick={() => handleLocateOnPage(item.domAnchorId)}
-                            className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
+                            onClick={() => jump(item.pageNumber, item.domAnchorId)}
+                            className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
                           >
                             <Crosshair className="h-3 w-3" />
                             {t('pin.locate')}
@@ -1656,7 +1752,7 @@ export function SidePanelApp() {
                             <button
                               type="button"
                               onClick={() => void handleExpandPdfCrop(item, 'up')}
-                              className="rounded-md border border-paper-border bg-white px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                               title={t('crop.upHint')}
                             >
                               {t('crop.upArrow')}
@@ -1664,7 +1760,7 @@ export function SidePanelApp() {
                             <button
                               type="button"
                               onClick={() => void handleExpandPdfCrop(item, 'down')}
-                              className="rounded-md border border-paper-border bg-white px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                               title={t('crop.downHint')}
                             >
                               {t('crop.downArrow')}
@@ -1674,7 +1770,7 @@ export function SidePanelApp() {
                                 <button
                                   type="button"
                                   onClick={() => handleResetPdfCrop(item)}
-                                  className="inline-flex items-center gap-0.5 rounded-md border border-paper-border bg-white px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:text-paper-ink"
+                                  className="inline-flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:text-paper-ink"
                                 >
                                   <RotateCcw className="h-2.5 w-2.5" />
                                   {t('crop.reset')}
@@ -1685,18 +1781,7 @@ export function SidePanelApp() {
 
                         {item.reference && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => void handleCopyBibtex(item.reference!)}
-                              className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-goldbg"
-                            >
-                              {copiedRefId === item.reference.key ? (
-                                <Check className="h-3 w-3 text-paper-gold" />
-                              ) : (
-                                <Copy className="h-3 w-3" />
-                              )}
-                              {copiedRefId === item.reference.key ? t('common.copied') : t('reference.copyBibtex')}
-                            </button>
+                            <PanelReferenceDetails reference={item.reference} />
                             <a
                               href={
                                 item.reference.href ||
@@ -1708,7 +1793,7 @@ export function SidePanelApp() {
                               rel="noopener noreferrer"
                               className="ml-auto inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[10.5px] font-medium text-paper-goldtext transition hover:bg-paper-goldsoft"
                             >
-                              Scholar
+                              {t('reference.source')}
                               <ExternalLink className="h-3 w-3" />
                             </a>
                           </>
@@ -1724,7 +1809,7 @@ export function SidePanelApp() {
         ) : totalAssetsCount === 0 ? (
           /* ---- 未检测到论文内容时的空态（支持手动扫描 + 框选 + 拖入本地 PDF） ---- */
           <div className="flex flex-col gap-3">
-            <div className="rounded-2xl border border-paper-border bg-white p-4 text-center shadow-paper">
+            <div className="rounded-2xl border border-paper-border bg-paper-card p-4 text-center shadow-paper">
               <span className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-paper-goldbg text-paper-gold">
                 <FileSearch className="h-4 w-4" />
               </span>
@@ -1739,7 +1824,7 @@ export function SidePanelApp() {
                       .query({ active: true, currentWindow: true })
                       .then((tabs) => void syncWithTab(tabs[0], true));
                   }}
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-paper-ink px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-800"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-paper-ink px-3 py-2 text-xs font-medium text-paper-card transition hover:opacity-90"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   {t('panel.scan')}
@@ -1747,7 +1832,7 @@ export function SidePanelApp() {
                 <button
                   type="button"
                   onClick={() => void handleStartSnip()}
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-paper-border bg-paper-bg px-3 py-2 text-xs font-medium text-paper-ink transition hover:border-amber-300"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-paper-border bg-paper-bg px-3 py-2 text-xs font-medium text-paper-ink transition hover:border-paper-gold"
                 >
                   <Scissors className="h-3.5 w-3.5 text-paper-gold" />
                   {t('panel.capture')}
@@ -1764,7 +1849,7 @@ export function SidePanelApp() {
                 const file = e.dataTransfer.files?.[0];
                 if (file) void handleLocalFileFallback(file);
               }}
-              className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-paper-border bg-white/80 px-4 py-4 text-center transition hover:border-amber-300"
+              className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-paper-border bg-paper-card px-4 py-4 text-center transition hover:border-paper-gold"
             >
               <Upload className="h-4 w-4 text-paper-muted" />
               <span className="text-[11px] font-medium text-paper-ink">
@@ -1787,7 +1872,7 @@ export function SidePanelApp() {
           /* ---- 全篇资产墙 ---- */
           <div className="flex flex-col gap-2.5">
             {/* 搜索与分类筛选 */}
-            <div className="flex items-center gap-1.5 rounded-xl border border-paper-border bg-white px-2.5 py-1.5 focus-within:border-amber-300">
+            <div className="flex items-center gap-1.5 rounded-xl border border-paper-border bg-paper-card px-2.5 py-1.5 focus-within:border-paper-gold">
               <Search className="h-3.5 w-3.5 shrink-0 text-paper-muted" />
               <input
                 value={searchQuery}
@@ -1822,6 +1907,9 @@ export function SidePanelApp() {
                     id: 'equation',
                     label: t('filter.equationCount', { count: assets.filter((a) => a.kind === 'equation').length }),
                   },
+                  ...(['algorithm', 'theorem', 'section'] as const).map(kind => ({
+                    id: kind, label: t(`kind.${kind}`) + ' ' + assets.filter(asset => asset.kind === kind).length,
+                  })),
                   { id: 'reference', label: t('filter.referenceCount', { count: references.length }) },
                 ] as Array<{ id: AssetFilter; label: string }>
               ).map((chip) => (
@@ -1832,8 +1920,8 @@ export function SidePanelApp() {
                   className={clsx(
                     'rounded-full px-2.5 py-1 text-[10.5px] font-medium transition',
                     assetFilter === chip.id
-                      ? 'bg-paper-ink text-white'
-                      : 'border border-paper-border bg-white text-paper-muted hover:text-paper-ink',
+                      ? 'bg-paper-ink text-paper-card'
+                      : 'border border-paper-border bg-paper-card text-paper-muted hover:text-paper-ink',
                   )}
                 >
                   {chip.label}
@@ -1847,7 +1935,7 @@ export function SidePanelApp() {
               return (
                 <div
                   key={asset.key}
-                  className="overflow-hidden rounded-xl border border-paper-border bg-white p-2.5 shadow-paper transition hover:border-amber-200"
+                  className="overflow-hidden rounded-xl border border-paper-border bg-paper-card p-2.5 shadow-paper transition hover:border-paper-goldborder"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[10.5px] font-semibold text-paper-goldtext">
@@ -1864,10 +1952,10 @@ export function SidePanelApp() {
                           {t('reader.page', { page: asset.pageNumber })}
                         </span>
                       )}
-                      {asset.domAnchorId && (
+                      {(asset.domAnchorId || asset.pageNumber) && (
                         <button
                           type="button"
-                          onClick={() => handleLocateOnPage(asset.domAnchorId)}
+                          onClick={() => jump(asset.pageNumber, asset.domAnchorId)}
                           className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                         >
                           {t('common.locate')}
@@ -1880,7 +1968,7 @@ export function SidePanelApp() {
                           'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition',
                           isPinned
                             ? 'border border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
-                            : 'bg-paper-gold text-white hover:bg-amber-700',
+                            : 'bg-paper-gold text-paper-card hover:opacity-90',
                         )}
                       >
                         <Pin className="h-2.5 w-2.5" />
@@ -1899,9 +1987,9 @@ export function SidePanelApp() {
                           asset.pageNumber,
                         )
                       }
-                      className="mt-2 cursor-zoom-in overflow-hidden rounded-lg border border-stone-100 bg-paper-bg p-1"
+                      className="relative mt-2 cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1"
                     >
-                      <img
+                      <CardImage
                         src={asset.imageUrl}
                         alt={asset.label}
                         className="mx-auto max-h-40 w-full object-contain"
@@ -1911,7 +1999,7 @@ export function SidePanelApp() {
 
                   {!asset.imageUrl && asset.tableHtml && (
                     <div
-                      className="mt-2 max-h-36 overflow-auto rounded-lg border border-paper-border bg-white text-[10px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-stone-200 [&_td]:px-1.5 [&_td]:py-0.5 [&_th]:border [&_th]:border-stone-200 [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-0.5 [&_th]:font-semibold"
+                      className="mt-2 max-h-36 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[10px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-0.5 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-0.5 [&_th]:font-semibold"
                       dangerouslySetInnerHTML={{ __html: asset.tableHtml }}
                     />
                   )}
@@ -1922,9 +2010,11 @@ export function SidePanelApp() {
                     </div>
                   )}
 
+                  <span className="text-[10px] text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>
                   <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-paper-muted">
                     {asset.caption}
                   </p>
+                  {backlinks(asset.key)}
                 </div>
               );
             })}
@@ -1940,7 +2030,7 @@ export function SidePanelApp() {
               return (
                 <div
                   key={ref.key}
-                  className="rounded-xl border border-paper-border bg-white p-2.5 shadow-paper"
+                  className="rounded-xl border border-paper-border bg-paper-card p-2.5 shadow-paper"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="shrink-0 rounded bg-paper-bg px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-paper-ink">
@@ -1953,12 +2043,12 @@ export function SidePanelApp() {
                         rel="noopener noreferrer"
                         className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:text-paper-ink"
                       >
-                        Scholar ↗
+                        {t('reference.source')} ↗
                       </a>
-                      {ref.domAnchorId && (
+                      {(ref.domAnchorId || ref.pageNumber) && (
                         <button
                           type="button"
-                          onClick={() => handleLocateOnPage(ref.domAnchorId)}
+                          onClick={() => jump(ref.pageNumber, ref.domAnchorId)}
                           className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:text-paper-ink"
                         >
                           {t('common.locate')}
@@ -1971,7 +2061,7 @@ export function SidePanelApp() {
                           'inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition',
                           isPinned
                             ? 'border border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
-                            : 'bg-paper-gold text-white hover:bg-amber-700',
+                            : 'bg-paper-gold text-paper-card hover:opacity-90',
                         )}
                       >
                         <Pin className="h-2.5 w-2.5" />
@@ -1982,6 +2072,8 @@ export function SidePanelApp() {
                   <p className="mt-1.5 text-xs font-medium leading-snug text-paper-ink">
                     {ref.title}
                   </p>
+                  <PanelReferenceDetails reference={ref} />
+                  {backlinks(ref.key)}
                   {(ref.authors || ref.year) && (
                     <p className="mt-0.5 text-[10.5px] text-paper-muted">
                       {[ref.authors, ref.year].filter(Boolean).join(' · ')}
@@ -1999,6 +2091,12 @@ export function SidePanelApp() {
           </div>
         )}
       </div>
+
+      {paletteOpen && <CompanionCommands index={index} assets={assets} references={references}
+        numPages={pdfDocRef.current?.numPages ?? 0} canExport={!!docKey && !exporting}
+        onJump={jump} onPinAsset={handlePinAsset} onPinReference={handlePinReference}
+        onPin={item => addPinForDoc(docKey, item)} onOpenReader={() => launchReader()}
+        onExport={exportNotes} onClose={() => setPaletteOpen(false)} />}
 
       {/* 钉板悬停自动放大浮层（原生 PDF / 侧栏内无缝降级模式） */}
       {zoomedItem &&
@@ -2020,8 +2118,8 @@ export function SidePanelApp() {
             }}
             onMouseLeave={scheduleZoomLeave}
           >
-            <article className="overflow-hidden rounded-xl border border-paper-goldborder/90 bg-white ring-1 ring-amber-400/25">
-              <div className="flex items-center gap-1.5 border-b border-stone-100 bg-stone-50/90 px-3 py-2">
+            <article className="overflow-hidden rounded-xl border border-paper-goldborder/90 bg-paper-card ring-1 ring-amber-400/25">
+              <div className="flex items-center gap-1.5 border-b border-paper-border bg-paper-bg px-3 py-2">
                 <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-paper-goldtext">
                   {t(`kind.${zoomedItem.kind}`)}
                 </span>
@@ -2056,12 +2154,12 @@ export function SidePanelApp() {
                     }
                     className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1.5"
                   >
-                    <img
+                    <CardImage
                       src={zoomedItem.imageUrl}
                       alt={pinTitle(zoomedItem)}
                       className="mx-auto max-h-[60vh] w-full object-contain"
                     />
-                    <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-white opacity-0 transition group-hover:opacity-100">
+                    <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-paper-card opacity-0 transition group-hover:opacity-100">
                       <Maximize2 className="h-3 w-3" />
                     </span>
                   </div>
@@ -2069,7 +2167,7 @@ export function SidePanelApp() {
 
                 {!zoomedItem.imageUrl && zoomedItem.tableHtml && (
                   <div
-                    className="max-h-[54vh] overflow-auto rounded-lg border border-paper-border bg-white text-[11px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-stone-200 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-stone-200 [&_th]:bg-paper-bg [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
+                    className="max-h-[54vh] overflow-auto rounded-lg border border-paper-border bg-paper-card text-[11px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
                     dangerouslySetInnerHTML={{ __html: zoomedItem.tableHtml }}
                   />
                 )}
@@ -2092,7 +2190,7 @@ export function SidePanelApp() {
                           .join(' · ')}
                       </p>
                     )}
-                    <p className="max-h-[34vh] overflow-y-auto rounded-lg bg-paper-bg p-2.5 text-[11px] leading-relaxed text-stone-600">
+                    <p className="max-h-[34vh] overflow-y-auto rounded-lg bg-paper-bg p-2.5 text-[11px] leading-relaxed text-paper-ink">
                       {zoomedItem.reference.rawText}
                     </p>
                   </div>
@@ -2104,15 +2202,16 @@ export function SidePanelApp() {
                   )
                 )}
 
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-stone-100 pt-2">
-                  {zoomedItem.domAnchorId && (
+                {backlinks(zoomedItem.id)}
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-paper-border pt-2">
+                  {(zoomedItem.domAnchorId || zoomedItem.pageNumber) && (
                     <button
                       type="button"
                       onClick={() => {
                         dismissZoomImmediately();
-                        handleLocateOnPage(zoomedItem.domAnchorId);
+                        jump(zoomedItem.pageNumber, zoomedItem.domAnchorId);
                       }}
-                      className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
+                      className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
                     >
                       <Crosshair className="h-3 w-3" />
                       {t('pin.locate')}
@@ -2126,14 +2225,14 @@ export function SidePanelApp() {
                         <button
                           type="button"
                           onClick={() => void handleExpandPdfCrop(zoomedItem, 'up')}
-                          className="rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
+                          className="rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
                         >
                           {t('crop.upArrow')}
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleExpandPdfCrop(zoomedItem, 'down')}
-                          className="rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
+                          className="rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
                         >
                           {t('crop.downArrow')}
                         </button>
@@ -2153,18 +2252,7 @@ export function SidePanelApp() {
 
                   {zoomedItem.reference && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyBibtex(zoomedItem.reference!)}
-                        className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-white px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-goldbg"
-                      >
-                        {copiedRefId === zoomedItem.reference.key ? (
-                          <Check className="h-3 w-3 text-paper-gold" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                        {copiedRefId === zoomedItem.reference.key ? t('common.copied') : t('reference.copyBibtex')}
-                      </button>
+                      <PanelReferenceDetails reference={zoomedItem.reference} />
                       <a
                         href={
                           zoomedItem.reference.href ||
@@ -2176,7 +2264,7 @@ export function SidePanelApp() {
                         rel="noopener noreferrer"
                         className="ml-auto inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[10.5px] font-medium text-paper-goldtext"
                       >
-                        Scholar
+                        {t('reference.source')}
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     </>
@@ -2218,7 +2306,7 @@ export function SidePanelApp() {
 
       {/* 轻量 Toast */}
       {toast && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-[70] -translate-x-1/2 whitespace-nowrap rounded-full bg-paper-ink px-3.5 py-1.5 text-[11px] text-white shadow-float">
+        <div className="pointer-events-none fixed bottom-4 left-1/2 z-[70] -translate-x-1/2 whitespace-nowrap rounded-full bg-paper-ink px-3.5 py-1.5 text-[11px] text-paper-card shadow-float">
           {formatMessage(toast)}
         </div>
       )}

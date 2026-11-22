@@ -63,6 +63,7 @@ export interface StudyNotes {
   numPages: number;
   currentPage: number;
   pinnedItems: PinnedItem[];
+  tableRows?: Record<string, string[][]>;
   backlinksMap: Record<string, CitationBacklink[]>;
   glossaryMap: Record<string, GlossaryEntry>;
 }
@@ -75,25 +76,39 @@ export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, 
   const title = notes.fileName.replace(/\.pdf$/i, '') || 'RefPin';
   const visuals = notes.pinnedItems.filter(item => item.kind !== 'reference');
   const references = notes.pinnedItems.filter(item => item.reference);
+  const summary = notes.currentPage > 0 ? t('notes.summary', { page: notes.currentPage, pages: notes.numPages, visuals: visuals.length, refs: references.length })
+    : notes.numPages ? t('notes.paperSummary', { pages: notes.numPages, visuals: visuals.length, refs: references.length })
+    : t('notes.unpagedSummary', { visuals: visuals.length, refs: references.length });
+  const pageLabel = (page: number) => page ? ' · P.' + page : '';
   const lines = ['---', 'title: ' + JSON.stringify(title), 'exported_at: ' + JSON.stringify(exportedAt.toISOString()),
-    'pages: ' + notes.numPages, 'source: RefPin', '---', '', '# ' + md(title), '',
-    t('notes.summary', { page: notes.currentPage, pages: notes.numPages, visuals: visuals.length, refs: references.length })];
+    ...(notes.numPages ? ['pages: ' + notes.numPages] : []), 'source: RefPin', '---', '', '# ' + md(title), '',
+    summary];
   const citedPages = (id: string) => [...new Set(notes.backlinksMap[id]?.map(link => link.pageNumber))].sort((a,b) => a-b);
-  const addBacklinks = (pages: number[]) => {
+  const addBacklinks = (id: string) => {
+    const links = notes.backlinksMap[id] ?? [];
+    const htmlMentions = links.filter(link => link.domAnchorId);
+    if (htmlMentions.length) lines.push('', t('backlinks.count', { count: htmlMentions.length }));
+    const pages = citedPages(id).filter(page => page > 0);
     if (pages.length) lines.push('', t('notes.cited', { pages: pages.map(page => 'P.' + page).join(', ') }));
   };
   lines.push('', '## ' + t('notes.visuals'));
   if (!visuals.length) lines.push('', t('notes.none'));
   for (const item of visuals) {
     const label = md(pinTitle(item));
-    lines.push('', '### ' + label + ' · P.' + item.pageNumber);
+    lines.push('', '### ' + label + pageLabel(item.pageNumber));
     const path = images?.get(item.id);
     if (path) lines.push('', '![' + label + '](' + path + ')');
-    else if (images) lines.push('', t('notes.noImage'));
+    else if (images && (item.imageUrl || item.cropRect)) lines.push('', t('notes.noImage'));
+    const rows = notes.tableRows?.[item.id];
+    if (rows?.length) {
+      const columns = Math.max(...rows.map(row => row.length));
+      const rowText = (row: string[]) => '| ' + Array.from({ length: columns }, (_, i) => md(row[i] ?? '')).join(' | ') + ' |';
+      lines.push('', rowText(rows[0]), rowText(Array(columns).fill('---')), ...rows.slice(1).map(rowText));
+    }
     if (item.subtitle) lines.push('', md(item.subtitle));
     const pages = citedPages(item.id);
-    addBacklinks(pages);
-    const related = references.filter(pin => citedPages(pin.id).some(page => pages.includes(page)));
+    addBacklinks(item.id);
+    const related = references.filter(pin => citedPages(pin.id).some(page => page > 0 && pages.includes(page)));
     if (related.length) lines.push('', t('notes.related', { refs: related.map(pin => '[' + pin.reference!.index + ']').join(', ') }));
   }
   lines.push('', '## ' + t('notes.references'));
@@ -101,14 +116,14 @@ export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, 
   for (const item of references) {
     const ref = item.reference!;
     const meta = getCachedScholarMetadata(ref);
-    lines.push('', '### [' + ref.index + '] ' + md(meta?.title || ref.title || ref.rawText) + ' · P.' + item.pageNumber);
+    lines.push('', '### [' + ref.index + '] ' + md(meta?.title || ref.title || ref.rawText) + pageLabel(item.pageNumber));
     const detail = [meta?.authors || ref.authors, meta?.year || ref.year, meta?.venue].filter(Boolean).join(' · ');
     if (detail) lines.push('', md(detail));
     const doi = meta?.doi || extractDoi(ref.rawText);
     if (doi) lines.push('', 'DOI: ' + md(doi));
     if (meta) lines.push('', [meta.source === 'openalex' ? 'OpenAlex' : 'Crossref',
       meta.citedByCount !== undefined && t('scholar.cited', { count: meta.citedByCount })].filter(Boolean).join(' · '));
-    addBacklinks(citedPages(item.id));
+    addBacklinks(item.id);
     const entry = meta?.bibtex || buildFallbackBibtex(ref);
     const longest = Math.max(2, ...(entry.match(/\x60+/g) || []).map(run => run.length));
     const fence = '\x60'.repeat(longest + 1);
@@ -116,8 +131,8 @@ export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, 
   }
   const terms = Object.values(notes.glossaryMap).sort((a,b) => a.definedPage - b.definedPage).slice(0, 24);
   if (terms.length) {
-    lines.push('', '## ' + t('notes.glossary'), '', t('notes.columns'), '| --- | --- | --- |');
-    for (const term of terms) lines.push('| ' + md(term.term) + ' | ' + md(term.expansion) + ' | P.' + term.definedPage + ' |');
+    lines.push('', '## ' + t('notes.glossary'), '', notes.numPages ? t('notes.columns') : t('notes.termColumns'), notes.numPages ? '| --- | --- | --- |' : '| --- | --- |');
+    for (const term of terms) lines.push('| ' + md(term.term) + ' | ' + md(term.expansion) + (notes.numPages ? ' | P.' + term.definedPage : '') + ' |');
   }
   return lines.join('\n') + '\n';
 }
@@ -127,7 +142,33 @@ function safeName(value: string) {
   return Array.from(clean).slice(0, 56).join('').replace(/^-+|-+$/g, '') || 'Paper';
 }
 
-export async function exportStudyPackZip(notes: StudyNotes, pdfDoc: PDFDocumentProxy, signal?: AbortSignal) {
+// Only the source images of explicitly exported HTML pins are read. Notes stay on device.
+async function packImage(url: string, signal?: AbortSignal) {
+  const inline = /^data:image\/(webp|png|jpeg|gif);base64,(.+)$/i.exec(url);
+  if (inline) return { extension: inline[1].toLowerCase(), data: Uint8Array.from(atob(inline[2]), ch => ch.charCodeAt(0)) };
+  if (!/^(https?:\/\/|data:image\/svg\+xml[;,])/i.test(url)) return;
+  const response = await fetch(url, { signal, cache: 'force-cache', credentials: 'omit', referrerPolicy: 'no-referrer' });
+  if (!response.ok) return;
+  const blob = await response.blob();
+  const bitmap = /^image\/(webp|png|jpeg|gif)$/i.exec(blob.type);
+  if (bitmap) return { extension: bitmap[1].toLowerCase(), data: new Uint8Array(await blob.arrayBuffer()) };
+  // Render SVG and other browser-supported formats into a self-contained PNG.
+  const image = new Image();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    image.src = objectUrl;
+    await image.decode();
+    const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (png) return { extension: 'png', data: new Uint8Array(await png.arrayBuffer()) };
+  } finally { URL.revokeObjectURL(objectUrl); }
+}
+
+export async function exportStudyPackZip(notes: StudyNotes, pdfDoc: PDFDocumentProxy | null, signal?: AbortSignal) {
   const entries: ZipEntry[] = [];
   const images = new Map<string, string>();
   let missing = 0, number = 0;
@@ -136,21 +177,22 @@ export async function exportStudyPackZip(notes: StudyNotes, pdfDoc: PDFDocumentP
     if (item.kind === 'reference') continue;
     number++;
     let fresh: string | undefined;
-    if (item.cropRect) {
+    if (pdfDoc && item.cropRect) {
       try { fresh = await recropPageRegion(pdfDoc, item.pageNumber, item.cropRect, 2.5, signal); } catch { signal?.throwIfAborted(); }
     }
     for (const url of [fresh, item.imageUrl]) {
-      const match = url && /^data:image\/(webp|png);base64,(.+)$/i.exec(url);
-      if (!match) continue;
+      if (!url) continue;
       try {
-        const data = Uint8Array.from(atob(match[2]), c => c.charCodeAt(0));
-        const name = 'assets/' + String(number).padStart(2, '0') + '-' + safeName(pinTitle(item)).toLowerCase() + '.' + match[1].toLowerCase();
+        const image = await packImage(url, signal);
+        if (!image) continue;
+        const { data, extension } = image;
+        const name = 'assets/' + String(number).padStart(2, '0') + '-' + safeName(pinTitle(item)).toLowerCase() + '.' + extension;
         entries.push({ name, data });
         images.set(item.id, name);
         break;
       } catch { /* Try the next image. */ }
     }
-    if (!images.has(item.id)) missing++;
+    if (!images.has(item.id) && (item.imageUrl || item.cropRect)) missing++;
   }
   signal?.throwIfAborted();
   entries.unshift({ name: 'notes.md', data: utf8.encode(buildStudyNotesMarkdown(notes, images)) });

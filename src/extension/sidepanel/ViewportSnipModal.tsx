@@ -114,16 +114,16 @@ export function ViewportSnipModal({
   const canConfirm = Boolean(selection && selection.width >= 10 && selection.height >= 10);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-paper-ink/85 backdrop-blur-sm">
-      <div className="flex items-center justify-between border-b border-white/10 bg-paper-ink px-3 py-2.5 text-white">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/80 backdrop-blur-sm">
+      <div className="flex items-center justify-between border-b border-paper-border bg-paper-card px-3 py-2.5 text-paper-ink">
         <span className="flex items-center gap-1.5 text-xs font-medium">
-          <Scissors className="h-3.5 w-3.5 text-amber-400" />
+          <Scissors className="h-3.5 w-3.5 text-paper-gold" />
           {t('snip.selectRegion')}
         </span>
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md p-1 text-stone-300 transition hover:bg-white/10 hover:text-white"
+          className="rounded-md p-1 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
           aria-label={t('snip.cancel')}
         >
           <X className="h-4 w-4" />
@@ -132,7 +132,7 @@ export function ViewportSnipModal({
 
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
         <div
-          className="relative inline-block cursor-crosshair select-none overflow-hidden rounded-lg border border-white/15 bg-black shadow-float"
+          className="relative inline-block cursor-crosshair select-none overflow-hidden rounded-lg border border-paper-border bg-black shadow-float"
           onMouseDown={handleMouseDown}
         >
           <img
@@ -144,7 +144,7 @@ export function ViewportSnipModal({
           />
           {selection && selection.width > 2 && selection.height > 2 && (
             <div
-              className="pointer-events-none absolute rounded border-2 border-paper-gold bg-amber-300/20"
+              className="pointer-events-none absolute rounded border-2 border-paper-gold bg-paper-gold/20"
               style={{
                 left: `${selection.x}px`,
                 top: `${selection.y}px`,
@@ -156,15 +156,15 @@ export function ViewportSnipModal({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-white/10 bg-paper-ink px-3 py-2.5">
-        <span className="text-[11px] text-stone-400">
+      <div className="flex items-center justify-between gap-2 border-t border-paper-border bg-paper-card px-3 py-2.5">
+        <span className="text-[11px] text-paper-muted">
           {canConfirm ? t('snip.confirmEnter') : t('snip.drag')}
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg border border-white/15 px-2.5 py-1 text-xs text-stone-300 transition hover:bg-white/10"
+            className="rounded-lg border border-paper-border px-2.5 py-1 text-xs text-paper-muted transition hover:bg-paper-bg"
           >
             {t('common.cancel')}
           </button>
@@ -172,7 +172,7 @@ export function ViewportSnipModal({
             type="button"
             disabled={!canConfirm}
             onClick={handleConfirm}
-            className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1 text-xs font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1 text-xs font-medium text-paper-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Check className="h-3.5 w-3.5" />
             {t('snip.pin')}

@@ -1,3 +1,6 @@
+import { parseStructureHeading, structuredMentions } from '../engine/captionLabel';
+import { glossaryDefinitions } from '../engine/glossaryParser';
+import type { OutlineItem } from '../types/paper';
 import type {
   CompanionAsset,
   CompanionReference,
@@ -5,7 +8,14 @@ import type {
 } from './protocol';
 import { deriveDisplayName, getAcademicSiteLabel, inspectTabUrl } from './urlRules';
 
+export interface CitationBinding {
+  asset?: CompanionAsset;
+  relatedAssets?: CompanionAsset[];
+  references?: CompanionReference[];
+}
+
 export interface ParsedDomPaper {
+  citations: Map<HTMLElement, CitationBinding>;
   payload: DomPaperPayload;
   assetsByKey: Map<string, CompanionAsset>;
   assetsByElementId: Map<string, CompanionAsset>;
@@ -29,11 +39,16 @@ function truncate(text: string, maxLen: number): string {
 function ensureAnchorId(
   el: HTMLElement,
   fallbackPrefix: string,
-  counter: { value: number },
+  counter: { value: number; reserved?: Set<string> },
   anchorElements: Map<string, HTMLElement>,
 ): string {
   const existing = el.id?.trim() || el.getAttribute('data-refpin-anchor')?.trim();
-  const anchorId = existing || `refpin-${fallbackPrefix}-${++counter.value}`;
+  let anchorId = existing;
+  if (!anchorId) {
+    counter.reserved ??= new Set(Array.from(document.querySelectorAll<HTMLElement>('[data-refpin-anchor]'), node => node.dataset.refpinAnchor!));
+    do { anchorId = 'refpin-' + fallbackPrefix + '-' + ++counter.value; }
+    while (counter.reserved.has(anchorId) || document.getElementById(anchorId));
+  }
   if (!el.getAttribute('data-refpin-anchor')) {
     el.setAttribute('data-refpin-anchor', anchorId);
   }
@@ -236,6 +251,172 @@ export function isLikelyAcademicHtmlPage(): boolean {
   return false;
 }
 
+const theoremSelector = '.ltx_theorem, .ltx_lemma, .ltx_proposition, .ltx_definition, .ltx_corollary';
+const ignoredCitationContainers = 'script, style, noscript, code, pre, textarea, input, button, nav, header, footer, aside, figure, figcaption, h2, h3, .ltx_title, .ltx_tag, .refpin-tr-block, .ltx_bibliography, #references, .references';
+function expandNumericList(spec: string): number[] {
+  const result: number[] = [];
+  for (const part of spec.split(/[,，]/)) {
+    const trimmed = part.trim();
+    const range = trimmed.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (end >= start && end - start <= 12) {
+        for (let i = start; i <= end; i += 1) result.push(i);
+      }
+      continue;
+    }
+    const single = trimmed.match(/^\d+$/);
+    if (single) result.push(Number(single[0]));
+  }
+  return result;
+}
+
+export function resolveBindingFromText(
+  text: string,
+  paper: ParsedDomPaper,
+): CitationBinding | null {
+  const figMatch = text.match(
+    /(?:Fig(?:ure)?\.?\s*([A-Z]?\d+(?:\.\d+)?[a-z]?)|(?:附图|图)\s*(\d+(?:\.\d+)?[a-z]?))/i,
+  );
+  if (figMatch) {
+    const num = (figMatch[1] || figMatch[2]).toLowerCase();
+    const asset =
+      paper.assetsByKey.get(`fig:${num}`) ||
+      paper.assetsByKey.get(`fig:${num.replace(/[a-z]$/, '')}`);
+    if (asset) return { asset };
+  }
+
+  const tblMatch = text.match(
+    /(?:Tab(?:le)?\.?\s*([A-Z]?\d+(?:\.\d+)?|[IVX]+)|(?:附表|表)\s*(\d+(?:\.\d+)?))/i,
+  );
+  if (tblMatch) {
+    const num = (tblMatch[1] || tblMatch[2]).toLowerCase();
+    const asset = paper.assetsByKey.get(`table:${num}`);
+    if (asset) return { asset };
+  }
+
+  const eqMatch = text.match(
+    /(?:Eq(?:uation)?\.?\s*\(?(\d+(?:\.\d+)?)\)?|(?:公式|式)\s*[（(]?(\d+(?:\.\d+)?)[）)]?)/i,
+  );
+  if (eqMatch) {
+    const num = eqMatch[1] || eqMatch[2];
+    const asset = paper.assetsByKey.get(`eq:${num}`);
+    if (asset) return { asset };
+  }
+
+  const mention = structuredMentions(text).find(hit => hit.start === 0);
+  if (mention) {
+    const assets = mention.targetKeys.flatMap(key => paper.assetsByKey.get(key) ?? []);
+    if (assets.length) return { asset: assets[0], relatedAssets: assets.slice(1) };
+  }
+  const refMatch = text.match(/^[\[\【]\s*(\d+(?:\s*[-–—,，]\s*\d+)*)\s*[\]\】]$/);
+  if (refMatch) {
+    const nums = expandNumericList(refMatch[1]);
+    const refs = nums
+      .map((n) => paper.refsByIndex.get(n))
+      .filter((r): r is CompanionReference => Boolean(r));
+    if (refs.length > 0) return { references: refs };
+  }
+
+  return null;
+}
+
+function citationTokens(text: string) {
+  const basic = /(?:\b(?:Fig(?:ure)?\.?|Tab(?:le)?\.?|Eq(?:uation)?\.?)\s*\(?[A-Z]?\d+(?:\.\d+)?[a-z]?\)?|(?:附图|附表|图|表)\s*\d+(?:\.\d+)?[a-z]?|(?:公式|式)\s*[（(]?\d+(?:\.\d+)?[）)]?|[\[【]\s*\d+(?:\s*[-–—,，]\s*\d+)*\s*[\]】])/gi;
+  const tokens = Array.from(text.matchAll(basic), hit => ({ start: hit.index!, rawText: hit[0] }));
+  return tokens.concat(structuredMentions(text)).sort((a, b) => a.start - b.start);
+}
+
+export function markTextCitations(node: Text, paper: ParsedDomPaper, bind: (element: HTMLElement, binding: CitationBinding) => void) {
+  const raw = node.data;
+  const frag = document.createDocumentFragment();
+  let end = 0;
+  for (const { start, rawText } of citationTokens(raw)) {
+    if (start < end) continue;
+    const binding = resolveBindingFromText(rawText, paper);
+    if (!binding || (binding.asset?.domAnchorId && paper.anchorElements.get(binding.asset.domAnchorId)?.contains(node))) continue;
+    frag.append(raw.slice(end, start));
+    const span = document.createElement('span');
+    span.textContent = rawText;
+    bind(span, binding);
+    frag.append(span);
+    end = start + rawText.length;
+  }
+  if (end) {
+    frag.append(raw.slice(end));
+    node.replaceWith(frag);
+  }
+}
+
+function collectCitations(paper: ParsedDomPaper): void {
+  if (paper.assetsByKey.size === 0 && paper.refsByIndex.size === 0) return;
+
+  // 路线 1：优先挂接原网页已有的内部锚点 <a>（零 DOM 侵入）
+  const anchors = document.querySelectorAll<HTMLElement>('a[href*="#"], [data-refpin-citation]');
+  for (const a of anchors) {
+    if (a.closest(ignoredCitationContainers)) continue;
+    let targetId = '';
+    if (a instanceof HTMLAnchorElement) {
+      let target: URL;
+      try { target = new URL(a.href, document.baseURI); } catch { continue; }
+      if (target.href.split('#')[0] !== location.href.split('#')[0]) continue;
+      try { targetId = decodeURIComponent(target.hash.slice(1)); } catch { continue; }
+    }
+    const assetById = paper.assetsByElementId.get(targetId);
+    if (assetById) {
+      paper.citations.set(a, { asset: assetById });
+      continue;
+    }
+
+    const refById = paper.refsByElementId.get(targetId);
+    if (refById) {
+      paper.citations.set(a, { references: [refById] });
+      continue;
+    }
+
+    const text = (a.textContent || '').trim();
+    if (text.length > 0 && (a.hasAttribute('data-refpin-citation') || text.length <= 28)) {
+      const byText = resolveBindingFromText(text, paper);
+      if (byText) {
+        paper.citations.set(a, byText);
+      }
+    }
+  }
+
+  // 路线 2：无超链接的纯文本引用兜底（仅匹配已提取到的真实图表/文献，零误伤）
+  const root =
+    document.querySelector<HTMLElement>(
+      'main, article, .ltx_page_main, [role="main"]',
+    ) || document.body;
+  if (!root) return;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest(ignoredCitationContainers + ', a, [data-refpin-citation]')) return NodeFilter.FILTER_REJECT;
+      const val = node.nodeValue;
+      if (!val || val.length < 2) return NodeFilter.FILTER_REJECT;
+      return citationTokens(val).length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const textNodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current && textNodes.length < 1500) {
+    textNodes.push(current as Text);
+    current = walker.nextNode();
+  }
+
+  for (const textNode of textNodes) {
+    markTextCitations(textNode, paper, (element, binding) => {
+      element.dataset.refpinCitation = '1';
+      paper.citations.set(element, binding);
+    });
+  }
+}
+
 export function extractDomPaper(force = false): ParsedDomPaper {
   const isAcademic = isLikelyAcademicHtmlPage();
   const urlInfo = inspectTabUrl(window.location.href);
@@ -249,7 +430,8 @@ export function extractDomPaper(force = false): ParsedDomPaper {
   let pdfUrl = urlInfo.pdfUrl;
   if (!pdfUrl && metaPdf) {
     try {
-      pdfUrl = new URL(metaPdf, window.location.href).href;
+      const url = new URL(metaPdf, document.baseURI);
+      if (['http:', 'https:'].includes(url.protocol)) pdfUrl = url.href;
     } catch {
       // ignore invalid meta url
     }
@@ -272,14 +454,57 @@ export function extractDomPaper(force = false): ParsedDomPaper {
         pdfUrl,
         assets: [],
         references: [],
-        citationCount: 0,
+        citationCount: 0, backlinksMap: {}, glossaryMap: {}, outline: [],
       },
-      assetsByKey,
+      citations: new Map(), assetsByKey,
       assetsByElementId,
       refsByIndex,
       refsByElementId,
       anchorElements,
     };
+  }
+
+  const outline: OutlineItem[] = [];
+  const glossaryMap: DomPaperPayload['glossaryMap'] = Object.create(null);
+  // Unpaginated HTML uses anchors for navigation and has no PDF geometry.
+  const domRect = { x: 0, y: 0, width: 0, height: 0 };
+  function textAsset(el: HTMLElement, kind: CompanionAsset['kind'], key: string, label: string, caption: string) {
+    const domAnchorId = ensureAnchorId(el, kind, anchorCounter, anchorElements);
+    const asset: CompanionAsset = { kind, key, label, caption: truncate(caption, MAX_CAPTION_LEN), domAnchorId, source: 'dom' };
+    if (assetsByKey.has(key)) asset.key = key + ':' + domAnchorId;
+    assetsByKey.set(asset.key, asset);
+    assetsByElementId.set(domAnchorId, asset);
+    return asset;
+  }
+
+  let parentHeading: OutlineItem | undefined;
+  for (const el of document.querySelectorAll<HTMLElement>('h2, h3')) {
+    if (el.closest('nav, header, footer, aside, figure, ' + theoremSelector + ', .ltx_algorithm')) continue;
+    const title = cleanText(el.textContent);
+    if (!title) continue;
+    const id = ensureAnchorId(el, 'heading', anchorCounter, anchorElements);
+    const heading: OutlineItem = { id, title, domAnchorId: id, pageNumber: null, children: [] };
+    if (el.tagName === 'H3' && parentHeading) parentHeading.children.push(heading);
+    else outline.push(heading);
+    if (el.tagName === 'H2') parentHeading = heading;
+    const tag = cleanText(el.querySelector('.ltx_tag')?.textContent);
+    const number = /^(?:(?:Section|Sec\.?)\s+)?(\d+(?:\.\d+)*)(?:[.)、]\s*|\s+|(?=\p{Script=Han}))/iu.exec(title)
+      || /^第\s*(\d+(?:\.\d+)*)\s*[章节]/u.exec(title);
+    const sectionKey = parseStructureHeading(title)?.key ||
+      (number ? 'sec-' + number[1] : /^\d+(?:\.\d+)*$/.test(tag) ? 'sec-' + tag : undefined);
+    if (sectionKey) {
+      const asset = textAsset(el, 'section', sectionKey, title, title);
+      const section = el.closest('section[id]');
+      if (section && section.querySelector('h2, h3') === el) assetsByElementId.set(section.id, asset);
+    }
+  }
+
+  for (const el of document.querySelectorAll<HTMLElement>('p')) {
+    if (el.closest(ignoredCitationContainers)) continue;
+    for (const { term, expansion, contextSentence, kind } of glossaryDefinitions(cleanText(el.textContent))) {
+      glossaryMap[term] ??= { term, expansion, contextSentence, kind, definedPage: 0, definedRect: domRect,
+        domAnchorId: ensureAnchorId(el, 'definition', anchorCounter, anchorElements) };
+    }
   }
 
   const seenContainers = new Set<HTMLElement>();
@@ -288,6 +513,7 @@ export function extractDomPaper(force = false): ParsedDomPaper {
 
   // ---- 1) 抽取图表（Figures & Tables）----
   const figureSelectors = [
+    '.ltx_algorithm', theoremSelector,
     'figure.ltx_figure',
     'figure.ltx_table',
     'figure',
@@ -316,6 +542,20 @@ export function extractDomPaper(force = false): ParsedDomPaper {
       'figcaption, .ltx_caption, .c-article-section__figure-description, .caption, caption, [class*="caption"]',
     );
     const captionText = truncate(cleanText(captionEl?.textContent), MAX_CAPTION_LEN);
+
+    const fullText = cleanText(el.textContent);
+    const heading = captionText || cleanText(el.querySelector('.ltx_title, .ltx_tag, h4, h5')?.textContent) || fullText;
+    const numbered = structuredMentions(heading).find(hit => hit.start === 0);
+    const isAlgorithm = el.matches('.ltx_algorithm') || numbered?.kind === 'algorithm';
+    if (isAlgorithm || el.matches(theoremSelector)) {
+      const kind = isAlgorithm ? 'algorithm' : 'theorem';
+      const id = ensureAnchorId(el, kind, anchorCounter, anchorElements);
+      const key = numbered?.targetKeys[0] ?? kind + ':' + id;
+      const asset = textAsset(el, kind, key, numbered?.rawText || truncate(heading || id, 64), fullText);
+      asset.imageUrl = resolveBestImageSrc(el);
+      seenContainers.add(el);
+      continue;
+    }
 
     const tableEl = el.querySelector('table');
     const isTableContainer =
@@ -500,7 +740,7 @@ export function extractDomPaper(force = false): ParsedDomPaper {
   const assets = Array.from(assetsByKey.values());
   const references = Array.from(refsByIndex.values()).sort((a, b) => a.index - b.index);
 
-  return {
+  const paper: ParsedDomPaper = {
     payload: {
       title: deriveDisplayName(window.location.href, metaTitle || document.title),
       url: window.location.href,
@@ -509,12 +749,24 @@ export function extractDomPaper(force = false): ParsedDomPaper {
       pdfUrl,
       assets,
       references,
-      citationCount: 0,
+      citationCount: 0, backlinksMap: {}, glossaryMap, outline,
     },
-    assetsByKey,
+    citations: new Map(), assetsByKey,
     assetsByElementId,
     refsByIndex,
     refsByElementId,
     anchorElements,
   };
+  collectCitations(paper);
+  const ordered = [...paper.citations].sort(([a], [b]) => a === b ? 0 :
+    a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+  for (const [el, binding] of ordered) {
+    const id = ensureAnchorId(el, 'citation', anchorCounter, anchorElements);
+    const link = { citationId: id, domAnchorId: id, pageNumber: 0, rect: domRect, rawText: cleanText(el.textContent) };
+    for (const target of binding.asset ? [binding.asset, ...binding.relatedAssets ?? []] : binding.references ?? []) {
+      (paper.payload.backlinksMap[target.key] ??= []).push(link);
+    }
+  }
+  paper.payload.citationCount = paper.citations.size;
+  return paper;
 }

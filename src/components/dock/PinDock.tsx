@@ -691,13 +691,13 @@ export function PinDock({
 
         <section aria-label={t('dock.autoSync')} className={clsx(
           'flex shrink-0 flex-col border-b border-paper-border bg-paper-bg',
-          showSynced && (isHorizontal ? 'h-24 max-h-[46%]' : 'h-44 max-h-[42%]'),
+          showSynced && synced.length > 0 && (isHorizontal ? 'max-h-[46%]' : 'max-h-44'),
         )}>
           <div className="flex h-8 shrink-0 items-center gap-2 px-3">
             <button type="button" aria-expanded={showSynced} disabled={!enabled}
               onClick={() => setSyncCollapsed(value => !value)}
               className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-paper-ink disabled:text-paper-muted">
-              <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !showSynced && '-rotate-90')} />
+              <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !(showSynced && synced.length > 0) && '-rotate-90')} />
               <span className="truncate">{t('dock.autoSyncTitle')}</span>
               <span className="rounded border border-paper-border bg-paper-card px-1 font-mono text-[10px]">{synced.length}</span>
             </button>
@@ -707,9 +707,8 @@ export function PinDock({
               <span className={clsx('h-3 w-3 rounded-full bg-paper-card transition-transform', enabled && 'translate-x-3')} />
             </button>
           </div>
-          {showSynced && <div className={clsx('min-h-0 overflow-auto px-2.5 pb-2',
+          {showSynced && synced.length > 0 && <div className={clsx('min-h-0 overflow-auto px-2.5 pb-2',
             isHorizontal ? 'flex gap-2' : 'space-y-1.5')}>
-            {synced.length === 0 && <p className="px-1 py-2 text-[11px] text-paper-muted">{t('dock.noRelatedAssets', { page: currentPage })}</p>}
             {synced.map(asset => (
               <article key={asset.key} className={clsx('flex items-center gap-2 rounded-md border border-paper-border bg-paper-card p-1.5',
                 isHorizontal && 'w-56 shrink-0')}>
@@ -762,15 +761,10 @@ export function PinDock({
                 isHorizontal ? 'flex-row gap-4' : 'flex-col',
               )}
             >
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dashed border-paper-border bg-paper-card text-paper-muted">
-                <Pin className="h-5 w-5" />
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dashed border-paper-border bg-paper-card text-paper-muted">
+                <Pin className="h-4 w-4" />
               </span>
-              <div className={clsx(isHorizontal ? 'max-w-md text-left' : 'mt-3')}>
-                <p className="text-[11px] font-medium text-paper-ink">{t('dock.empty')}</p>
-                <p className="mt-1 text-[10px] leading-relaxed text-paper-muted">
-                  {t('dock.emptyHelp')}
-                </p>
-              </div>
+              <p className={clsx('text-[11px] text-paper-muted', !isHorizontal && 'mt-2.5')}>{t('dock.empty')}</p>
             </div>
           ) : (
             items.map((item) => (

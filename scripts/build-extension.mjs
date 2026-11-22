@@ -34,7 +34,7 @@ function getFolderSizeBytes(dir) {
 }
 
 async function run() {
-  console.log('\n[RefPin Extension] 1/4 Building Side Panel companion UI...');
+  console.log('\n[RefPin Extension] 1/4 Building Reader, Side Panel and PDF Translate...');
   await build({
     configFile: false,
     root: rootDir,
@@ -53,6 +53,7 @@ async function run() {
       emptyOutDir: true,
       rollupOptions: {
         input: {
+          reader: path.join(rootDir, 'reader.html'),
           sidepanel: path.join(rootDir, 'sidepanel.html'),
           pdfTranslate: path.join(rootDir, 'pdf-translate.html'),
         },
@@ -112,13 +113,13 @@ async function run() {
     },
   });
 
-  console.log('\n[RefPin Extension] 4/4 Copying manifest, fonts, cmaps & icons (pure attached mode)...');
+  console.log('\n[RefPin Extension] 4/4 Copying manifest, fonts, cmaps & icons...');
   fs.copyFileSync(
     path.join(rootDir, 'src/extension/manifest.json'),
     path.join(outDir, 'manifest.json'),
   );
 
-  // 仅复制 pdf.js 必需的 cmaps 与 standard_fonts，刻意排除 public/samples/ 与独立阅读器页面
+  // 仅复制 pdf.js 必需的 cmaps 与 standard_fonts，刻意排除 public/samples/
   copyDir(path.join(rootDir, 'src/extension/_locales'), path.join(outDir, '_locales'));
   copyDir(path.join(rootDir, 'public/cmaps'), path.join(outDir, 'cmaps'));
   copyDir(

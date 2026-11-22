@@ -6,6 +6,7 @@ export type AssetKind = 'figure' | 'table' | 'equation' | 'algorithm' | 'theorem
 export type CitationKind = AssetKind | 'reference';
 
 export interface OutlineItem {
+  domAnchorId?: string;
   id: string;
   title: string;
   pageNumber: number | null;
@@ -36,6 +37,7 @@ export interface InlineCitation {
 }
 
 export interface GlossaryEntry {
+  domAnchorId?: string;
   term: string;
   expansion: string;
   contextSentence: string;
@@ -56,6 +58,7 @@ export type ReaderMention = InlineCitation | GlossaryMention;
 
 /** 从图表或文献卡片跳回正文中的一次引用 */
 export interface CitationBacklink {
+  domAnchorId?: string;
   citationId: string;
   pageNumber: number;
   rect: NormalizedRect;

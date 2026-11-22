@@ -1,3 +1,5 @@
+import type { LocalizedMessage } from '../i18n/types';
+import { IS_EXTENSION_PAGE } from '../config/runtime';
 import { LocalizedError, message } from '../i18n/core';
 import { normalizePdfGlyphs } from '../utils/textCleanup';
 
@@ -175,6 +177,16 @@ export function createTranslator(
   };
 }
 
+export const STORAGE_KEY_TRANSLATE_CONFIG = 'refpin_translate_config';
+export const extensionConfigStorage: TranslateConfigStorage = {
+  async read() {
+    return (await chrome.storage.local.get(STORAGE_KEY_TRANSLATE_CONFIG))[STORAGE_KEY_TRANSLATE_CONFIG] as Partial<TranslateConfig> | undefined;
+  },
+  async write(config) {
+    await chrome.storage.local.set({ [STORAGE_KEY_TRANSLATE_CONFIG]: config });
+  },
+};
+
 const webConfigKey = 'refpin.web.translate.v1';
 export const webTranslator = createTranslator({
   async read() {
@@ -184,3 +196,15 @@ export const webTranslator = createTranslator({
     localStorage.setItem(webConfigKey, JSON.stringify(config));
   },
 });
+
+export const selectionTranslator = IS_EXTENSION_PAGE
+  ? createTranslator(extensionConfigStorage, DEFAULT_TRANSLATE_CONFIG, async (texts, targetLang) => {
+      const reply = await chrome.runtime.sendMessage<{ ok: boolean; translations?: string[]; error?: LocalizedMessage }>({
+        type: 'REFPIN_TRANSLATE_BATCH', texts, config: { provider: 'free', targetLang },
+      });
+      if (!reply?.ok || reply.translations?.length !== texts.length) {
+        throw new LocalizedError(reply?.error ?? message('translate.requestFailed'));
+      }
+      return reply.translations;
+    })
+  : webTranslator;

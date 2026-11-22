@@ -1,3 +1,5 @@
+import { IS_EXTENSION_PAGE } from './config/runtime';
+import { extensionPdfUrl, openRemotePdf, parsePaperLocation, type PaperLocation } from './services/arxivFetch';
 import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from './i18n';
 import { pinTitle } from './i18n/pinTitle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -83,7 +85,10 @@ export default function App() {
   const dockWidth = useReaderStore((state) => state.dockWidth);
   const dockHeight = useReaderStore((state) => state.dockHeight);
 
-  const [sharedArxiv, setSharedArxiv] = useState(() => new URLSearchParams(location.search).get('arxiv') || undefined);
+  const [sharedArxiv, setSharedArxiv] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('url') ? undefined : params.get('arxiv') || undefined;
+  });
   const consumeLink = useCallback(() => setSharedArxiv(undefined), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -215,7 +220,7 @@ export default function App() {
   );
 
   const openPaper = useCallback(
-    async (input: string | File | PaperArchive, name: string, startPage?: number, sampleId?: string) => {
+    async (input: string | File | PaperArchive | PaperLocation, name: string, startPage?: number, sampleId?: string) => {
       closeSearch();
       setSharedArxiv(undefined);
       setPaletteOpen(false);
@@ -238,9 +243,13 @@ export default function App() {
       try {
         await previousSave;
         signal.throwIfAborted();
-        const url = typeof input === 'string' ? input : null;
+        const url = typeof input === 'string' ? input : 'pdfUrl' in input ? input.pdfUrl : null;
         const fromCache = typeof input !== 'string' && 'paperHash' in input;
-        const file = fromCache ? await loadPdfBlob(input.paperHash) : input;
+        let file: Blob | string | undefined;
+        if (fromCache) file = await loadPdfBlob(input.paperHash);
+        else if (typeof input === 'object' && 'pdfUrl' in input) file = await openRemotePdf(input, signal);
+        else if (IS_EXTENSION_PAGE && typeof input === 'string') file = await openRemotePdf({ pdfUrl: input, displayName: name }, signal);
+        else file = input;
         signal.throwIfAborted();
         if (!file) throw new LocalizedError(message('archive.cacheMissing'));
         // Snapshot the local file before pdf.js takes ownership of the ArrayBuffer.
@@ -255,12 +264,15 @@ export default function App() {
           void doc.destroy().catch(() => {});
           return;
         }
+        const requestedPage = startPage && Math.min(startPage, doc.numPages);
+        const scrollTop = requestedPage ? undefined : archive?.lastScrollTop;
         archiveSession.current = {
-          sampleId: sampleId ?? archive?.sampleId, scrollTop: archive?.lastScrollTop ?? 0, openedAt: Date.now(),
+          sampleId: sampleId ?? archive?.sampleId, scrollTop: scrollTop ?? 0, openedAt: Date.now(),
         };
-        setInitialPage(archive?.lastPage ?? startPage);
-        setInitialScrollTop(archive?.lastScrollTop);
+        setInitialPage(requestedPage ?? archive?.lastPage);
+        setInitialScrollTop(scrollTop);
         useReaderStore.getState().setPdfDocument(doc, name, paperHash, url, archive);
+        if (requestedPage) useReaderStore.getState().setCurrentPage(requestedPage);
         setBootingName(null);
         void flushArchive();
         if (cacheBlob) void savePdfBlob(paperHash, cacheBlob, archiveSession.current.sampleId);
@@ -301,6 +313,23 @@ export default function App() {
     [flushArchive, closeSearch],
   );
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const url = params.get('url');
+    if (!url) return;
+    const timer = window.setTimeout(() => {
+      const direct = IS_EXTENSION_PAGE && extensionPdfUrl(url);
+      const paper = direct ? { pdfUrl: direct.href, displayName: direct.pathname.split('/').pop() || 'Paper.pdf' } : parsePaperLocation(url);
+      if (!paper) { setBootError(message(IS_EXTENSION_PAGE ? 'remote.extensionInvalid' : 'remote.invalid')); return; }
+      const title = params.get('title')?.trim() || paper.displayName;
+      const page = Number(params.get('page'));
+      // Keep signed and redirected PDF URLs intact when the extension opens a tab.
+      void openPaper(paper, title,
+        Number.isSafeInteger(page) && page > 0 ? page : undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [openPaper]);
+
   const handleOpenFile = useCallback(
     (file: File) => {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -334,7 +363,7 @@ export default function App() {
 
   const handleSelectSample = useCallback(
     (sample: SamplePaperMeta) => {
-      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, sample.id);
+      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, IS_EXTENSION_PAGE ? undefined : sample.id);
     },
     [openPaper],
   );
@@ -687,7 +716,7 @@ export default function App() {
           recent={recent}
           onOpenRecent={entry => {
             const sample = entry.sampleId && getSampleById(entry.sampleId);
-            if (sample) handleSelectSample(sample);
+            if (sample) void openPaper(sample.url, entry.fileName, undefined, sample.id);
             else void openPaper(entry, entry.fileName);
           }}
           onRemoveRecent={async hash => {

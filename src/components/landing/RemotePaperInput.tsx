@@ -1,6 +1,7 @@
+import { IS_EXTENSION_PAGE } from '../../config/runtime';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
-import { t } from '../../i18n/core';
+import { describeError, formatMessage, message, t, type DisplayMessage } from '../../i18n';
 import { openRemotePdf, parsePaperLocation, publicHttpsUrl, type PaperLocation } from '../../services/arxivFetch';
 
 interface Props {
@@ -14,6 +15,7 @@ export function RemotePaperInput({ initialArxiv, onOpenFile, onConsumeLink }: Pr
   const [input, setInput] = useState(initialArxiv || '');
   const [loading, setLoading] = useState(false);
   const [invalid, setInvalid] = useState(false);
+  const [error, setError] = useState<DisplayMessage>();
   const [failed, setFailed] = useState<PaperLocation | null>(null);
   const [proxy, setProxy] = useState(() => {
     try { return localStorage.getItem(proxyKey) || ''; } catch { return ''; }
@@ -32,8 +34,11 @@ export function RemotePaperInput({ initialArxiv, onOpenFile, onConsumeLink }: Pr
     try {
       const file = await openRemotePdf(paper, controller.signal, prefix);
       if (!controller.signal.aborted) onOpenFile(file);
-    } catch {
-      if (active.current === controller) setFailed(paper);
+    } catch (reason) {
+      if (active.current === controller) {
+        setError(describeError(reason, message('panel.fetchFailed')));
+        setFailed(paper);
+      }
     } finally {
       clearTimeout(timer);
       if (active.current === controller) setLoading(false);
@@ -56,12 +61,12 @@ export function RemotePaperInput({ initialArxiv, onOpenFile, onConsumeLink }: Pr
     return () => clearTimeout(timer);
   }, [initialArxiv, onConsumeLink, open]);
 
-  return <section className="mt-4">
+  return <section className="mt-3">
     <form onSubmit={e => { e.preventDefault(); void open(input); }}>
-      <label htmlFor="paper-address" className="mb-1.5 block text-xs font-medium text-paper-ink">{t('remote.label')}</label>
+      <label htmlFor="paper-address" className="sr-only">{t('remote.label')}</label>
       <div className="flex items-center gap-2 rounded-lg border border-paper-border bg-paper-card p-1 focus-within:border-paper-gold">
         <input id="paper-address" type="text" value={input} autoComplete="off" spellCheck={false}
-          placeholder={t('remote.placeholder')} aria-invalid={invalid}
+          placeholder={t(IS_EXTENSION_PAGE ? 'remote.extensionPlaceholder' : 'remote.placeholder')} aria-invalid={invalid}
           className="min-w-0 flex-1 bg-transparent px-2 text-sm text-paper-ink outline-none"
           onChange={e => {
             active.current?.abort(); active.current = undefined;
@@ -73,15 +78,15 @@ export function RemotePaperInput({ initialArxiv, onOpenFile, onConsumeLink }: Pr
         </button>
       </div>
     </form>
-    {invalid && <p role="alert" className="mt-2 text-xs text-paper-goldtext">{t('remote.invalid')}</p>}
+    {invalid && <p role="alert" className="mt-2 text-xs text-paper-goldtext">{t(IS_EXTENSION_PAGE ? 'remote.extensionInvalid' : 'remote.invalid')}</p>}
     {failed && <div className="mt-2 rounded-lg border border-paper-border bg-paper-card p-3 text-xs text-paper-muted">
-      <p role="status">{t('remote.help')}</p>
+      <p role="status">{IS_EXTENSION_PAGE ? formatMessage(error) : t('remote.help')}</p>
       <div className="mt-2 flex flex-wrap gap-3 text-paper-goldtext">
-        <a href={failed.pdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1">
-          {t('remote.download', { host: new URL(failed.pdfUrl).hostname })}<ExternalLink size={11} /></a>
-        <a href="https://github.com/xxxpixel-x/RefPin/releases/latest" target="_blank" rel="noreferrer">{t('remote.install')}</a>
+        {/^https?:/.test(failed.pdfUrl) && <a href={failed.pdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1">
+          {t('remote.download', { host: new URL(failed.pdfUrl).hostname })}<ExternalLink size={11} /></a>}
+        {!IS_EXTENSION_PAGE && <a href="https://github.com/xxxpixel-x/RefPin/releases/latest" target="_blank" rel="noreferrer">{t('remote.install')}</a>}
       </div>
-      <details className="mt-3"><summary className="cursor-pointer">{t('remote.proxy')}</summary>
+      {!IS_EXTENSION_PAGE && <details className="mt-3"><summary className="cursor-pointer">{t('remote.proxy')}</summary>
         <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={e => {
           e.preventDefault();
           const prefix = proxy.trim();
@@ -89,12 +94,12 @@ export function RemotePaperInput({ initialArxiv, onOpenFile, onConsumeLink }: Pr
           try { localStorage.setItem(proxyKey, prefix); } catch { /* Optional storage. */ }
           void open(input, prefix);
         }}>
-          <label htmlFor="proxy-prefix" className="w-full">{t('remote.proxyHint')}</label>
+          <label htmlFor="proxy-prefix" className="sr-only">{t('remote.proxyHint')}</label>
           <input id="proxy-prefix" type="url" value={proxy} onChange={e => setProxy(e.target.value)} placeholder="https://…/?url="
             className="min-w-0 flex-1 rounded border border-paper-border bg-paper-bg px-2 py-1 text-paper-ink" />
           <button disabled={!publicHttpsUrl(proxy.trim())} className="rounded px-2 py-1 text-paper-goldtext disabled:opacity-50">{t('remote.retry')}</button>
         </form>
-      </details>
+      </details>}
     </div>}
   </section>;
 }

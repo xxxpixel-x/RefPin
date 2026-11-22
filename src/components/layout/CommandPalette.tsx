@@ -5,7 +5,7 @@ import { useReaderStore } from '../../store/useReaderStore';
 import type { NormalizedRect, OutlineItem, PaperAsset, ReferenceEntry } from '../../types/paper';
 import { pageQuery, rankCommands, type SearchableCommand } from './commandMatcher';
 
-interface Command extends SearchableCommand { category: string; run: () => void; pin?: () => void }
+export interface Command extends SearchableCommand { category: string; run: () => void; pin?: () => void }
 interface Props {
   onClose: () => void;
   onJump: (page: number, rect?: NormalizedRect, label?: string) => void;
@@ -18,10 +18,6 @@ interface Props {
 
 export function CommandPalette({ onClose, onJump, onPinAsset, onPinReference, onExport, onHome, onSearch }: Props) {
   const { t, locale, setLocale } = useI18n();
-  const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState(0);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const list = useRef<HTMLDivElement>(null);
   const assets = useReaderStore(s => s.assetsMap);
   const refs = useReaderStore(s => s.referencesMap);
   const outline = useReaderStore(s => s.outline);
@@ -71,6 +67,20 @@ export function CommandPalette({ onClose, onJump, onPinAsset, onPinReference, on
     return rows;
   }, [assets, refs, outline, glossary, numPages, locale, setLocale, t, onJump, onPinAsset, onPinReference, onExport, onSearch, onHome]);
 
+  return <CommandDialog commands={commands} numPages={numPages} onJump={onJump} onClose={onClose} />;
+}
+
+export function CommandDialog({ commands, numPages, onJump, onClose }: {
+  commands: Command[];
+  numPages: number;
+  onJump: (page: number) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(0);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const results = useMemo(() => {
     const page = pageQuery(query);
     if (page !== undefined) return page <= numPages ? [{ id: 'page', label: t('palette.page', { page }),

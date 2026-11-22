@@ -1,3 +1,4 @@
+import { openFullReader } from './fullReader';
 import { describeError, message } from '../i18n/core';
 import {
   STORAGE_KEY_PENDING_PIN,
@@ -9,6 +10,7 @@ import { translateTexts } from './translator';
 import { dismissedKey, grantKey, handleBridge } from './pdfBridge';
 import { inspectTabUrl } from './urlRules';
 
+const MENU_FULL_READER = 'refpin-open-full-reader';
 const MENU_ALLOW_READER = 'refpin-allow-reader';
 const MENU_OPEN_PANEL = 'refpin-open-sidepanel';
 const MENU_START_SNIP = 'refpin-start-snip';
@@ -20,6 +22,11 @@ void chrome.sidePanel
 
 function setupContextMenus(): void {
   chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_FULL_READER,
+      title: chrome.i18n.getMessage('menuOpenFullReader'),
+      contexts: ['page', 'link'],
+    });
     chrome.contextMenus.create({
       id: MENU_ALLOW_READER,
       title: chrome.i18n.getMessage('menuAllowReader'),
@@ -49,6 +56,11 @@ chrome.runtime.onInstalled.addListener(() => {
 setupContextMenus();
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === MENU_FULL_READER) {
+    const target = inspectTabUrl(info.linkUrl || '').pdfUrl ?? inspectTabUrl(tab?.url || '').pdfUrl;
+    void openFullReader(target);
+    return;
+  }
   if (tab?.windowId === undefined) return;
 
   if (info.menuItemId === MENU_ALLOW_READER && tab.id !== undefined && tab.url?.startsWith('https://')) {
@@ -95,11 +107,9 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
   }
   if (request.type === 'REFPIN_BADGE_PDF' && sender.tab?.url) {
     const paper = inspectTabUrl(sender.tab.url);
-    if (paper.pdfUrl && paper.kind.startsWith('academic-')) {
-      const target = new URL(chrome.runtime.getURL('pdf-translate.html'));
-      target.searchParams.set('url', paper.pdfUrl);
-      target.searchParams.set('mode', 'bilingual');
-      void chrome.tabs.create({ url: target.href });
+    const target = paper.pdfUrl || request.pdfUrl;
+    if (paper.kind.startsWith('academic-') && typeof target === 'string' && /^https?:\/\//i.test(target)) {
+      void openFullReader(target);
     }
     return;
   }

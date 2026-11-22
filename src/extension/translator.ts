@@ -1,6 +1,5 @@
 import { LocalizedError, message } from '../i18n/core';
-import { createTranslator, DEFAULT_TRANSLATE_CONFIG, fetchWithTimeout, type TranslateTargetLang } from '../services/translator';
-import { STORAGE_KEY_TRANSLATE_CONFIG, type TranslateConfig } from './protocol';
+import { createTranslator, DEFAULT_TRANSLATE_CONFIG, extensionConfigStorage, fetchWithTimeout, type TranslateTargetLang } from '../services/translator';
 
 export { sanitizeSourceText } from '../services/translator';
 
@@ -181,12 +180,6 @@ async function translateBatchFree(
   return results;
 }
 
-export const { loadTranslateConfig, saveTranslateConfig, translateTexts } = createTranslator({
-  async read() {
-    const data = await chrome.storage.local.get(STORAGE_KEY_TRANSLATE_CONFIG);
-    return data[STORAGE_KEY_TRANSLATE_CONFIG] as Partial<TranslateConfig> | undefined;
-  },
-  async write(config) {
-    await chrome.storage.local.set({ [STORAGE_KEY_TRANSLATE_CONFIG]: config });
-  },
-}, DEFAULT_TRANSLATE_CONFIG, translateBatchFree);
+export const { loadTranslateConfig, saveTranslateConfig, translateTexts } = createTranslator(
+  extensionConfigStorage, DEFAULT_TRANSLATE_CONFIG, translateBatchFree,
+);

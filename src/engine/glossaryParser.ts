@@ -45,6 +45,23 @@ function acronymExpansion(before: string, term: string, explicitAlias: boolean):
   return englishExpansion(before, term);
 }
 
+export function* glossaryDefinitions(text: string, prefix = '') {
+  function definition(term: string, expansion: string, start: number, kind: GlossaryEntry['kind']) {
+    const end = start + term.length;
+    const before = (prefix + text.slice(0, start)).split(/[。！？!?]|\.\s+/u).pop() ?? '';
+    const after = text.slice(end).match(/^.*?(?:[。！？!?]|\.(?=\s|$)|$)/u)?.[0] ?? '';
+    return { term, expansion, start, end, kind, contextSentence: (before.slice(-180) + term + after.slice(0, 180)).trim() };
+  }
+  for (const hit of text.matchAll(parenthetical)) {
+    const expansion = acronymExpansion(prefix + text.slice(0, hit.index), hit[1], /[(（]\s*简称/.test(hit[0]));
+    if (expansion) yield definition(hit[1], expansion, hit.index! + hit[0].lastIndexOf(hit[1]), 'acronym');
+  }
+  for (const hit of text.matchAll(symbolDefinition)) {
+    const expansion = hit[2].split(/\s+(?:and|where|which)\s+(?=\S+\s+(?:denotes|represents|is)\b)/i)[0].trim();
+    yield definition(hit[1], expansion, hit.index! + hit[0].match(/^where\s+/i)![0].length, 'symbol');
+  }
+}
+
 interface Options {
   refRange?: RefRange;
   citationsByPage?: Record<number, InlineCitation[]>;
@@ -69,25 +86,13 @@ export function parseGlossary(linesByPage: LinesByPage, { refRange, citationsByP
     const wrapped = previous && previous.pageNumber === line.pageNumber && previous.column === line.column &&
       line.rect.y >= previous.rect.y && line.rect.y - previous.rect.y < previous.rect.height * 2.5;
     const prefix = wrapped ? previous.text + ' ' : '';
-    const register = (term: string, expansion: string, start: number, kind: GlossaryEntry['kind']) => {
-      const end = start + term.length;
+    for (const { term, start, end, ...detail } of glossaryDefinitions(line.text, prefix)) {
       const definedRect = rectForRange(line, start, end);
-      if (!definedRect || definitions.has(term)) return;
-      const before = (prefix + line.text.slice(0, start)).split(/[。！？!?]|\.\s+/u).pop() ?? '';
-      const after = line.text.slice(end).match(/^.*?(?:[。！？!?]|\.(?=\s|$)|$)/u)?.[0] ?? '';
-      const contextSentence = (before.slice(-180) + term + after.slice(0, 180)).trim();
+      if (!definedRect || definitions.has(term)) continue;
       definitions.set(term, {
-        entry: { term, expansion, contextSentence, definedPage: line.pageNumber, definedRect, kind },
+        entry: { term, ...detail, definedPage: line.pageNumber, definedRect },
         lineIndex, end,
       });
-    };
-    for (const hit of line.text.matchAll(parenthetical)) {
-      const expansion = acronymExpansion(prefix + line.text.slice(0, hit.index), hit[1], /[(（]\s*简称/.test(hit[0]));
-      if (expansion) register(hit[1], expansion, hit.index! + hit[0].lastIndexOf(hit[1]), 'acronym');
-    }
-    for (const hit of line.text.matchAll(symbolDefinition)) {
-      const expansion = hit[2].split(/\s+(?:and|where|which)\s+(?=\S+\s+(?:denotes|represents|is)\b)/i)[0].trim();
-      register(hit[1], expansion, hit.index! + hit[0].match(/^where\s+/i)![0].length, 'symbol');
     }
   });
 

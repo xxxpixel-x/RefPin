@@ -1,3 +1,6 @@
+import { usePreviewColor } from '../../components/peek/usePreviewColor';
+import { openFullReader } from '../fullReader';
+import { ThemeSwitcher } from '../../components/layout/ThemeSwitcher';
 import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from '../../i18n';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -40,6 +43,7 @@ interface PdfPageCanvasProps {
   visible: boolean;
   blocks?: TranslatedBlock[];
   showOverlay: boolean;
+  filter: string;
 }
 
 function PdfPageCanvas({
@@ -50,6 +54,7 @@ function PdfPageCanvas({
   visible,
   blocks,
   showOverlay,
+  filter,
 }: PdfPageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderedKeyRef = useRef<string>('');
@@ -94,10 +99,10 @@ function PdfPageCanvas({
 
   return (
     <div
-      className="relative shrink-0 overflow-visible rounded-sm bg-white shadow-paper"
+      className="relative shrink-0 overflow-visible rounded-sm bg-paper-card shadow-paper"
       style={{ width: `${Math.round(width)}px`, height: `${Math.round(height)}px` }}
     >
-      <canvas ref={canvasRef} className="block rounded-sm" />
+      <canvas ref={canvasRef} className="block rounded-sm" style={{ filter }} />
 
       {showOverlay && blocks && blocks.length > 0 && (
         <div className="pointer-events-none absolute inset-0">
@@ -128,9 +133,9 @@ function PdfPageCanvas({
                   lineHeight: block.isHeading ? 1.28 : 1.38,
                 }}
                 className={clsx(
-                  'pointer-events-auto absolute z-10 overflow-hidden bg-white px-0.5 text-justify text-paper-ink transition-shadow hover:z-30 hover:h-auto hover:overflow-visible hover:rounded hover:shadow-float',
+                  'pointer-events-auto absolute z-10 overflow-hidden bg-paper-card px-0.5 text-justify text-paper-ink transition-shadow hover:z-30 hover:h-auto hover:overflow-visible hover:rounded hover:shadow-float',
                   block.isHeading && 'font-semibold text-left',
-                  block.isCaption && 'text-stone-700',
+                  block.isCaption && 'text-paper-ink',
                 )}
               >
                 {block.translated}
@@ -147,6 +152,7 @@ export function PdfTranslateApp() {
   const { t, locale } = useI18n();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const pdfUrl = params.get('url') || '';
+  const { filter, colorToggle } = usePreviewColor(pdfUrl);
   const initialModeParam = params.get('mode');
   const initialMode: Exclude<TranslateDisplayMode, 'off'> =
     initialModeParam === 'bilingual' ? 'bilingual' : 'translated';
@@ -290,20 +296,15 @@ export function PdfTranslateApp() {
       (entries) => {
         setVisiblePages((prev) => {
           const next = new Set(prev);
-          let bestVisible: { page: number; ratio: number } | null = null;
           for (const entry of entries) {
             const pageNum = Number((entry.target as HTMLElement).dataset.pageNum);
             if (!Number.isFinite(pageNum)) continue;
             if (entry.isIntersecting) {
               next.add(pageNum);
-              if (!bestVisible || entry.intersectionRatio > bestVisible.ratio) {
-                bestVisible = { page: pageNum, ratio: entry.intersectionRatio };
-              }
             } else {
               next.delete(pageNum);
             }
           }
-          if (bestVisible) setCurrentPage(bestVisible.page);
           return next;
         });
       },
@@ -314,8 +315,32 @@ export function PdfTranslateApp() {
       observer.observe(el);
     }
 
-    return () => observer.disconnect();
-  }, [pageMetas.length, displayMode]);
+    // The observer preloads beyond the viewport. Use the actual reading position
+    // for the page counter and the handoff to the full Reader.
+    let frame = 0;
+    const updateCurrentPage = () => {
+      let low = 1, high = pageMetas.length;
+      const readingLine = window.innerHeight / 3;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const element = pageElsRef.current.get(mid);
+        if (element && element.getBoundingClientRect().top <= readingLine) low = mid;
+        else high = mid - 1;
+      }
+      setCurrentPage(low);
+      frame = 0;
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(updateCurrentPage); };
+    schedule();
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [pageMetas.length, displayMode, scale]);
 
   // 3) 可见页优先流式翻译整篇 PDF
   const startTranslation = useCallback(
@@ -478,14 +503,18 @@ export function PdfTranslateApp() {
   return (
     <div className="flex min-h-screen flex-col bg-paper-bg text-paper-ink">
       {/* 极简顶栏 */}
-      <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-paper-border bg-white/90 px-4 backdrop-blur">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-white">
+      <header className="sticky top-0 z-40 flex min-h-12 shrink-0 flex-wrap items-center py-1 gap-2.5 border-b border-paper-border bg-paper-card px-4 backdrop-blur">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-paper-card">
           R
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-paper-ink">
           {displayName}
         </span>
 
+        <button type="button" onClick={() => void openFullReader(pdfUrl, displayName, currentPage)}
+          className="rounded-lg bg-paper-ink px-2.5 py-1 text-xs font-medium text-paper-card">{t('panel.openFullReader')}</button>
+        <ThemeSwitcher />
+        {colorToggle}
         <LanguageToggle />
 
         {pageMetas.length > 0 && (
@@ -494,7 +523,7 @@ export function PdfTranslateApp() {
           </span>
         )}
 
-        <div className="flex items-center rounded-lg border border-paper-border bg-white">
+        <div className="flex items-center rounded-lg border border-paper-border bg-paper-card">
           <button
             type="button"
             onClick={() => setScale((s) => Math.max(0.7, Number((s - 0.1).toFixed(2))))}
@@ -527,7 +556,7 @@ export function PdfTranslateApp() {
             className={clsx(
               'rounded-md px-2.5 py-1 font-medium transition',
               displayMode === 'translated'
-                ? 'bg-white text-paper-ink shadow-sm'
+                ? 'bg-paper-card text-paper-ink shadow-sm'
                 : 'text-paper-muted hover:text-paper-ink',
             )}
           >
@@ -543,7 +572,7 @@ export function PdfTranslateApp() {
             className={clsx(
               'rounded-md px-2.5 py-1 font-medium transition',
               displayMode === 'bilingual'
-                ? 'bg-white text-paper-ink shadow-sm'
+                ? 'bg-paper-card text-paper-ink shadow-sm'
                 : 'text-paper-muted hover:text-paper-ink',
             )}
           >
@@ -569,7 +598,7 @@ export function PdfTranslateApp() {
               runningRef.current = false;
               pushStatus({ running: false });
             }}
-            className="inline-flex items-center gap-1 rounded-lg bg-paper-ink px-2.5 py-1 text-[11px] font-medium text-white"
+            className="inline-flex items-center gap-1 rounded-lg bg-paper-ink px-2.5 py-1 text-[11px] font-medium text-paper-card"
           >
             <Square className="h-2.5 w-2.5 fill-current" />
             {donePages.size}/{pageMetas.length}
@@ -580,7 +609,7 @@ export function PdfTranslateApp() {
             <button
               type="button"
               onClick={() => void startTranslation(pdfDoc, pageMetas.length)}
-              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1 text-[11px] font-medium text-white"
+              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1 text-[11px] font-medium text-paper-card"
             >
               <Languages className="h-3 w-3" />
               {t('translate.resume')}
@@ -628,6 +657,7 @@ export function PdfTranslateApp() {
                       width={renderWidth}
                       height={renderHeight}
                       visible={isVis}
+                      filter={filter}
                       showOverlay={false}
                     />
                   )}
@@ -638,6 +668,7 @@ export function PdfTranslateApp() {
                     height={renderHeight}
                     visible={isVis}
                     blocks={pageBlocks}
+                    filter={filter}
                     showOverlay
                   />
                 </div>

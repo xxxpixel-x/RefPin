@@ -1,28 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { t } from '../../i18n/core';
 import { buildFallbackBibtex, getCachedScholarMetadata, lookupScholarMetadata } from '../../services/scholarLookup';
 import { useReaderStore } from '../../store/useReaderStore';
 import type { ReferenceEntry } from '../../types/paper';
 
-export function ReferenceDetails({ reference }: { reference: ReferenceEntry }) {
+export function ReferenceDetails({ reference, deferUntilVisible = false }: { reference: ReferenceEntry; deferUntilVisible?: boolean }) {
+  const card = useRef<HTMLDivElement>(null);
   const enabled = useReaderStore(state => state.scholarLookupEnabled);
   const setEnabled = useReaderStore(state => state.setScholarLookupEnabled);
   const [metadata, setMetadata] = useState(() => getCachedScholarMetadata(reference));
   const [copied, setCopied] = useState<'ready' | 'done' | 'failed'>('ready');
   useEffect(() => {
+    setMetadata(getCachedScholarMetadata(reference));
     if (!enabled) return;
     const controller = new AbortController();
-    void lookupScholarMetadata(reference, controller.signal).then(result => {
-      if (!controller.signal.aborted && result) setMetadata(result);
-    });
-    return () => controller.abort();
-  }, [reference, enabled]);
+    const lookup = () => {
+      void lookupScholarMetadata(reference, controller.signal).then(result => {
+        if (!controller.signal.aborted && result) setMetadata(result);
+      });
+    };
+    // A panel can contain hundreds of references. Enrich each card when it is read.
+    let observer: IntersectionObserver | undefined;
+    if (deferUntilVisible && card.current && typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          observer?.disconnect();
+          lookup();
+        }
+      });
+      observer.observe(card.current);
+    } else lookup();
+    return () => { observer?.disconnect(); controller.abort(); };
+  }, [reference, enabled, deferUntilVisible]);
   useEffect(() => {
     if (copied === 'ready') return;
     const timer = setTimeout(() => setCopied('ready'), 1600);
     return () => clearTimeout(timer);
   }, [copied]);
-  return <div className="mt-2 space-y-2 border-t border-paper-border pt-2 text-[11px]">
+  return <div ref={card} className="mt-2 space-y-2 border-t border-paper-border pt-2 text-[11px]">
     <label className="flex cursor-pointer items-center gap-1.5 text-paper-muted">
       <input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)}
         className="accent-paper-gold" />{t('scholar.toggle')}

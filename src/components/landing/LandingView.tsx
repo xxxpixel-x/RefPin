@@ -47,18 +47,13 @@ export function LandingView({
     <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-12">
       <div className="absolute right-4 top-4 flex items-center gap-2"><ThemeSwitcher /><LanguageToggle /></div>
       <div className="w-full max-w-xl">
-        <div className="mb-8 flex items-center justify-center gap-2.5">
+        <div className="mb-6 flex items-center justify-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-ink text-[13px] font-semibold text-paper-card">
             R
           </span>
           <span className="text-base font-semibold tracking-tight text-paper-ink">
             {t('brand.name')}
           </span>
-        </div>
-
-        <div className="mb-5 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">{t('landing.heading')}</h1>
-          <p className="mx-auto mt-2 max-w-md text-sm text-paper-muted">{t('landing.features')}</p>
         </div>
 
         <button
@@ -122,9 +117,8 @@ export function LandingView({
                   <FileText className="h-3.5 w-3.5" />
                 </span>
                 <span className="min-w-0 flex-1 text-xs font-medium text-paper-ink">
-                  <span className="block">{sample.title}</span>
-                  <span className="mt-1 block font-normal text-paper-muted">{sample.subtitle}</span>
-                  <span className="mt-1.5 block text-[10px] text-paper-goldtext">{sample.badge}</span>
+                  <span className="block truncate">{sample.title}</span>
+                  <span className="mt-0.5 block truncate font-normal text-paper-muted">{sample.subtitle}</span>
                 </span>
                 <ArrowRight className="h-3.5 w-3.5 shrink-0 text-paper-muted transition group-hover:translate-x-0.5 group-hover:text-paper-gold" />
               </button>
@@ -156,7 +150,7 @@ export function LandingView({
                         <span aria-label={t('archive.pinCount', { count: entry.pinnedItems.length })} className="inline-flex items-center gap-1 rounded bg-paper-bg px-1.5">
                           <Pin size={10} />{entry.pinnedItems.length}
                         </span>
-                        <span>{sample ? t('archive.sampleReady') : entry.hasCachedPdf ? t('archive.cached') : t('archive.reselect')}</span>
+                        {!sample && !entry.hasCachedPdf && <span>{t('archive.reselect')}</span>}
                       </span>
                     </span>
                     <time dateTime={new Date(entry.lastOpenedAt).toISOString()} className="shrink-0 text-[11px] text-paper-muted">{relativeTime(entry.lastOpenedAt)}</time>

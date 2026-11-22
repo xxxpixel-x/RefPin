@@ -63,6 +63,32 @@ describe('local study notes', () => {
     expect(markdown).not.toContain('assets/');
   });
 
+  it('exports HTML figures and tables without a PDF document or invented page numbers', async () => {
+    const htmlNotes: StudyNotes = {
+      fileName: 'HTML paper', numPages: 0, currentPage: 0,
+      pinnedItems: [
+        { id: 'fig:1', kind: 'figure', title: 'Diagram', pageNumber: 0, createdAt: 1, imageUrl: 'https://publisher.example/diagram.png' },
+        { id: 'table:1', kind: 'table', title: 'Results', pageNumber: 0, createdAt: 2 },
+      ],
+      tableRows: { 'table:1': [['Method', 'Score'], ['Local', '91']] },
+      backlinksMap: { 'fig:1': [{ ...link(0), domAnchorId: 'mention' }] }, glossaryMap: {},
+    };
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } }));
+    vi.stubGlobal('fetch', fetch);
+    const markdown = buildStudyNotesMarkdown(htmlNotes);
+    expect(markdown).toContain('| Local | 91 |');
+    expect(markdown).toContain('Mentions in the text (1)');
+    expect(markdown).not.toContain('P.0');
+    expect(fetch).not.toHaveBeenCalled();
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    const anchor = { click: vi.fn(), remove: vi.fn() };
+    vi.stubGlobal('document', { body: { append: vi.fn() }, createElement: () => anchor });
+    expect(await exportStudyPackZip(htmlNotes, null)).toBe(0);
+    const entries = await extract(create.mock.calls[0][0] as Blob);
+    expect([...entries.keys()]).toEqual(['notes.md', 'assets/01-diagram.png']);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('packs byte-accurate Unicode STORE entries including empty files', async () => {
     const data = new TextEncoder().encode('123456789');
     expect(crc32(data)).toBe(0xcbf43926);

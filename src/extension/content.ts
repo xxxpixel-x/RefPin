@@ -3,8 +3,10 @@ import type { DisplayMessage } from '../i18n/types';
 import { describeError, getLocale, message, subscribeLocale, t } from '../i18n/core';
 import {
   extractDomPaper,
+  markTextCitations,
   isLikelyAcademicHtmlPage,
   type ParsedDomPaper,
+  type CitationBinding,
 } from './domPaperParser';
 import type {
   CompanionAsset,
@@ -22,13 +24,7 @@ import { inspectTabUrl } from './urlRules';
 const STYLE_ID = 'refpin-page-inline-style';
 const UI_HOST_ID = 'refpin-shadow-ui-host';
 
-interface CitationBinding {
-  asset?: CompanionAsset;
-  references?: CompanionReference[];
-}
-
 let parsedPaper: ParsedDomPaper | null = null;
-let citationCount = 0;
 let isActivated = false;
 
 // ---- Shadow DOM UI state ----
@@ -731,7 +727,7 @@ function renderPeekCard(): void {
       <div class="peek-head">
         <span class="peek-badge">${t('reference.number', { index: ref.index })}</span>
         <div class="peek-actions">
-          <a class="btn" href="${escapeHtml(ref.href || scholarUrl)}" target="_blank" rel="noopener noreferrer">Scholar ↗</a>
+          <a class="btn" href="${escapeHtml(ref.href || scholarUrl)}" target="_blank" rel="noopener noreferrer">${t('reference.source')} ↗</a>
           ${ref.domAnchorId ? `<button type="button" class="btn" data-action="jump">${t('pin.locate')}</button>` : ''}
           <button type="button" class="btn btn-gold" data-action="pin">${t('assets.pin')}</button>
         </div>
@@ -766,7 +762,6 @@ function bindInteractiveCitation(el: HTMLElement, binding: CitationBinding): voi
   if (el.dataset.refpinBound === '1') return;
   el.dataset.refpinBound = '1';
   el.classList.add('refpin-cite-mark');
-  citationCount += 1;
 
   el.addEventListener('mouseenter', () => {
     if (closeTimer) {
@@ -784,175 +779,6 @@ function bindInteractiveCitation(el: HTMLElement, binding: CitationBinding): voi
   });
 
   el.addEventListener('mouseleave', scheduleHidePeek);
-}
-
-function expandNumericList(spec: string): number[] {
-  const result: number[] = [];
-  for (const part of spec.split(/[,，]/)) {
-    const trimmed = part.trim();
-    const range = trimmed.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
-    if (range) {
-      const start = Number(range[1]);
-      const end = Number(range[2]);
-      if (end >= start && end - start <= 12) {
-        for (let i = start; i <= end; i += 1) result.push(i);
-      }
-      continue;
-    }
-    const single = trimmed.match(/^\d+$/);
-    if (single) result.push(Number(single[0]));
-  }
-  return result;
-}
-
-function resolveBindingFromText(
-  text: string,
-  paper: ParsedDomPaper,
-): CitationBinding | null {
-  const figMatch = text.match(
-    /(?:Fig(?:ure)?\.?\s*([A-Z]?\d+(?:\.\d+)?[a-z]?)|(?:附图|图)\s*(\d+(?:\.\d+)?[a-z]?))/i,
-  );
-  if (figMatch) {
-    const num = (figMatch[1] || figMatch[2]).toLowerCase();
-    const asset =
-      paper.assetsByKey.get(`fig:${num}`) ||
-      paper.assetsByKey.get(`fig:${num.replace(/[a-z]$/, '')}`);
-    if (asset) return { asset };
-  }
-
-  const tblMatch = text.match(
-    /(?:Tab(?:le)?\.?\s*([A-Z]?\d+(?:\.\d+)?|[IVX]+)|(?:附表|表)\s*(\d+(?:\.\d+)?))/i,
-  );
-  if (tblMatch) {
-    const num = (tblMatch[1] || tblMatch[2]).toLowerCase();
-    const asset = paper.assetsByKey.get(`table:${num}`);
-    if (asset) return { asset };
-  }
-
-  const eqMatch = text.match(
-    /(?:Eq(?:uation)?\.?\s*\(?(\d+(?:\.\d+)?)\)?|(?:公式|式)\s*[（(]?(\d+(?:\.\d+)?)[）)]?)/i,
-  );
-  if (eqMatch) {
-    const num = eqMatch[1] || eqMatch[2];
-    const asset = paper.assetsByKey.get(`eq:${num}`);
-    if (asset) return { asset };
-  }
-
-  const refMatch = text.match(/^[\[\【]\s*(\d+(?:\s*[-–—,，]\s*\d+)*)\s*[\]\】]$/);
-  if (refMatch) {
-    const nums = expandNumericList(refMatch[1]);
-    const refs = nums
-      .map((n) => paper.refsByIndex.get(n))
-      .filter((r): r is CompanionReference => Boolean(r));
-    if (refs.length > 0) return { references: refs };
-  }
-
-  return null;
-}
-
-function annotateInPageCitations(paper: ParsedDomPaper): void {
-  if (paper.assetsByKey.size === 0 && paper.refsByIndex.size === 0) return;
-  injectHostStyles();
-
-  // 路线 1：优先挂接原网页已有的内部锚点 <a>（零 DOM 侵入）
-  const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="#"]'));
-  for (const a of anchors) {
-    if (a.dataset.refpinBound === '1') continue;
-    if (a.closest('nav, header, footer, figure, figcaption, .ltx_bibliography, #references')) {
-      continue;
-    }
-
-    const hashIndex = a.href.indexOf('#');
-    if (hashIndex < 0) continue;
-    const targetId = decodeURIComponent(a.href.slice(hashIndex + 1));
-
-    const assetById = paper.assetsByElementId.get(targetId);
-    if (assetById) {
-      bindInteractiveCitation(a, { asset: assetById });
-      continue;
-    }
-
-    const refById = paper.refsByElementId.get(targetId);
-    if (refById) {
-      bindInteractiveCitation(a, { references: [refById] });
-      continue;
-    }
-
-    const text = (a.textContent || '').trim();
-    if (text.length > 0 && text.length <= 28) {
-      const byText = resolveBindingFromText(text, paper);
-      if (byText) {
-        bindInteractiveCitation(a, byText);
-      }
-    }
-  }
-
-  // 路线 2：无超链接的纯文本引用兜底（仅匹配已提取到的真实图表/文献，零误伤）
-  const root =
-    document.querySelector<HTMLElement>(
-      'main, article, .ltx_page_main, [role="main"]',
-    ) || document.body;
-  if (!root) return;
-
-  const citeRegex =
-    /(?:\b(?:Fig(?:ure)?\.?|Tab(?:le)?\.?|Eq(?:uation)?\.?)\s*\(?[A-Z]?\d+(?:\.\d+)?[a-z]?\)?|(?:附图|附表|图|表)\s*\d+(?:\.\d+)?[a-z]?|(?:公式|式)\s*[（(]?\d+(?:\.\d+)?[）)]?|[\[\【]\s*\d+(?:\s*[-–—,，]\s*\d+)*\s*[\]\】])/g;
-
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (
-        parent.closest(
-          'script, style, noscript, code, pre, textarea, input, button, a, figure, figcaption, nav, header, footer, aside, .ltx_bibliography, #references, .references, [data-refpin-bound="1"]',
-        )
-      ) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      const val = node.nodeValue;
-      if (!val || val.length < 2) return NodeFilter.FILTER_REJECT;
-      return citeRegex.test(val) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-    },
-  });
-
-  const textNodes: Text[] = [];
-  let current = walker.nextNode();
-  while (current && textNodes.length < 1500) {
-    textNodes.push(current as Text);
-    current = walker.nextNode();
-  }
-
-  for (const textNode of textNodes) {
-    const raw = textNode.nodeValue || '';
-    citeRegex.lastIndex = 0;
-    let lastIdx = 0;
-    let matchedAny = false;
-    const frag = document.createDocumentFragment();
-
-    let match = citeRegex.exec(raw);
-    while (match) {
-      const token = match[0];
-      const binding = resolveBindingFromText(token, paper);
-      if (binding) {
-        matchedAny = true;
-        if (match.index > lastIdx) {
-          frag.appendChild(document.createTextNode(raw.slice(lastIdx, match.index)));
-        }
-        const span = document.createElement('span');
-        span.textContent = token;
-        bindInteractiveCitation(span, binding);
-        frag.appendChild(span);
-        lastIdx = match.index + token.length;
-      }
-      match = citeRegex.exec(raw);
-    }
-
-    if (matchedAny && textNode.parentNode) {
-      if (lastIdx < raw.length) {
-        frag.appendChild(document.createTextNode(raw.slice(lastIdx)));
-      }
-      textNode.parentNode.replaceChild(frag, textNode);
-    }
-  }
 }
 
 // ---- 页内自由框选截图（Free Snip）----
@@ -1122,8 +948,8 @@ function runExtraction(force = false): ParsedDomPaper {
   if (parsedPaper.payload.isAcademicPage || force) {
     isActivated = true;
     hideAcademicBadge();
-    annotateInPageCitations(parsedPaper);
-    parsedPaper.payload.citationCount = citationCount;
+    injectHostStyles();
+    for (const [element, binding] of parsedPaper.citations) bindInteractiveCitation(element, binding);
   }
   return parsedPaper;
 }
@@ -1339,9 +1165,6 @@ function annotateTranslatedBlockCitations(container: HTMLElement): void {
   if (!parsedPaper) return;
   if (parsedPaper.assetsByKey.size === 0 && parsedPaper.refsByIndex.size === 0) return;
 
-  const citeRegex =
-    /(?:\b(?:Fig(?:ure)?\.?|Tab(?:le)?\.?|Eq(?:uation)?\.?)\s*\(?[A-Z]?\d+(?:\.\d+)?[a-z]?\)?|(?:附图|附表|图|表)\s*\d+(?:\.\d+)?[a-z]?|(?:公式|式)\s*[（(]?\d+(?:\.\d+)?[）)]?|[\[\【]\s*\d+(?:\s*[-–—,，]\s*\d+)*\s*[\]\】])/g;
-
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   let cur = walker.nextNode();
@@ -1350,35 +1173,7 @@ function annotateTranslatedBlockCitations(container: HTMLElement): void {
     cur = walker.nextNode();
   }
 
-  for (const textNode of nodes) {
-    const raw = textNode.nodeValue || '';
-    citeRegex.lastIndex = 0;
-    let lastIdx = 0;
-    let matched = false;
-    const frag = document.createDocumentFragment();
-    let m = citeRegex.exec(raw);
-    while (m) {
-      const binding = resolveBindingFromText(m[0], parsedPaper);
-      if (binding) {
-        matched = true;
-        if (m.index > lastIdx) {
-          frag.appendChild(document.createTextNode(raw.slice(lastIdx, m.index)));
-        }
-        const span = document.createElement('span');
-        span.textContent = m[0];
-        bindInteractiveCitation(span, binding);
-        frag.appendChild(span);
-        lastIdx = m.index + m[0].length;
-      }
-      m = citeRegex.exec(raw);
-    }
-    if (matched && textNode.parentNode) {
-      if (lastIdx < raw.length) {
-        frag.appendChild(document.createTextNode(raw.slice(lastIdx)));
-      }
-      textNode.parentNode.replaceChild(frag, textNode);
-    }
-  }
+  for (const node of nodes) markTextCitations(node, parsedPaper, bindInteractiveCitation);
 }
 
 function collectTranslatableBlocks(): TranslatableBlock[] {

@@ -1,3 +1,6 @@
+import { IS_EXTENSION_PAGE } from '../config/runtime';
+import { LocalizedError, message } from '../i18n/core';
+
 export interface PaperLocation { pdfUrl: string; displayName: string; canonicalAbsUrl?: string }
 const arxivId = /^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]+\/\d{7})(?:v[1-9]\d*)?$/i;
 // Base64-encoded extension messages must also fit Chromium's 64 MiB message ceiling.
@@ -15,6 +18,15 @@ export function publicHttpsUrl(input: string): URL | null {
   } catch { return null; }
 }
 
+export function extensionPdfUrl(input: string) {
+  try {
+    const url = new URL(input);
+    if (IS_EXTENSION_PAGE && url.protocol === 'blob:' && url.href.startsWith('blob:' + window.location.origin + '/')) return url;
+    if (['http:', 'https:', 'file:'].includes(url.protocol) && !url.username && !url.password) return url;
+  } catch { /* Not an absolute PDF address. */ }
+  return null;
+}
+
 function fromId(id: string): PaperLocation | null {
   if (!arxivId.test(id)) return null;
   return { pdfUrl: 'https://arxiv.org/pdf/' + id, displayName: 'arXiv-' + id.replace('/', '-') + '.pdf',
@@ -24,7 +36,7 @@ function fromId(id: string): PaperLocation | null {
 export function parsePaperLocation(input: string): PaperLocation | null {
   const text = input.trim().replace(/^arxiv:\s*/i, '');
   if (arxivId.test(text)) return fromId(text);
-  const url = publicHttpsUrl(text);
+  const url = IS_EXTENSION_PAGE ? extensionPdfUrl(text) : publicHttpsUrl(text);
   if (!url) return null;
   if (/^(?:www\.|export\.)?arxiv\.org$/.test(url.hostname)) {
     const id = /^\/(?:abs|pdf)\/(.+?)\/?$/i.exec(url.pathname)?.[1].replace(/\.pdf$/i, '');
@@ -36,10 +48,11 @@ export function parsePaperLocation(input: string): PaperLocation | null {
     return { pdfUrl: 'https://openreview.net/pdf?id=' + id, displayName: 'OpenReview-' + id + '.pdf',
       canonicalAbsUrl: 'https://openreview.net/forum?id=' + id };
   }
-  if (!/\.pdf$/i.test(url.pathname)) return null;
+  if (!IS_EXTENSION_PAGE && !/\.pdf$/i.test(url.pathname)) return null;
   let filename = url.pathname.split('/').pop()!;
   try { filename = decodeURIComponent(filename); } catch { /* Keep the encoded name. */ }
-  return { pdfUrl: url.href, displayName: filename.replace(/[/\\]/g, '-') };
+  const name = filename.replace(/[/\\]/g, '-') || 'Paper';
+  return { pdfUrl: url.href, displayName: /\.pdf$/i.test(name) ? name : name + '.pdf' };
 }
 
 // Privileged cross-origin fetches only target fixed public scholarly hosts.
@@ -117,7 +130,31 @@ function requestBridge(type: 'REFPIN_EXT_PING' | 'REFPIN_EXT_FETCH_PDF', url: st
   });
 }
 
+async function hasNativePdfHeader(blob: Blob) {
+  // Some publishers prepend a BOM or short preamble ahead of the PDF header.
+  const header = new Uint8Array(await blob.slice(0, 1024).arrayBuffer());
+  return header.some((byte, index) => byte === 37 && isPdfBytes(header.subarray(index)));
+}
+
 export async function openRemotePdf(paper: PaperLocation, signal: AbortSignal, proxyPrefix = ''): Promise<File> {
+  if (IS_EXTENSION_PAGE) {
+    const url = extensionPdfUrl(paper.pdfUrl);
+    if (!url) throw new LocalizedError(message('remote.extensionInvalid'));
+    let response: Response;
+    try {
+      response = await fetch(url.href, { signal, credentials: url.protocol === 'http:' || url.protocol === 'https:' ? 'include' : 'omit' });
+    } catch (error) {
+      signal.throwIfAborted();
+      if (url.protocol === 'file:') throw new LocalizedError(message('panel.fileAccess'));
+      throw error;
+    }
+    if (!response.ok) throw new LocalizedError(message('panel.fetchHttp', { status: response.status }));
+    const blob = await response.blob();
+    if (!await hasNativePdfHeader(blob)) {
+      throw new LocalizedError(message('panel.invalidPdf'));
+    }
+    return new File([blob], paper.displayName, { type: 'application/pdf' });
+  }
   if (!parsePaperLocation(paper.pdfUrl)) throw new Error('Invalid PDF address');
   if (!proxyPrefix && isBridgePdfUrl(paper.pdfUrl)) {
     const pong = await requestBridge('REFPIN_EXT_PING', '', signal, 800);

@@ -104,7 +104,7 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
   if (isDirectPdfUrl(rawUrl)) {
     const paper = parsePaperLocation(url.href);
     return {
-      pdfUrl: paper?.pdfUrl || url.href,
+      pdfUrl: url.href,
       kind: 'pdf',
       siteLabel: url.protocol === 'file:' ? t('site.localPdf') : knownLabel || host.replace(/^www\./, ''),
       suggestedTitle: paper?.displayName,
@@ -163,6 +163,7 @@ export function deriveDisplayName(rawUrl: string, explicitTitle?: string): strin
   }
   const url = safeParseUrl(rawUrl);
   if (!url) return t('site.currentPaper');
-  const seg = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || url.hostname);
+  let seg = url.pathname.split('/').filter(Boolean).pop() || url.hostname;
+  try { seg = decodeURIComponent(seg); } catch { /* Keep malformed publisher filenames readable. */ }
   return seg || t('site.currentPaper');
 }

@@ -20,7 +20,7 @@ import type {
 
 export type Theme = 'light' | 'sepia' | 'dark';
 
-type NewParseFields = 'outline' | 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
+type NewParseFields = 'backlinksMap' | 'outline' | 'isImageOnly' | 'glossaryMap' | 'glossaryMentionsByPage';
 export type ParseResultPayload = Omit<ParsePaperResult, NewParseFields> & Partial<Pick<ParsePaperResult, NewParseFields>>;
 
 interface ReaderState {
@@ -115,6 +115,7 @@ interface ReaderState {
 const DOCK_STORAGE_KEY = 'refpin.dock.layout.v1';
 const AUTO_SYNC_KEY = 'refpin.dock.autoSync.v1';
 
+const SCHOLAR_KEY = 'refpin.scholar.v1';
 const THEME_KEY = 'refpin.theme.v1';
 const RULER_KEY = 'refpin.readingRuler.v1';
 
@@ -225,9 +226,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   backlinksMap: {},
 
   pinnedItems: [],
-  scholarLookupEnabled: preference('refpin.scholar.v1') === 'true',
+  scholarLookupEnabled: preference(SCHOLAR_KEY) === 'true',
   setScholarLookupEnabled: enabled => {
-    savePreference('refpin.scholar.v1', String(enabled));
+    savePreference(SCHOLAR_KEY, String(enabled));
     set({ scholarLookupEnabled: enabled });
   },
   autoSyncEnabled: loadAutoSync(),
@@ -278,7 +279,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     glossaryMap: payload.glossaryMap ?? {},
     glossaryMentionsByPage: payload.glossaryMentionsByPage ?? {},
     isImageOnly: payload.isImageOnly ?? false,
-    backlinksMap: buildBacklinksMap(payload.citationsByPage),
+    backlinksMap: payload.backlinksMap ?? buildBacklinksMap(payload.citationsByPage),
   }),
 
   pinAsset: (asset) => {
@@ -508,3 +509,18 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     });
   },
 }));
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('storage', event => {
+    if (event.storageArea !== window.localStorage) return;
+    if (event.key === THEME_KEY || event.key === null) {
+      const saved = preference(THEME_KEY);
+      const theme = saved === 'sepia' || saved === 'dark' ? saved : 'light';
+      applyTheme(theme);
+      useReaderStore.setState({ theme });
+    }
+    if (event.key === SCHOLAR_KEY || event.key === null) {
+      useReaderStore.setState({ scholarLookupEnabled: preference(SCHOLAR_KEY) === 'true' });
+    }
+  });
+}

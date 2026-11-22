@@ -1,6 +1,6 @@
 import type { DisplayMessage } from '../i18n/types';
 import type { TranslateConfig } from '../services/translator';
-import type { AssetKind, NormalizedRect } from '../types/paper';
+import type { AssetKind, CitationBacklink, GlossaryEntry, NormalizedRect, OutlineItem } from '../types/paper';
 
 export type CompanionAssetKind = AssetKind;
 
@@ -32,7 +32,7 @@ export interface CompanionReference {
 
 export interface CompanionPinItem {
   id: string;
-  kind: CompanionAssetKind | 'reference' | 'snip';
+  kind: CompanionAssetKind | 'reference' | 'snip' | 'glossary';
   source: 'dom' | 'pdf' | 'snip';
   title: string;
   automaticTitle?: boolean;
@@ -50,7 +50,13 @@ export interface CompanionPinItem {
   pinnedAt: number;
 }
 
-export interface DomPaperPayload {
+export interface CompanionIndex {
+  backlinksMap: Record<string, CitationBacklink[]>;
+  glossaryMap: Record<string, GlossaryEntry>;
+  outline: OutlineItem[];
+}
+
+export interface DomPaperPayload extends CompanionIndex {
   title: string;
   url: string;
   siteLabel: string;
@@ -62,7 +68,7 @@ export interface DomPaperPayload {
 }
 
 export const STORAGE_KEY_PENDING_PIN = 'refpin_pending_pin';
-export const STORAGE_KEY_TRANSLATE_CONFIG = 'refpin_translate_config';
+export { STORAGE_KEY_TRANSLATE_CONFIG } from '../services/translator';
 
 export { DEFAULT_TRANSLATE_CONFIG } from '../services/translator';
 export type { TranslateConfig, TranslateProvider, TranslateTargetLang } from '../services/translator';
@@ -100,7 +106,8 @@ export type ExtensionMessage =
       item: CompanionPinItem;
       openSidePanel?: boolean;
     }
-  | { type: 'REFPIN_READER_PING' | 'REFPIN_BADGE_STATE' | 'REFPIN_DISMISS_BADGE' | 'REFPIN_BADGE_PDF' }
+  | { type: 'REFPIN_READER_PING' | 'REFPIN_BADGE_STATE' | 'REFPIN_DISMISS_BADGE' }
+  | { type: 'REFPIN_BADGE_PDF'; pdfUrl?: string }
   | { type: 'REFPIN_FETCH_REMOTE_PDF'; url: string }
   | { type: 'REFPIN_OPEN_SIDEPANEL' }
   | { type: 'REFPIN_SIDEPANEL_PUSH_PIN'; tabUrl: string; item: CompanionPinItem }

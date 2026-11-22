@@ -44,7 +44,7 @@ const TABS = [
   { key: 'reference', label: 'filter.references' },
 ] as const satisfies ReadonlyArray<{ key: DrawerTab; label: MessageKey }>;
 
-function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: OutlineItem) => void }) {
+export function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: OutlineItem) => void }) {
   const [expanded, setExpanded] = useState(false);
   return <li>
     <div className="flex items-center gap-1 rounded-md hover:bg-paper-bg">
@@ -54,7 +54,7 @@ function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: Out
             <ChevronRight size={13} className={expanded ? 'rotate-90' : ''} />
           </button>
         : <span className="w-5 shrink-0" />}
-      <button type="button" disabled={item.pageNumber === null} onClick={() => onJump(item)}
+      <button type="button" disabled={item.pageNumber === null && !item.domAnchorId} onClick={() => onJump(item)}
         className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-1 text-left text-xs text-paper-ink disabled:text-paper-muted">
         <span className="min-w-0 flex-1 break-words">{item.title}</span>
         {item.pageNumber !== null && <span className="rounded-full border border-paper-border px-1.5 font-mono text-[10px] text-paper-muted">{item.pageNumber}</span>}

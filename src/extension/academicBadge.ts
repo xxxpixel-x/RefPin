@@ -4,6 +4,14 @@ import { inspectTabUrl } from './urlRules';
 export function mountAcademicBadge(activate: () => void): () => void {
   const paper = inspectTabUrl(location.href);
   if (paper.kind !== 'academic-html' && paper.kind !== 'academic-abstract') return () => {};
+  const metaPdf = document.querySelector<HTMLMetaElement>('meta[name="citation_pdf_url"]')?.content;
+  let pdfUrl = paper.pdfUrl;
+  if (!pdfUrl && metaPdf) {
+    try {
+      const url = new URL(metaPdf, document.baseURI);
+      if (['http:', 'https:'].includes(url.protocol)) pdfUrl = url.href;
+    } catch { /* Ignore malformed publisher metadata. */ }
+  }
   let closed = false;
   const host = document.createElement('div');
   const shadow = host.attachShadow({ mode: 'closed' });
@@ -38,7 +46,7 @@ export function mountAcademicBadge(activate: () => void): () => void {
     close();
   };
   pdf.onclick = event => {
-    if (event.isTrusted) void chrome.runtime.sendMessage({ type: 'REFPIN_BADGE_PDF' }).catch(() => {});
+    if (event.isTrusted) void chrome.runtime.sendMessage({ type: 'REFPIN_BADGE_PDF', pdfUrl }).catch(() => {});
   };
   dismiss.onclick = event => {
     if (!event.isTrusted) return;
@@ -47,7 +55,7 @@ export function mountAcademicBadge(activate: () => void): () => void {
     close();
   };
   bar.append(primary);
-  if (paper.pdfUrl) bar.append(pdf);
+  if (pdfUrl) bar.append(pdf);
   bar.append(dismiss);
   shadow.append(style, bar);
   void Promise.all([chrome.storage.local.get(mutedKey), chrome.runtime.sendMessage<{ dismissed: boolean }>({ type: 'REFPIN_BADGE_STATE' })])

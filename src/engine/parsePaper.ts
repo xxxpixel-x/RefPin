@@ -1,3 +1,4 @@
+import { buildBacklinksMap } from './backlinks';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { InlineCitation, OutlineItem, PaperAsset, ReferenceEntry } from '../types/paper';
 import { extractPageLines } from './pdfLoader';
@@ -10,6 +11,7 @@ import { extractPdfOutline } from './outlineParser';
 import { cachePageLines } from './pageLinesCache';
 
 export interface ParsePaperResult extends GlossaryResult {
+  backlinksMap: ReturnType<typeof buildBacklinksMap>;
   outline: OutlineItem[];
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
@@ -71,5 +73,5 @@ export async function parsePaper(
   const isImageOnly = doc.numPages > 0 && Object.values(linesByPage).every((lines) => !lines.length);
   onProgress(100);
 
-  return { outline, assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
+  return { backlinksMap: buildBacklinksMap(citationsByPage), outline, assetsMap, referencesMap, citationsByPage, isImageOnly, ...glossary };
 }

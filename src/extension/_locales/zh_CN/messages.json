@@ -3,12 +3,13 @@
     "message": "RefPin · 浮页"
   },
   "extDescription": {
-    "message": "阅读网页论文或 PDF 时，悬停预览引用，钉住多张图表并排对照，也可以自由框选需要的区域。"
+    "message": "在全屏阅读器或伴读侧栏中精读论文，查看引用回链、钉板、目录和术语，导出 Markdown 学习笔记。"
   },
   "actionTitle": {
     "message": "打开 / 收起 RefPin 浮页伴读侧边栏"
   },
   "menuAllowReader": { "message": "允许此标签页中的 RefPin 阅读器下载学术 PDF" },
+  "menuOpenFullReader": { "message": "在 RefPin 全屏阅读器中打开" },
   "menuOpenPanel": {
     "message": "打开 RefPin 浮页伴读侧边栏"
   },

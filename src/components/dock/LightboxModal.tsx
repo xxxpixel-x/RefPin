@@ -132,10 +132,6 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
           }}
         />
       </div>
-
-      <p className="shrink-0 px-6 pb-4 text-center text-[11px] text-white/50">
-        {t('lightbox.help')}
-      </p>
     </div>
   );
 }

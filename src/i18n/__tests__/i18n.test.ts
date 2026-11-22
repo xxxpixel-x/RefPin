@@ -1,3 +1,5 @@
+import enChrome from '../../extension/_locales/en/messages.json';
+import zhChrome from '../../extension/_locales/zh_CN/messages.json';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { en } from '../locales/en';
 import { zh } from '../locales/zh';
@@ -15,6 +17,14 @@ describe('RefPin interface language', () => {
     for (const key of Object.keys(en) as MessageKey[]) {
       expect(zh[key].trim(), key).not.toBe('');
       expect(tokens(zh[key]), key).toEqual(tokens(en[key]));
+    }
+  });
+
+  it('ships matching native extension messages, including the full reader context menu', () => {
+    expect(Object.keys(zhChrome).sort()).toEqual(Object.keys(enChrome).sort());
+    for (const catalog of [enChrome, zhChrome]) {
+      expect(catalog.menuOpenFullReader.message.trim()).toBeTruthy();
+      for (const item of Object.values(catalog)) expect(item.message.trim()).toBeTruthy();
     }
   });
 

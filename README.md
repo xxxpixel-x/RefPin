@@ -1,6 +1,6 @@
-# RefPin · v0.3.0
+# RefPin · v0.4.0
 
-**Keep the figure beside the paragraph that cites it.** RefPin is a local-first academic PDF reader and a Chrome companion side panel. Hover over a citation for a preview, or pin several figures while you follow the argument.
+**Keep the figure beside the paragraph that cites it.** RefPin is a local-first academic PDF reader with a Chrome extension that includes a companion side panel and a full-screen workspace. Hover over a citation for a preview, or pin several figures while you follow the argument.
 
 English | [简体中文](./README.zh-CN.md)
 
@@ -20,7 +20,7 @@ A paragraph mentions Fig. 2, compares it with Table 1, and applies Eq. (3). By t
 
 ## Key features
 
-| In the web reader | What you can do |
+| In the full reader (web or extension) | What you can do |
 | --- | --- |
 | Dual-path citation recognition | Follow native PDF links and detect citations in the text layer. Patterns cover numeric references such as [14], author–year citations, superscripts, and English and Chinese figure, table, and equation labels. |
 | Hover Peek and glossary | Preview a figure, table, equation, or reference without turning the page. Hover over a defined acronym such as MHA to see its expansion, the defining sentence, and its source page. |
@@ -35,9 +35,11 @@ A paragraph mentions Fig. 2, compares it with Table 1, and applies Eq. (3). By t
 | Local reading archive | Recent papers remembers your page, zoom, scroll position, and pins in IndexedDB. Crops are stored as coordinates and regenerated when the paper reopens. |
 | Long-document rendering | A shared `IntersectionObserver` tracks nearby pages. Off-screen pages release their canvas buffers and text layers while retaining their place in the layout. |
 
-**The Chrome MV3 companion** works alongside the paper on arXiv, OpenReview, ACL Anthology, IEEE, Nature, Springer, PubMed/PMC, and local PDFs. On article pages it reads the available HTML. For a PDF, the panel can extract assets or capture a region of the visible tab. Optional translation offers original, translation-only, and bilingual views. **EN / 中文** switches the panel, the on-page controls, and the bilingual PDF reader together. The browser provides the language for the toolbar title and native context menus.
+**Companion Side Panel.** Keep the publisher’s HTML or PDF open and switch between **Pins**, **Assets**, **Outline**, and **Glossary**. Pin figures, tables, equations, algorithms, theorems, and sections. Citation backlinks return to the mention in HTML or open its PDF page in the Full Reader. Export pins as Markdown or an Obsidian ZIP. Reference cards offer offline BibTeX and optional OpenAlex/Crossref enrichment. Press **Ctrl/Cmd+K** to jump, pin, export, or switch themes and languages.
 
-On supported paper pages, select **Read in RefPin** to activate the companion. The arrow opens bilingual PDF reading when a PDF is available. Dismiss the badge for the tab with ×, or Shift-click × to mute the site.
+**Full-screen RefPin Reader.** Select **Full Reader** in the panel, the academic badge’s **↗**, or **Open in RefPin Full Reader** in the page or link context menu. PDF Translate also opens the current page in the Reader. The extension includes the entire workspace in `reader.html`, with native PDF loading, search, the pin dock, and a local reading archive. Light, sepia, and dark themes sync across extension views. Choose **Original color** on a preview to inspect a figure’s original colors.
+
+On supported paper pages, **Read in RefPin** activates the companion. Dismiss the badge for the tab with ×, or Shift-click × to mute the site. The **EN / 中文** setting applies to the panel, Reader, PDF Translate and on-page controls. Native context menus follow the browser language.
 
 ## Cross-platform support
 
@@ -93,7 +95,7 @@ For GitHub Pages, select **GitHub Actions** under **Settings → Pages → Sourc
 | Key | Where | Action |
 | --- | --- | --- |
 | `Ctrl/Cmd+F` | Web reader | Find text in the paper. |
-| `Ctrl/Cmd+K` | Web reader | Open or close the command palette. |
+| `Ctrl/Cmd+K` | Full Reader and Side Panel | Open or close the command palette. |
 | `↑/↓`, `Enter`, `Shift+Enter` | Command palette | Select a result, execute it, or pin an asset or reference in place. |
 | `Alt+←/→` | Web reader | Move backward or forward through jump history. |
 | `R`, `Alt+↑/↓` | Web reader | Toggle the reading ruler or move it up or down a line. |
@@ -108,15 +110,15 @@ For GitHub Pages, select **GitHub Actions** under **Settings → Pages → Sourc
 
 The core reader works **100% offline** when served locally. PDF.js, its worker, fonts, character maps, and sample PDFs ship with the project. Parsing, previews, glossary extraction, backlinks, and local archiving all run in the browser. RefPin has no upload server or analytics. Opening an online paper retrieves it from its publisher.
 
-Note export and offline BibTeX generation run on your device. Reference enrichment is off by default. Enabling it sends the DOI or title (citation text when the title is missing) to OpenAlex and Crossref and caches up to 200 matches locally. Opening a remote paper uses the extension for supported academic hosts, up to 40 MiB, or a direct browser fetch. If the publisher blocks access, download and drop the file or explicitly retry with your own proxy. On a self-hosted HTTPS reader, use the extension’s context menu to allow academic PDF downloads in that tab.
+Note export and offline BibTeX generation run on your device. Reference enrichment is off by default. Enabling it sends the DOI or title (citation text when the title is missing) to OpenAlex and Crossref and caches up to 200 matches locally. The embedded Reader fetches the selected HTTP(S) PDF directly with extension host permissions. Local file URLs use the browser’s file-access setting. The Attention sample opens from arXiv on page 4. When exporting HTML figures, the ZIP may retrieve their source images. The hosted web reader can use the extension bridge for supported academic hosts up to 40 MiB, or fetch a PDF directly. If the publisher blocks access, download and drop the file or explicitly retry with your own proxy. On a self-hosted HTTPS reader, use the extension’s context menu to allow academic PDF downloads in that tab.
 
 The web archive keeps up to 30 reading records and caches up to five local PDFs of 15 MiB or less each. Larger or evicted files can be reselected to restore their pins and position. Clearing browser site data clears the archive.
 
-Translation is opt-in. In the web reader, only the selection and configured credentials go to your chosen endpoint. An Ollama endpoint on localhost keeps the request on your device. In the extension, requesting page translation sends extracted text in batches. The free channel uses unofficial Microsoft Edge, Google Translate, and MyMemory endpoints on a best-effort basis. Limits and availability vary. Choose **Custom API** and supply a key to use your own provider. Leaving its key empty falls back to the free channel. Settings and keys are stored in this browser profile.
+Translation is opt-in. In the web reader, only the selection and configured credentials go to your chosen endpoint. An Ollama endpoint on localhost keeps the request on your device. In the extension, selection translation and page translation share provider settings. Free mode works without a key and sends the requested text when you select Translate. The free channel uses unofficial Microsoft Edge, Google Translate, and MyMemory endpoints on a best-effort basis. Limits and availability vary. Choose **Custom API** and supply a key to use your own provider. Leaving its key empty falls back to the free channel. Settings and keys are stored in this browser profile.
 
 | Extension permission | Purpose |
 | --- | --- |
-| `sidePanel`, `contextMenus` | Display the companion and offer open-panel and snipping actions. |
+| `sidePanel`, `contextMenus` | Display the companion and offer Full Reader, panel, and snipping actions. |
 | `tabs`, `activeTab` | Follow the active paper, switch the PDF translation view, and capture the visible tab for a requested snip. |
 | `storage` | Keep local settings and the interface language, and pass a pending pin to a newly opened panel. |
 | `<all_urls>` | Read paper pages across publishers, fetch linked PDFs, and reach the selected translation endpoint. The content script runs on HTTP(S) pages. Local PDF file access has its own browser switch. |
