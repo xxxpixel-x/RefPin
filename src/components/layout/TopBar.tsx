@@ -1,3 +1,5 @@
+import { LanguageToggle } from '../../i18n/LanguageToggle';
+import { t } from '../../i18n/core';
 import { useState } from 'react';
 import {
   FileUp,
@@ -49,10 +51,10 @@ export function TopBar({
         type="button"
         onClick={onToggleDrawer}
         className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
-        title="展开/收起资产墙（快捷键 [）"
+        title={t('reader.toggleAssets')}
       >
         <PanelLeft className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">资产</span>
+        <span className="hidden sm:inline">{t('reader.assets')}</span>
         <span className="rounded bg-paper-goldbg px-1 font-mono text-[10px] text-paper-goldtext">
           {assetCount}
         </span>
@@ -79,7 +81,7 @@ export function TopBar({
           }}
           placeholder={String(currentPage)}
           className="w-9 bg-transparent text-center font-mono text-xs text-paper-ink outline-none placeholder:text-paper-ink"
-          aria-label="跳转页码"
+          aria-label={t('reader.goToPage')}
         />
         <span className="font-mono text-xs text-paper-muted">/ {numPages}</span>
       </span>
@@ -89,7 +91,7 @@ export function TopBar({
           type="button"
           onClick={() => onZoom(scale - 0.15)}
           className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink"
-          aria-label="缩小"
+          aria-label={t('reader.zoomOut')}
         >
           <Minus className="h-3.5 w-3.5" />
         </button>
@@ -100,7 +102,7 @@ export function TopBar({
           type="button"
           onClick={() => onZoom(scale + 0.15)}
           className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink"
-          aria-label="放大"
+          aria-label={t('reader.zoomIn')}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
@@ -115,16 +117,17 @@ export function TopBar({
             ? 'bg-paper-gold text-white shadow-sm'
             : 'border border-paper-border text-paper-ink hover:bg-paper-bg',
         )}
-        title="自由框选钉住（快捷键 S）"
+        title={t('snip.shortcut')}
       >
         <Scissors className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">框选钉住</span>
+        <span className="hidden sm:inline">{t('snip.tool')}</span>
       </button>
 
       <div className="ml-auto flex items-center gap-2">
+        <LanguageToggle />
         <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">
           <FileUp className="h-3.5 w-3.5" />
-          <span className="hidden xl:inline">换一篇</span>
+          <span className="hidden xl:inline">{t('reader.switchFile')}</span>
           <input
             type="file"
             accept="application/pdf"
@@ -142,7 +145,7 @@ export function TopBar({
           onClick={onReset}
           className="text-[11px] text-paper-muted transition hover:text-paper-ink"
         >
-          首页
+          {t('reader.home')}
         </button>
       </div>
 

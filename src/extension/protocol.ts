@@ -1,3 +1,4 @@
+import type { DisplayMessage } from '../i18n/types';
 import type { TranslateConfig } from '../services/translator';
 import type { NormalizedRect } from '../types/paper';
 
@@ -34,6 +35,7 @@ export interface CompanionPinItem {
   kind: CompanionAssetKind | 'reference' | 'snip';
   source: 'dom' | 'pdf' | 'snip';
   title: string;
+  automaticTitle?: boolean;
   subtitle?: string;
   imageUrl?: string;
   tableHtml?: string;
@@ -72,7 +74,7 @@ export interface PageTranslateStatus {
   done: number;
   total: number;
   running: boolean;
-  error?: string;
+  error?: DisplayMessage;
 }
 
 export interface PendingPinRecord {

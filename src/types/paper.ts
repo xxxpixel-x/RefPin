@@ -86,6 +86,7 @@ export interface PinnedItem {
   id: string;
   kind: CitationKind | 'snip';
   title: string;
+  automaticTitle?: boolean;
   subtitle?: string;
   pageNumber: number;
   imageUrl?: string;
@@ -101,7 +102,7 @@ export interface PinnedItem {
 }
 
 export type PersistedPinnedItem = Pick<PinnedItem,
-  'id' | 'kind' | 'title' | 'subtitle' | 'pageNumber' | 'cropRect' |
+  'id' | 'kind' | 'title' | 'automaticTitle' | 'subtitle' | 'pageNumber' | 'cropRect' |
   'originalCropRect' | 'collapsed' | 'reference' | 'createdAt'
 >;
 

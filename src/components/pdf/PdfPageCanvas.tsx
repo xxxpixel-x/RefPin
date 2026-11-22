@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
@@ -41,6 +42,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   onMentionLeave,
   onMentionClick,
 }: Props) {
+  const { t } = useI18n();
   const mentions = useMemo(() => [...citations, ...glossaryMentions], [citations, glossaryMentions]);
   const textRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -196,7 +198,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
             <button
               key={mention.id}
               type="button"
-              aria-label={`查看${'term' in mention ? '定义' : '引用'} ${mention.rawText}`}
+              aria-label={t('term' in mention ? 'peek.showDefinition' : 'peek.showCitation', { name: mention.rawText })}
               className={`absolute border-b p-0 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-paper-gold ${
                 'term' in mention
                   ? 'border-dotted border-paper-muted/60 bg-transparent data-[hovered]:border-paper-gold data-[hovered]:bg-paper-gold/10'

@@ -1,3 +1,4 @@
+import { LocalizedError, message } from '../i18n/core';
 import type { PaperArchive, PersistedPinnedItem, PinnedItem } from '../types/paper';
 
 export const MAX_PDF_BYTES = 15 * 1024 * 1024;
@@ -6,7 +7,7 @@ const PDF_LIMIT = 5;
 
 export function stripPinnedItemForStorage(item: PinnedItem): PersistedPinnedItem {
   const { id, kind, title, subtitle, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt } = item;
-  return { id, kind, title, subtitle, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt };
+  return { id, kind, title, ...(item.automaticTitle && { automaticTitle: true }), subtitle, pageNumber, cropRect, originalCropRect, collapsed, reference, createdAt };
 }
 
 export function computeLruEvictions(
@@ -26,7 +27,7 @@ function openDatabase() {
     let blocked = false;
     request.onblocked = () => {
       blocked = true;
-      reject(new Error('Paper archive is locked by another tab'));
+      reject(new LocalizedError(message('archive.locked')));
     };
     request.onupgradeneeded = () => {
       request.result.createObjectStore('archives', { keyPath: 'paperHash' });

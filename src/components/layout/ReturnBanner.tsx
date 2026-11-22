@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { CornerUpLeft, X } from 'lucide-react';
 import type { JumpAnchor } from '../../types/paper';
 
@@ -19,13 +20,13 @@ export function ReturnBanner({ anchor, onReturn, onDismiss }: ReturnBannerProps)
           className="flex items-center gap-1.5 pr-1 transition hover:text-paper-goldsoft"
         >
           <CornerUpLeft className="h-3.5 w-3.5" />
-          回到第 {anchor.fromPage} 页刚才读的位置
+          {t('reader.returnToPage', { page: anchor.fromPage })}
         </button>
         <button
           type="button"
           onClick={onDismiss}
           className="rounded-full p-1 text-white/60 transition hover:bg-white/10 hover:text-white"
-          aria-label="关闭返回提示"
+          aria-label={t('reader.dismissReturn')}
         >
           <X className="h-3 w-3" />
         </button>

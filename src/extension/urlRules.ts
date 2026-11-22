@@ -1,3 +1,4 @@
+import { t } from '../i18n/core';
 export interface ResolvedPaperUrl {
   pdfUrl?: string;
   kind: 'pdf' | 'academic-html' | 'academic-abstract' | 'other';
@@ -14,6 +15,7 @@ const KNOWN_ACADEMIC_HTML_HOSTS: Array<{ match: RegExp; label: string }> = [
   { match: /^dl\.acm\.org$/i, label: 'ACM DL' },
   { match: /^(?:www\.)?sciencedirect\.com$/i, label: 'ScienceDirect' },
   { match: /^onlinelibrary\.wiley\.com$/i, label: 'Wiley' },
+  { match: /^pubmed\.ncbi\.nlm\.nih\.gov$/i, label: 'PubMed' },
   { match: /^pmc\.ncbi\.nlm\.nih\.gov$|^www\.ncbi\.nlm\.nih\.gov$/i, label: 'PubMed Central' },
   { match: /^(?:www\.)?biorxiv\.org$/i, label: 'bioRxiv' },
   { match: /^(?:www\.)?medrxiv\.org$/i, label: 'medRxiv' },
@@ -23,8 +25,8 @@ const KNOWN_ACADEMIC_HTML_HOSTS: Array<{ match: RegExp; label: string }> = [
   { match: /^proceedings\.mlr\.press$/i, label: 'PMLR' },
   { match: /^openaccess\.thecvf\.com$/i, label: 'CVF' },
   { match: /^huggingface\.co$/i, label: 'HF Papers' },
-  { match: /(?:^|\.)cnki\.net$/i, label: '知网 CNKI' },
-  { match: /(?:^|\.)wanfangdata\.com\.cn$/i, label: '万方数据' },
+  { match: /(?:^|\.)cnki\.net$/i, get label() { return t('site.cnki'); } },
+  { match: /(?:^|\.)wanfangdata\.com\.cn$/i, get label() { return t('site.wanfang'); } },
   { match: /(?:^|\.)readpaper\.com$/i, label: 'ReadPaper' },
   { match: /^(?:www\.)?mdpi\.com$/i, label: 'MDPI' },
   { match: /^(?:www\.)?frontiersin\.org$/i, label: 'Frontiers' },
@@ -91,7 +93,7 @@ export function isDirectPdfUrl(rawUrl: string): boolean {
  */
 export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
   const url = safeParseUrl(rawUrl);
-  if (!url) return { kind: 'other', siteLabel: '网页' };
+  if (!url) return { kind: 'other', siteLabel: t('site.web') };
 
   const host = url.hostname.toLowerCase();
   const path = url.pathname;
@@ -111,7 +113,7 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
     return {
       pdfUrl,
       kind: 'pdf',
-      siteLabel: url.protocol === 'file:' ? '本地 PDF' : knownLabel || host.replace(/^www\./, ''),
+      siteLabel: url.protocol === 'file:' ? t('site.localPdf') : knownLabel || host.replace(/^www\./, ''),
       suggestedTitle,
     };
   }
@@ -142,7 +144,7 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
     return {
       pdfUrl: id ? `https://${host}/pdf/${id}.pdf` : undefined,
       kind: 'academic-abstract',
-      siteLabel: 'arXiv 摘要页',
+      siteLabel: t('site.arxivAbstract'),
       suggestedTitle: id ? `arXiv-${id}.pdf` : undefined,
     };
   }
@@ -175,7 +177,7 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
 
   return {
     kind: 'other',
-    siteLabel: host.replace(/^www\./, '') || '网页',
+    siteLabel: host.replace(/^www\./, '') || t('site.web'),
   };
 }
 
@@ -188,7 +190,7 @@ export function deriveDisplayName(rawUrl: string, explicitTitle?: string): strin
       .trim();
   }
   const url = safeParseUrl(rawUrl);
-  if (!url) return '当前论文';
+  if (!url) return t('site.currentPaper');
   const seg = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || url.hostname);
-  return seg || '当前论文';
+  return seg || t('site.currentPaper');
 }

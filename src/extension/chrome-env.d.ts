@@ -1,6 +1,11 @@
 /// <reference types="vite/client" />
 
 declare namespace chrome {
+  namespace i18n {
+    function getUILanguage(): string;
+    function getMessage(name: string): string;
+  }
+
   namespace runtime {
     const id: string;
     const lastError: { message?: string } | undefined;
@@ -10,6 +15,7 @@ declare namespace chrome {
       callback?: (response: TResponse) => void,
     ): Promise<TResponse>;
     interface MessageSender {
+      id?: string;
       tab?: tabs.Tab;
       frameId?: number;
       url?: string;
@@ -43,6 +49,12 @@ declare namespace chrome {
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
     }
+    const onChanged: {
+      addListener(callback: (
+        changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+        areaName: string,
+      ) => void): void;
+    };
     const local: StorageArea;
     const session: StorageArea;
   }

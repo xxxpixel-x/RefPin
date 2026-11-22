@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../i18n/types';
+import { t } from '../../i18n/core';
 import {
   useCallback,
   useEffect,
@@ -72,24 +74,23 @@ const MIN_DOCK_HEIGHT = 148;
 const MIN_MAIN_WIDTH = 220;
 const MIN_MAIN_HEIGHT = 180;
 
-const POSITION_OPTIONS: {
+const POSITION_OPTIONS = [
+  { key: 'left', hint: 'dock.moveLeft', Icon: PanelLeft },
+  { key: 'right', hint: 'dock.moveRight', Icon: PanelRight },
+  { key: 'top', hint: 'dock.moveTop', Icon: PanelTop },
+  { key: 'bottom', hint: 'dock.moveBottom', Icon: PanelBottom },
+] as const satisfies ReadonlyArray<{
   key: DockPosition;
-  label: string;
-  hint: string;
+  hint: MessageKey;
   Icon: typeof PanelRight;
-}[] = [
-  { key: 'left', label: '左侧', hint: '停靠到左侧', Icon: PanelLeft },
-  { key: 'right', label: '右侧', hint: '停靠到右侧', Icon: PanelRight },
-  { key: 'top', label: '顶部', hint: '停靠到顶部', Icon: PanelTop },
-  { key: 'bottom', label: '底部', hint: '停靠到底部', Icon: PanelBottom },
-];
+}>;
 
-const DROP_LABEL: Record<DockPosition, string> = {
-  left: '松开以停靠至左侧',
-  right: '松开以停靠至右侧',
-  top: '松开以停靠至顶部',
-  bottom: '松开以停靠至底部',
-};
+const DROP_LABEL = {
+  left: 'dock.dropLeft',
+  right: 'dock.dropRight',
+  top: 'dock.dropTop',
+  bottom: 'dock.dropBottom',
+} as const satisfies Record<DockPosition, MessageKey>;
 
 function computeNearestEdge(clientX: number, clientY: number, rect: DOMRect): DockPosition {
   const nx = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
@@ -611,8 +612,8 @@ export function PinDock({
           <div
             role="separator"
             aria-orientation={isHorizontal ? 'horizontal' : 'vertical'}
-            aria-label={isHorizontal ? '拖拽调整钉板高度' : '拖拽调整钉板宽度'}
-            title={isHorizontal ? '按住上下拖拽调整高度' : '按住左右拖拽调整宽度'}
+            aria-label={isHorizontal ? t('dock.resizeHeight') : t('dock.resizeWidth')}
+            title={isHorizontal ? t('dock.dragVertical') : t('dock.dragHorizontal')}
             onMouseDown={startResize}
             className={clsx(
               'group/resize absolute z-20 flex items-center justify-center',
@@ -634,13 +635,13 @@ export function PinDock({
         {/* 标题栏：支持按住拖动停靠到页面上下左右 + 快捷切换按钮 */}
         <div
           onMouseDown={startDockDrag}
-          title="按住空白处拖动，可将钉板停靠到页面上 / 下 / 左 / 右"
+          title={t('dock.dragToEdge')}
           className="flex h-10 shrink-0 cursor-grab select-none items-center gap-1.5 border-b border-paper-border px-2.5 active:cursor-grabbing"
         >
           <GripVertical className="h-3.5 w-3.5 shrink-0 text-paper-muted/70" />
           <Pin className="h-3.5 w-3.5 shrink-0 text-paper-gold" />
           <span className="truncate text-xs font-medium text-paper-ink">
-            对照钉板
+            {t('dock.title')}
             <span className="ml-1 font-mono text-[10px] text-paper-muted">({items.length})</span>
           </span>
 
@@ -653,8 +654,8 @@ export function PinDock({
                     key={key}
                     type="button"
                     onClick={() => onPositionChange(key)}
-                    title={hint}
-                    aria-label={hint}
+                    title={t(hint)}
+                    aria-label={t(hint)}
                     className={clsx(
                       'rounded p-1 transition',
                       active
@@ -675,17 +676,17 @@ export function PinDock({
                   dismissZoomImmediately();
                   onClear();
                 }}
-                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-muted transition hover:bg-white hover:text-red-500"
-                title="清空全部卡片"
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-muted transition hover:bg-white hover:text-paper-gold"
+                title={t('dock.clearAll')}
               >
                 <Eraser className="h-3 w-3" />
-                {(isHorizontal || clampedWidth >= 320) && <span>清空</span>}
+                {(isHorizontal || clampedWidth >= 320) && <span>{t('common.clear')}</span>}
               </button>
             )}
           </div>
         </div>
 
-        <section aria-label="当前页自动伴读" className={clsx(
+        <section aria-label={t('dock.autoSync')} className={clsx(
           'flex shrink-0 flex-col border-b border-paper-border bg-paper-bg',
           showSynced && (isHorizontal ? 'h-24 max-h-[46%]' : 'h-44 max-h-[42%]'),
         )}>
@@ -694,10 +695,10 @@ export function PinDock({
               onClick={() => setSyncCollapsed(value => !value)}
               className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-paper-ink disabled:text-paper-muted">
               <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !showSynced && '-rotate-90')} />
-              <span className="truncate">当前页自动伴读 / Auto-Sync</span>
+              <span className="truncate">{t('dock.autoSyncTitle')}</span>
               <span className="rounded border border-paper-border bg-white px-1 font-mono text-[10px]">{synced.length}</span>
             </button>
-            <button type="button" role="switch" aria-checked={enabled} aria-label="当前页自动伴读"
+            <button type="button" role="switch" aria-checked={enabled} aria-label={t('dock.autoSync')}
               onClick={() => setEnabled(!enabled)}
               className={clsx('ml-auto flex h-4 w-7 shrink-0 items-center rounded-full px-0.5', enabled ? 'bg-paper-gold' : 'bg-paper-muted')}>
               <span className={clsx('h-3 w-3 rounded-full bg-white transition-transform', enabled && 'translate-x-3')} />
@@ -705,27 +706,27 @@ export function PinDock({
           </div>
           {showSynced && <div className={clsx('min-h-0 overflow-auto px-2.5 pb-2',
             isHorizontal ? 'flex gap-2' : 'space-y-1.5')}>
-            {synced.length === 0 && <p className="px-1 py-2 text-[11px] text-paper-muted">P.{currentPage} 没有待钉住的跨页图表或公式</p>}
+            {synced.length === 0 && <p className="px-1 py-2 text-[11px] text-paper-muted">{t('dock.noRelatedAssets', { page: currentPage })}</p>}
             {synced.map(asset => (
               <article key={asset.key} className={clsx('flex items-center gap-2 rounded-md border border-paper-border bg-white p-1.5',
                 isHorizontal && 'w-56 shrink-0')}>
-                <button type="button" disabled={!asset.imageUrl} aria-label={`放大 ${asset.label}`}
+                <button type="button" disabled={!asset.imageUrl} aria-label={t('asset.enlarge', { name: asset.label })}
                   onClick={() => onPreviewAsset(asset)}
                   className="h-9 w-12 shrink-0 overflow-hidden rounded border border-paper-border bg-paper-bg">
                   {asset.imageUrl ? <img alt={asset.label} src={asset.imageUrl} className="h-full w-full object-contain" />
-                    : <span className="text-[10px] text-paper-muted">无缩略图</span>}
+                    : <span className="text-[10px] text-paper-muted">{t('asset.noThumbnail')}</span>}
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[11px] font-semibold text-paper-ink">{asset.label}</p>
-                  <button type="button" aria-label={`跳至 ${asset.label} · P.${asset.pageNumber}`}
+                  <button type="button" aria-label={t('asset.jumpTo', { name: asset.label, page: asset.pageNumber })}
                     onClick={() => onJump(asset.pageNumber, asset.cropRect)}
                     className="flex items-center gap-0.5 font-mono text-[10px] text-paper-muted hover:text-paper-gold">
-                    P.{asset.pageNumber}<ArrowUpRight size={11} />
+                    {t('reader.page', { page: asset.pageNumber })}<ArrowUpRight size={11} />
                   </button>
                 </div>
-                <button type="button" onClick={() => onPinAsset(asset)} aria-label={`钉住 ${asset.label}`}
+                <button type="button" onClick={() => onPinAsset(asset)} aria-label={t('asset.pinName', { name: asset.label })}
                   className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-[11px] font-medium text-white">
-                  <Pin size={11} />钉住
+                  <Pin size={11} />{t('common.pin')}
                 </button>
               </article>
             ))}
@@ -762,13 +763,9 @@ export function PinDock({
                 <Pin className="h-5 w-5" />
               </span>
               <div className={clsx(isHorizontal ? 'max-w-md text-left' : 'mt-3')}>
-                <p className="text-[11px] font-medium text-paper-ink">钉板还是空的</p>
+                <p className="text-[11px] font-medium text-paper-ink">{t('dock.empty')}</p>
                 <p className="mt-1 text-[10px] leading-relaxed text-paper-muted">
-                  点击正文里的金色
-                  <span className="mx-0.5 rounded bg-paper-goldbg px-1 text-paper-goldtext">
-                    Fig. / Table / [14]
-                  </span>
-                  ，或用顶部「框选钉住」，把要对照的图钉在这里，悬停卡片可自动放大。
+                  {t('dock.emptyHelp')}
                 </p>
               </div>
             </div>
@@ -866,7 +863,7 @@ export function PinDock({
               )}
             >
               <span className="rounded-full border border-paper-goldborder bg-white/95 px-3.5 py-1.5 text-xs font-medium text-paper-goldtext shadow-float">
-                {DROP_LABEL[dragDropPreview.target]}
+                {t(DROP_LABEL[dragDropPreview.target])}
               </span>
             </div>
           </div>,

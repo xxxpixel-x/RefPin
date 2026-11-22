@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Scissors, X } from 'lucide-react';
 
@@ -117,13 +118,13 @@ export function ViewportSnipModal({
       <div className="flex items-center justify-between border-b border-white/10 bg-paper-ink px-3 py-2.5 text-white">
         <span className="flex items-center gap-1.5 text-xs font-medium">
           <Scissors className="h-3.5 w-3.5 text-amber-400" />
-          框选区域
+          {t('snip.selectRegion')}
         </span>
         <button
           type="button"
           onClick={onCancel}
           className="rounded-md p-1 text-stone-300 transition hover:bg-white/10 hover:text-white"
-          aria-label="取消框选"
+          aria-label={t('snip.cancel')}
         >
           <X className="h-4 w-4" />
         </button>
@@ -137,7 +138,7 @@ export function ViewportSnipModal({
           <img
             ref={imgRef}
             src={screenshotUrl}
-            alt="当前论文画面"
+            alt={t('snip.currentView')}
             draggable={false}
             className="block max-h-[68vh] max-w-full object-contain"
           />
@@ -157,7 +158,7 @@ export function ViewportSnipModal({
 
       <div className="flex items-center justify-between gap-2 border-t border-white/10 bg-paper-ink px-3 py-2.5">
         <span className="text-[11px] text-stone-400">
-          {canConfirm ? 'Enter 确认' : '拖拽框选'}
+          {canConfirm ? t('snip.confirmEnter') : t('snip.drag')}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -165,7 +166,7 @@ export function ViewportSnipModal({
             onClick={onCancel}
             className="rounded-lg border border-white/15 px-2.5 py-1 text-xs text-stone-300 transition hover:bg-white/10"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -174,7 +175,7 @@ export function ViewportSnipModal({
             className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1 text-xs font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Check className="h-3.5 w-3.5" />
-            钉入对照板
+            {t('snip.pin')}
           </button>
         </div>
       </div>

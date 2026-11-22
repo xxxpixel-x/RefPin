@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "RefPin — Academic Paper Companion"
+  },
+  "extDescription": {
+    "message": "Preview citations, pin figures side by side, and snip regions while reading papers on the web or in a PDF."
+  },
+  "actionTitle": {
+    "message": "Toggle RefPin Companion Side Panel"
+  },
+  "menuOpenPanel": {
+    "message": "Open RefPin Companion Side Panel"
+  },
+  "menuStartSnip": {
+    "message": "RefPin: Free-Snip Region to Dock"
+  }
+}

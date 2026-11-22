@@ -211,6 +211,13 @@ async function run() {
     base: './',
     publicDir: false,
     plugins: [react()],
+    // The standard PDF.js build uses Promise.withResolvers, absent in Chrome 114.
+    resolve: {
+      alias: [
+        { find: /^pdfjs-dist$/, replacement: 'pdfjs-dist/legacy/build/pdf.mjs' },
+        { find: 'pdfjs-dist/build/pdf.worker.min.mjs?url', replacement: 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url' },
+      ],
+    },
     build: {
       outDir,
       emptyOutDir: true,
@@ -282,6 +289,7 @@ async function run() {
   );
 
   // 仅复制 pdf.js 必需的 cmaps 与 standard_fonts，刻意排除 public/samples/ 与独立阅读器页面
+  copyDir(path.join(rootDir, 'src/extension/_locales'), path.join(outDir, '_locales'));
   copyDir(path.join(rootDir, 'public/cmaps'), path.join(outDir, 'cmaps'));
   copyDir(
     path.join(rootDir, 'public/standard_fonts'),

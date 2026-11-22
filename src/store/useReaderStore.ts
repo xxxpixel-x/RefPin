@@ -1,3 +1,5 @@
+import type { DisplayMessage } from '../i18n/types';
+import { t } from '../i18n/core';
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { buildBacklinksMap } from '../engine/backlinks';
@@ -31,7 +33,7 @@ interface ReaderState {
   /* ---------- 解析 ---------- */
   isParsing: boolean;
   parseProgress: number;
-  parseError: string | null;
+  parseError: DisplayMessage | null;
   isImageOnly: boolean;
 
   /* ---------- 解析产物 ---------- */
@@ -62,7 +64,7 @@ interface ReaderState {
   setScale: (s: number) => void;
   setParsing: (parsing: boolean) => void;
   setParseProgress: (percent: number) => void;
-  setParseError: (message: string | null) => void;
+  setParseError: (message: DisplayMessage | null) => void;
   setParseResult: (payload: ParseResultPayload) => void;
 
   pinAsset: (asset: PaperAsset) => void;
@@ -256,7 +258,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     const item: PinnedItem = {
       id: reference.key,
       kind: 'reference',
-      title: reference.title || `参考文献 [${reference.index}]`,
+      automaticTitle: !reference.title,
+      title: reference.title || t('reference.number', { index: reference.index }),
       subtitle: reference.authors,
       pageNumber: reference.pageNumber,
       reference,
@@ -272,7 +275,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     const item: PinnedItem = {
       id: `snip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       kind: 'snip',
-      title: title || `自由截选 · P.${pageNumber}`,
+      automaticTitle: !title,
+      title: title || t('snip.pageTitle', { page: pageNumber }),
       subtitle,
       pageNumber,
       imageUrl,
@@ -348,7 +352,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   renamePinnedItem: (id, title) =>
     set((state) => ({
       pinnedItems: state.pinnedItems.map((item) =>
-        item.id === id ? { ...item, title } : item,
+        item.id === id ? { ...item, title, automaticTitle: false } : item,
       ),
     })),
 

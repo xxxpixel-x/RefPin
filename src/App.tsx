@@ -1,3 +1,5 @@
+import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from './i18n';
+import { pinTitle } from './i18n/pinTitle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
@@ -49,6 +51,11 @@ function findReferenceForCitation(
 }
 
 export default function App() {
+  const { t, locale } = useI18n();
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = t('reader.title');
+  }, [locale, t]);
   const pdfDoc = useReaderStore((state) => state.pdfDoc);
   const fileName = useReaderStore((state) => state.fileName);
   const numPages = useReaderStore((state) => state.numPages);
@@ -88,7 +95,7 @@ export default function App() {
   const highlightTimerRef = useRef<number | null>(null);
 
   const [bootingName, setBootingName] = useState<string | null>(null);
-  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<DisplayMessage | null>(null);
   const [initialPage, setInitialPage] = useState<number | undefined>(undefined);
   const [initialScrollTop, setInitialScrollTop] = useState<number>();
   const [recent, setRecent] = useState<PaperArchive[]>([]);
@@ -96,7 +103,7 @@ export default function App() {
   const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<DisplayMessage | null>(null);
 
   const flushArchive = useCallback(() => {
     window.clearTimeout(saveTimerRef.current);
@@ -143,8 +150,8 @@ export default function App() {
     return () => { active = false; };
   }, [pdfDoc, bootingName]);
 
-  const showToast = useCallback((message: string) => {
-    setToast(message);
+  const showToast = useCallback((notice: DisplayMessage) => {
+    setToast(notice);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
@@ -190,7 +197,7 @@ export default function App() {
         const fromCache = typeof input !== 'string' && 'paperHash' in input;
         const file = fromCache ? await loadPdfBlob(input.paperHash) : input;
         signal.throwIfAborted();
-        if (!file) throw new Error('本地缓存已清理，请重新选择同一 PDF，钉板和进度会自动恢复。');
+        if (!file) throw new LocalizedError(message('archive.cacheMissing'));
         // Snapshot the local file before pdf.js takes ownership of the ArrayBuffer.
         const cacheBlob = !fromCache && file instanceof Blob && file.size <= MAX_PDF_BYTES
           ? new Blob([file], { type: 'application/pdf' }) : null;
@@ -233,11 +240,11 @@ export default function App() {
       } catch (error) {
         if (signal.aborted) return;
         setBootingName(null);
-        const message = error instanceof Error && error.name === 'PasswordException'
-          ? '这份 PDF 需要密码。请在本地 PDF 阅读器中解锁，保存一份无密码的副本后重新打开。'
-          : error instanceof Error ? error.message : '论文打开失败，请确认 PDF 文件有效';
-        useReaderStore.getState().setParseError(message);
-        setBootError(message);
+        const notice = error instanceof Error && error.name === 'PasswordException'
+          ? message('reader.encrypted')
+          : describeError(error, message('reader.openFailed'));
+        useReaderStore.getState().setParseError(notice);
+        setBootError(notice);
       } finally {
         if (!signal.aborted) {
           useReaderStore.getState().setParsing(false);
@@ -250,7 +257,7 @@ export default function App() {
   const handleOpenFile = useCallback(
     (file: File) => {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
-        setBootError('请选择 .pdf 格式的论文文件');
+        setBootError(message('reader.choosePdf'));
         return;
       }
       void openPaper(file, file.name);
@@ -285,11 +292,11 @@ export default function App() {
       const store = useReaderStore.getState();
       if (store.pinnedItems.some((item) => item.id === asset.key)) {
         flashPinnedCard(asset.key);
-        showToast('已在对照钉板中');
+        showToast(message('dock.alreadyPinned'));
         return;
       }
       store.pinAsset(asset);
-      showToast(`已钉住 ${asset.label}`);
+      showToast(message('dock.pinnedName', { name: asset.label }));
     },
     [flashPinnedCard, showToast],
   );
@@ -299,11 +306,11 @@ export default function App() {
       const store = useReaderStore.getState();
       if (store.pinnedItems.some((item) => item.id === reference.key)) {
         flashPinnedCard(reference.key);
-        showToast(`文献 [${reference.index}] 已在钉板中`);
+        showToast(message('dock.alreadyPinnedRef', { index: reference.index }));
         return;
       }
       store.pinReference(reference);
-      showToast(`已钉住文献 [${reference.index}]`);
+      showToast(message('dock.pinnedRef', { index: reference.index }));
     },
     [flashPinnedCard, showToast],
   );
@@ -321,7 +328,7 @@ export default function App() {
         fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
         fromScrollLeft: viewerRef.current?.getScrollLeft() ?? 0,
         highlightRect: sourceRect,
-        label: `回到第 ${sourcePage ?? store.currentPage} 页刚才读的位置`,
+        label: t('reader.returnToPage', { page: sourcePage ?? store.currentPage }),
       });
       setHoverTrigger(null);
       viewerRef.current?.scrollToPosition(pageNumber, targetRect, true);
@@ -446,9 +453,9 @@ export default function App() {
         const imageUrl = await recropPageRegion(store.pdfDoc, item.pageNumber, nextRect);
         if (useReaderStore.getState().pdfDoc !== store.pdfDoc) return;
         useReaderStore.getState().updatePinnedCrop(id, nextRect, imageUrl);
-        showToast(direction === 'up' ? '已向上扩展裁切范围' : '已向下扩展裁切范围');
+        showToast(direction === 'up' ? message('crop.extendedUp') : message('crop.extendedDown'));
       } catch {
-        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast('扩充裁切失败，请重试');
+        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast(message('crop.extendFailed'));
       }
     },
     [showToast],
@@ -462,7 +469,7 @@ export default function App() {
 
       if (item.originalImageUrl) {
         store.resetPinnedCrop(id);
-        showToast('已还原初始裁切范围');
+        showToast(message('crop.resetDone'));
         return;
       }
 
@@ -475,9 +482,9 @@ export default function App() {
         );
         if (useReaderStore.getState().pdfDoc !== store.pdfDoc) return;
         useReaderStore.getState().resetPinnedCrop(id, imageUrl);
-        showToast('已还原初始裁切范围');
+        showToast(message('crop.resetDone'));
       } catch {
-        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast('还原裁切失败，请重试');
+        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast(message('crop.resetFailed'));
       }
     },
     [showToast],
@@ -488,7 +495,7 @@ export default function App() {
     setLightboxAsset({
       key: item.id,
       kind: item.kind === 'snip' || item.kind === 'reference' ? 'figure' : item.kind,
-      label: item.title,
+      label: pinTitle(item),
       caption: item.subtitle ?? '',
       pageNumber: item.pageNumber,
       cropRect: item.cropRect ?? { x: 0, y: 0, width: 1, height: 1 },
@@ -554,7 +561,7 @@ export default function App() {
           <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-paper-goldborder bg-paper-goldbg text-paper-gold">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <p className="text-sm font-medium text-paper-ink">正在打开 {bootingName}</p>
+          <p className="text-sm font-medium text-paper-ink">{t('reader.openingFile', { name: bootingName })}</p>
         </div>
       );
     }
@@ -573,9 +580,9 @@ export default function App() {
           }}
           onRemoveRecent={async hash => {
             if (await deletePaperArchive(hash)) setRecent(rows => rows.filter(row => row.paperHash !== hash));
-            else setBootError('移除失败，请重试。');
+            else setBootError(message('archive.removeFailed'));
           }}
-          error={bootError || parseError}
+          error={formatMessage(bootError || parseError)}
         />
       </div>
     );
@@ -584,7 +591,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-paper-bg">
       <TopBar
-        fileName={fileName}
+        fileName={archiveSession.current.sampleId ? getSampleById(archiveSession.current.sampleId)?.title ?? fileName : fileName}
         numPages={numPages}
         currentPage={currentPage}
         scale={scale}
@@ -602,13 +609,13 @@ export default function App() {
 
       {(parseError || bootError) && (
         <div role="alert" className="border-b border-paper-goldborder bg-paper-goldbg px-4 py-1.5 text-xs text-paper-ink">
-          {parseError || bootError}
+          {formatMessage(parseError || bootError)}
         </div>
       )}
 
       {isImageOnly && (
         <div role="status" className="border-b border-paper-border bg-white px-4 py-2 text-xs text-paper-muted">
-          未检测到文本层，扫描版 PDF 无法自动识别引用。按 <kbd className="font-mono text-paper-ink">S</kbd> 可框选并钉住任意区域。
+          {t('reader.scanned')}
         </div>
       )}
 
@@ -713,7 +720,7 @@ export default function App() {
 
       {toast && (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-white shadow-float">
-          {toast}
+          {formatMessage(toast)}
         </div>
       )}
     </div>

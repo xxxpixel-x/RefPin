@@ -1,3 +1,4 @@
+import { formatMessage, message, useI18n, type DisplayMessage } from '../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
@@ -29,6 +30,11 @@ const backlinksMap = buildBacklinksMap(MOCK_CITATIONS);
 
 /** B 线独立预览壳：不依赖 A 的 pdf.js，纯 Mock 数据跑通全部 UI */
 export function BPreview() {
+  const { t, locale } = useI18n();
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = t('reader.title');
+  }, [locale, t]);
   const [view, setView] = useState<'landing' | 'reader'>('landing');
   const [fileName, setFileName] = useState('Attention Is All You Need.pdf');
   const [currentPage, setCurrentPage] = useState(4);
@@ -42,7 +48,7 @@ export function BPreview() {
   const [jumpAnchor, setJumpAnchor] = useState<JumpAnchor>(null);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<DisplayMessage | null>(null);
   const toastTimer = useRef<number>();
   const workspaceRef = useRef<HTMLDivElement>(null);
 
@@ -55,8 +61,8 @@ export function BPreview() {
     [],
   );
 
-  const showToast = useCallback((message: string) => {
-    setToast(message);
+  const showToast = useCallback((notice: DisplayMessage) => {
+    setToast(notice);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
@@ -65,7 +71,7 @@ export function BPreview() {
     (asset: PaperAsset) => {
       setPinnedItems((items) => {
         if (items.some((item) => item.id === asset.key)) {
-          showToast('已经在钉板上了');
+          showToast(message('dock.alreadyPinned'));
           return items;
         }
         return [
@@ -84,7 +90,7 @@ export function BPreview() {
           ...items,
         ];
       });
-      showToast('已钉到对照钉板');
+      showToast(message('preview.pinned'));
     },
     [showToast],
   );
@@ -93,14 +99,14 @@ export function BPreview() {
     (reference: ReferenceEntry) => {
       setPinnedItems((items) => {
         if (items.some((item) => item.id === reference.key)) {
-          showToast('这篇文献已在钉板上');
+          showToast(message('dock.alreadyPinned'));
           return items;
         }
         return [
           {
             id: reference.key,
             kind: 'reference',
-            title: reference.title || `参考文献 [${reference.index}]`,
+            title: reference.title || t('reference.number', { index: reference.index }),
             subtitle: reference.authors,
             pageNumber: reference.pageNumber,
             reference,
@@ -109,7 +115,7 @@ export function BPreview() {
           ...items,
         ];
       });
-      showToast('已钉住文献');
+      showToast(message('dock.pinnedRef', { index: reference.index }));
     },
     [showToast],
   );
@@ -119,7 +125,7 @@ export function BPreview() {
       setJumpAnchor({
         fromPage: currentPage,
         fromScrollTop: 0,
-        label: `回到第 ${currentPage} 页刚才读的位置`,
+        label: t('reader.returnToPage', { page: currentPage }),
       });
       setCurrentPage(pageNumber);
       setHoverTrigger(null);
@@ -237,7 +243,7 @@ export function BPreview() {
             }}
           >
             <p className="mb-4 text-center text-[11px] uppercase tracking-[0.18em] text-paper-muted">
-              Attention Is All You Need · Page {currentPage}（Mock 预览）
+              {t('preview.page', { page: currentPage })}
             </p>
             <h2 className="mb-6 text-center text-[19px] font-semibold text-paper-ink">
               3. Model Architecture
@@ -267,7 +273,7 @@ export function BPreview() {
                     height: 22,
                   }}
                   className="absolute -translate-y-1/2 rounded-sm border-b border-dashed border-paper-gold bg-paper-gold/10 px-0.5 text-left text-[12px] font-medium text-paper-goldtext transition hover:bg-paper-gold/25"
-                  title={`悬停预览 ${citation.rawText}`}
+                  title={t('peek.showCitation', { name: citation.rawText })}
                 >
                   {citation.rawText}
                 </button>
@@ -276,7 +282,7 @@ export function BPreview() {
 
             {pageCitations.length === 0 && (
               <p className="mt-8 rounded-lg border border-dashed border-paper-border bg-paper-bg px-4 py-6 text-center text-[11px] text-paper-muted">
-                这一页没有 Mock 引用热区，回到第 4 / 5 页体验悬停预览。
+                {t('preview.empty')}
               </p>
             )}
           </div>
@@ -325,7 +331,7 @@ export function BPreview() {
                 };
               }),
             );
-            showToast(direction === 'up' ? '已向上扩展裁切范围' : '已向下扩展裁切范围');
+            showToast(direction === 'up' ? message('crop.extendedUp') : message('crop.extendedDown'));
           }}
           onResetCrop={(id) => {
             setPinnedItems((items) =>
@@ -339,7 +345,7 @@ export function BPreview() {
                   : item,
               ),
             );
-            showToast('已还原初始裁切范围');
+            showToast(message('crop.resetDone'));
           }}
           onOpenLightbox={(item) =>
             setLightboxAsset({
@@ -377,14 +383,14 @@ export function BPreview() {
       {snipMode && (
         <div className="pointer-events-none fixed inset-x-0 top-16 z-30 flex justify-center">
           <span className="rounded-full bg-paper-ink px-4 py-1.5 text-[11px] text-white shadow-float">
-            框选模式已开启（Mock 预览仅演示顶部按钮状态）· 按 Esc 退出
+            {t('preview.snip')}
           </span>
         </div>
       )}
 
       {toast && (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-white shadow-float">
-          {toast}
+          {formatMessage(toast)}
         </div>
       )}
     </div>

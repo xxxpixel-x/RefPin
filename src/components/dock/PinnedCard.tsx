@@ -1,3 +1,5 @@
+import { pinTitle } from '../../i18n/pinTitle';
+import { t } from '../../i18n/core';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
@@ -77,10 +79,11 @@ export function PinnedCard({
 }: PinnedCardProps) {
   const cardRef = useRef<HTMLElement>(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(item.title);
+  const displayTitle = pinTitle(item);
+  const [draft, setDraft] = useState(displayTitle);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => setDraft(item.title), [item.title]);
+  useEffect(() => setDraft(displayTitle), [displayTitle]);
   useEffect(() => {
     if (highlighted && !isZoomedOverlay) {
       cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -137,7 +140,7 @@ export function PinnedCard({
     >
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-2">
         <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-paper-goldtext">
-          {item.kind === 'snip' ? 'Snip' : item.kind}
+          {t(`kind.${item.kind}`)}
         </span>
 
         {editing ? (
@@ -146,16 +149,16 @@ export function PinnedCard({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => {
-              onRename(item.id, draft.trim() || item.title);
+              onRename(item.id, draft.trim() || displayTitle);
               setEditing(false);
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
-                onRename(item.id, draft.trim() || item.title);
+                onRename(item.id, draft.trim() || displayTitle);
                 setEditing(false);
               }
               if (event.key === 'Escape') {
-                setDraft(item.title);
+                setDraft(displayTitle);
                 setEditing(false);
               }
             }}
@@ -179,9 +182,9 @@ export function PinnedCard({
               'min-w-0 flex-1 truncate text-left font-medium text-paper-ink hover:text-paper-gold',
               isZoomedOverlay ? 'text-xs' : 'text-[11px]',
             )}
-            title={isSnip ? '双击可重命名' : '点击跳回原页'}
+            title={isSnip ? t('pin.renameHint') : t('pin.jumpHint')}
           >
-            {item.title}
+            {displayTitle}
           </button>
         )}
 
@@ -192,9 +195,9 @@ export function PinnedCard({
             onJump(item.pageNumber, item.cropRect);
           }}
           className="shrink-0 rounded px-1 font-mono text-[10px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-gold"
-          title="跳回原页"
+          title={t('pin.jump')}
         >
-          P.{item.pageNumber}
+          {t('reader.page', { page: item.pageNumber })}
         </button>
 
         {!isZoomedOverlay && (
@@ -203,8 +206,8 @@ export function PinnedCard({
               type="button"
               onClick={() => onMove(item.id, -1)}
               className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
-              aria-label={isHorizontalDock ? '左移' : '上移'}
-              title={isHorizontalDock ? '左移' : '上移'}
+              aria-label={isHorizontalDock ? t('pin.moveLeft') : t('pin.moveUp')}
+              title={isHorizontalDock ? t('pin.moveLeft') : t('pin.moveUp')}
             >
               {isHorizontalDock ? (
                 <ArrowLeft className="h-3 w-3" />
@@ -216,8 +219,8 @@ export function PinnedCard({
               type="button"
               onClick={() => onMove(item.id, 1)}
               className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
-              aria-label={isHorizontalDock ? '右移' : '下移'}
-              title={isHorizontalDock ? '右移' : '下移'}
+              aria-label={isHorizontalDock ? t('pin.moveRight') : t('pin.moveDown')}
+              title={isHorizontalDock ? t('pin.moveRight') : t('pin.moveDown')}
             >
               {isHorizontalDock ? (
                 <ArrowRight className="h-3 w-3" />
@@ -235,7 +238,7 @@ export function PinnedCard({
             onToggleCollapse(item.id);
           }}
           className="rounded p-0.5 text-paper-muted transition hover:text-paper-ink"
-          aria-label={item.collapsed ? '展开' : '收起'}
+          aria-label={item.collapsed ? t('common.expand') : t('common.collapse')}
         >
           <ChevronDown
             className={clsx('h-3.5 w-3.5 transition-transform', item.collapsed && '-rotate-90')}
@@ -247,8 +250,8 @@ export function PinnedCard({
             onRequestCloseZoom?.();
             onUnpin(item.id);
           }}
-          className="rounded p-0.5 text-paper-muted transition hover:text-red-500"
-          aria-label="移除"
+          className="rounded p-0.5 text-paper-muted transition hover:text-paper-gold"
+          aria-label={t('common.remove')}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -270,7 +273,7 @@ export function PinnedCard({
             >
               <img
                 src={item.imageUrl}
-                alt={item.title}
+                alt={displayTitle}
                 style={{ maxHeight: imageMaxHeight }}
                 className={clsx(
                   'w-full cursor-zoom-in object-contain transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
@@ -296,9 +299,9 @@ export function PinnedCard({
                     onExpandCrop(item.id, 'up');
                   }}
                   className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
-                  title="向上扩展裁切区域"
+                  title={t('crop.upHint')}
                 >
-                  <ArrowUpToLine className="h-2.5 w-2.5" /> 扩上
+                  <ArrowUpToLine className="h-2.5 w-2.5" /> {t('crop.up')}
                 </button>
                 <button
                   type="button"
@@ -307,9 +310,9 @@ export function PinnedCard({
                     onExpandCrop(item.id, 'down');
                   }}
                   className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
-                  title="向下扩展裁切区域"
+                  title={t('crop.downHint')}
                 >
-                  <ArrowDownToLine className="h-2.5 w-2.5" /> 扩下
+                  <ArrowDownToLine className="h-2.5 w-2.5" /> {t('crop.down')}
                 </button>
                 {cropModified && onResetCrop && (
                   <button
@@ -319,9 +322,9 @@ export function PinnedCard({
                       onResetCrop(item.id);
                     }}
                     className="flex items-center gap-0.5 rounded-md border border-paper-goldborder bg-paper-goldbg/95 px-1.5 py-1 text-[10px] font-medium text-paper-goldtext shadow-sm backdrop-blur-sm transition hover:bg-paper-goldsoft"
-                    title="还原初始裁切范围"
+                    title={t('crop.resetHint')}
                   >
-                    <RotateCcw className="h-2.5 w-2.5" /> 还原
+                    <RotateCcw className="h-2.5 w-2.5" /> {t('crop.reset')}
                   </button>
                 )}
                 <button
@@ -332,9 +335,9 @@ export function PinnedCard({
                     onOpenLightbox(item);
                   }}
                   className="flex items-center gap-0.5 rounded-md border border-paper-border bg-white/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-white"
-                  title="全屏灯箱查看"
+                  title={t('lightbox.openHint')}
                 >
-                  <Maximize2 className="h-2.5 w-2.5" /> 灯箱
+                  <Maximize2 className="h-2.5 w-2.5" /> {t('lightbox.open')}
                 </button>
               </div>
             </div>
@@ -352,7 +355,7 @@ export function PinnedCard({
                   isHorizontalDock && 'line-clamp-2',
                 )}
               >
-                {reference.title || `参考文献 [${reference.index}]`}
+                {reference.title || t('reference.number', { index: reference.index })}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-1 text-[9px]">
                 {reference.authors && (
@@ -397,7 +400,7 @@ export function PinnedCard({
                   className="flex items-center gap-1 rounded-md border border-paper-border bg-white px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
                 >
                   {copied ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
-                  {copied ? '已复制' : '复制 BibTeX'}
+                  {copied ? t('common.copied') : t('reference.copyBibtex')}
                 </button>
                 <a
                   href={`https://scholar.google.com/scholar?q=${encodeURIComponent(
@@ -414,8 +417,8 @@ export function PinnedCard({
             </div>
           ) : (
             <p className="rounded-lg bg-paper-bg px-2.5 py-2 text-[10px] text-paper-muted">
-              {item.previewStatus === 'restoring' ? '正在恢复裁切预览…' :
-                item.previewStatus === 'unavailable' ? '预览恢复失败，可跳转至原页查看' : item.subtitle || '暂无预览图'}
+              {item.previewStatus === 'restoring' ? t('pin.restoring') :
+                item.previewStatus === 'unavailable' ? t('pin.unavailable') : item.subtitle || t('pin.noPreview')}
             </p>
           )}
 

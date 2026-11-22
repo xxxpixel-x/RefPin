@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../i18n/types';
+import { t } from '../../i18n/core';
 import { useMemo, useState } from 'react';
 import {
   FileText,
@@ -29,12 +31,12 @@ interface AssetDrawerProps {
   onLocate: (pageNumber: number, asset?: PaperAsset) => void;
 }
 
-const TABS: { key: DrawerTab; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'figure', label: '图' },
-  { key: 'table', label: '表' },
-  { key: 'reference', label: '文献' },
-];
+const TABS = [
+  { key: 'all', label: 'filter.all' },
+  { key: 'figure', label: 'filter.figures' },
+  { key: 'table', label: 'filter.tables' },
+  { key: 'reference', label: 'filter.references' },
+] as const satisfies ReadonlyArray<{ key: DrawerTab; label: MessageKey }>;
 
 export function AssetDrawer({
   open,
@@ -104,7 +106,7 @@ export function AssetDrawer({
       aria-hidden={!open}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-paper-border px-3">
-        <span className="text-xs font-medium text-paper-ink">全篇资产</span>
+        <span className="text-xs font-medium text-paper-ink">{t('assets.title')}</span>
         <span className="rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] text-paper-goldtext">
           {counts.all}
         </span>
@@ -112,7 +114,7 @@ export function AssetDrawer({
           type="button"
           onClick={onClose}
           className="ml-auto rounded p-1 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
-          aria-label="收起资产墙（快捷键 [）"
+          aria-label={t('assets.close')}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -124,7 +126,7 @@ export function AssetDrawer({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜图表标题 / 文献作者"
+            placeholder={t('assets.search')}
             className="w-full bg-transparent text-[11px] text-paper-ink outline-none placeholder:text-paper-muted"
           />
         </label>
@@ -142,7 +144,7 @@ export function AssetDrawer({
                   : 'text-paper-muted hover:bg-paper-bg hover:text-paper-ink',
               )}
             >
-              {item.label}
+              {t(item.label)}
               <span
                 className={clsx(
                   'font-mono text-[9px]',
@@ -160,7 +162,7 @@ export function AssetDrawer({
         {isParsing && (
           <div className="mb-2.5 rounded-lg border border-paper-goldborder bg-paper-goldbg px-2.5 py-2">
             <div className="flex items-center justify-between text-[10px] text-paper-goldtext">
-              <span>正在解析图表与文献…</span>
+              <span>{t('assets.parsing')}</span>
               <span className="font-mono">{Math.round(parseProgress)}%</span>
             </div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white">
@@ -216,18 +218,18 @@ export function AssetDrawer({
                       </span>
                       {pinned && (
                         <span className="rounded bg-paper-goldbg px-1 text-[8px] text-paper-goldtext">
-                          已钉
+                          {t('pin.pinned')}
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-[9px] text-paper-muted">P.{asset.pageNumber}</p>
+                    <p className="truncate text-[9px] text-paper-muted">{t('reader.page', { page: asset.pageNumber })}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
                     <button
                       type="button"
                       onClick={() => onPinAsset(asset)}
                       className="rounded p-1 text-paper-muted transition hover:bg-paper-goldbg hover:text-paper-gold"
-                      title="钉到对照钉板"
+                      title={t('assets.pin')}
                     >
                       <Pin className="h-3 w-3" />
                     </button>
@@ -235,7 +237,7 @@ export function AssetDrawer({
                       type="button"
                       onClick={() => onLocate(asset.pageNumber, asset)}
                       className="rounded p-1 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
-                      title="定位原页"
+                      title={t('assets.source')}
                     >
                       <LocateFixed className="h-3 w-3" />
                     </button>
@@ -251,7 +253,7 @@ export function AssetDrawer({
           <div className="mt-2 space-y-1">
             {(tab === 'all' || filteredAssets.length > 0) && (
               <p className="px-1 pb-1 text-[9px] font-medium uppercase tracking-wider text-paper-muted">
-                参考文献
+                {t('reference.title')}
               </p>
             )}
             {filteredReferences.map((reference) => {
@@ -275,14 +277,14 @@ export function AssetDrawer({
                     <p className="mt-0.5 flex items-center gap-1 text-[9px] text-paper-muted">
                       <FileText className="h-2.5 w-2.5" />
                       {[reference.authors, reference.year].filter(Boolean).join(' · ')}
-                      {pinned && <span className="text-paper-goldtext">· 已钉</span>}
+                      {pinned && <span className="text-paper-goldtext">{t('pin.pinnedBadge')}</span>}
                     </p>
                   </button>
                   <button
                     type="button"
                     onClick={() => onPinReference(reference)}
                     className="mt-0.5 rounded p-1 text-paper-muted opacity-0 transition hover:bg-paper-goldbg hover:text-paper-gold group-hover:opacity-100"
-                    title="钉住文献"
+                    title={t('reference.pin')}
                   >
                     <Pin className="h-3 w-3" />
                   </button>
@@ -297,7 +299,7 @@ export function AssetDrawer({
           filteredAssets.length === 0 &&
           filteredReferences.length === 0 && (
             <p className="px-2 py-8 text-center text-[10px] leading-relaxed text-paper-muted">
-              没有匹配的图表或文献
+              {t('assets.noMatches')}
             </p>
           )}
       </div>

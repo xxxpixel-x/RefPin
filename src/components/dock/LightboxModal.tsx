@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
 import clsx from 'clsx';
@@ -42,16 +43,16 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
         onClick={(event) => event.stopPropagation()}
       >
         <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-paper-goldsoft">
-          {asset.kind}
+          {t(`kind.${asset.kind}`)}
         </span>
         <span className="truncate text-sm">{asset.label}</span>
-        <span className="font-mono text-[11px] text-white/50">P.{asset.pageNumber}</span>
+        <span className="font-mono text-[11px] text-white/50">{t('reader.page', { page: asset.pageNumber })}</span>
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
             onClick={() => changeZoom(-0.1)}
             className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
-            aria-label="缩小"
+            aria-label={t('reader.zoomOut')}
           >
             <Minus className="h-4 w-4" />
           </button>
@@ -62,7 +63,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
             type="button"
             onClick={() => changeZoom(0.1)}
             className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
-            aria-label="放大"
+            aria-label={t('reader.zoomIn')}
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -73,7 +74,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
               setOffset({ x: 0, y: 0 });
             }}
             className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
-            aria-label="重置视图"
+            aria-label={t('reader.resetView')}
           >
             <RotateCcw className="h-4 w-4" />
           </button>
@@ -81,7 +82,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
             type="button"
             onClick={onClose}
             className="ml-2 rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
-            aria-label="关闭"
+            aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -129,7 +130,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
       </div>
 
       <p className="shrink-0 px-6 pb-4 text-center text-[11px] text-white/50">
-        滚轮缩放 50%–300% · 放大后拖拽查看细节 · Esc 或点击空白处关闭
+        {t('lightbox.help')}
       </p>
     </div>
   );

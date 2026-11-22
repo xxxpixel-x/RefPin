@@ -1,3 +1,4 @@
+import { describeError, message } from '../i18n/core';
 import {
   STORAGE_KEY_PENDING_PIN,
   type ExtensionMessage,
@@ -17,12 +18,12 @@ function setupContextMenus(): void {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_OPEN_PANEL,
-      title: '打开 RefPin 浮页伴读侧边栏',
+      title: chrome.i18n.getMessage('menuOpenPanel') || 'Open RefPin Companion Side Panel',
       contexts: ['page', 'selection', 'link'],
     });
     chrome.contextMenus.create({
       id: MENU_START_SNIP,
-      title: 'RefPin 自由框选截图并钉到右侧',
+      title: chrome.i18n.getMessage('menuStartSnip') || 'RefPin: Free-Snip Region to Dock',
       contexts: ['page', 'selection'],
     });
   });
@@ -41,7 +42,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (tab?.windowId === undefined) return;
 
   if (info.menuItemId === MENU_OPEN_PANEL) {
-    void chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+    void chrome.sidePanel.open?.({ windowId: tab.windowId }).catch(() => {});
     return;
   }
 
@@ -50,29 +51,30 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       .sendMessage(tab.id, { type: 'REFPIN_START_PAGE_SNIP' })
       .catch(() => {
         // 原生 PDF 页无 Content Script，直接打开侧边栏使用侧栏框选
-        void chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+        void chrome.sidePanel.open?.({ windowId: tab.windowId }).catch(() => {});
       });
   }
 });
 
 chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
-  const message = rawMessage as Partial<ExtensionMessage> | null;
-  if (!message || typeof message.type !== 'string') return;
+  if (sender.id && sender.id !== chrome.runtime.id) return;
+  const request = rawMessage as Partial<ExtensionMessage> | null;
+  if (!request || typeof request.type !== 'string') return;
 
-  if (message.type === 'REFPIN_OPEN_SIDEPANEL') {
+  if (request.type === 'REFPIN_OPEN_SIDEPANEL') {
     const windowId = sender.tab?.windowId;
     if (windowId !== undefined) {
-      void chrome.sidePanel.open({ windowId }).catch(() => {});
+      void chrome.sidePanel.open?.({ windowId }).catch(() => {});
     }
     sendResponse({ ok: true });
     return;
   }
 
-  if (message.type === 'REFPIN_CAPTURE_VISIBLE_TAB') {
+  if (request.type === 'REFPIN_CAPTURE_VISIBLE_TAB') {
     void (async () => {
       let windowId: number | undefined =
-        typeof message.windowId === 'number'
-          ? message.windowId
+        typeof request.windowId === 'number'
+          ? request.windowId
           : sender.tab?.windowId;
 
       if (windowId === undefined) {
@@ -99,18 +101,18 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
   }
 
   if (
-    message.type === 'REFPIN_PIN_FROM_PAGE' &&
-    message.item &&
-    typeof message.tabUrl === 'string'
+    request.type === 'REFPIN_PIN_FROM_PAGE' &&
+    request.item &&
+    typeof request.tabUrl === 'string'
   ) {
     // 必须在任何 await 之前同步调用 sidePanel.open 以保留用户手势上下文
-    if (message.openSidePanel && sender.tab?.windowId !== undefined) {
-      void chrome.sidePanel.open({ windowId: sender.tab.windowId }).catch(() => {});
+    if (request.openSidePanel && sender.tab?.windowId !== undefined) {
+      void chrome.sidePanel.open?.({ windowId: sender.tab.windowId }).catch(() => {});
     }
 
     const record: PendingPinRecord = {
-      tabUrl: message.tabUrl,
-      item: message.item,
+      tabUrl: request.tabUrl,
+      item: request.item,
       timestamp: Date.now(),
     };
 
@@ -118,8 +120,8 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
     void chrome.runtime
       .sendMessage({
         type: 'REFPIN_SIDEPANEL_PUSH_PIN',
-        tabUrl: message.tabUrl,
-        item: message.item,
+        tabUrl: request.tabUrl,
+        item: request.item,
       })
       .catch(() => {});
 
@@ -133,13 +135,13 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'REFPIN_TRANSLATE_BATCH' && Array.isArray(message.texts)) {
-    void translateTexts(message.texts, message.config)
+  if (request.type === 'REFPIN_TRANSLATE_BATCH' && Array.isArray(request.texts)) {
+    void translateTexts(request.texts, request.config)
       .then((translations) => sendResponse({ ok: true, translations }))
       .catch((error: unknown) =>
         sendResponse({
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: describeError(error, message('translate.requestFailed')),
         }),
       );
     return true;

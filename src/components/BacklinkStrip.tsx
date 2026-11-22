@@ -1,3 +1,4 @@
+import { t } from '../i18n/core';
 import { useState } from 'react';
 import type { CitationBacklink, NormalizedRect } from '../types/paper';
 
@@ -15,9 +16,9 @@ export function BacklinkStrip({ backlinks = [], onJumpToBacklink }: BacklinkStri
 
   return (
     <div className="flex max-h-24 w-full shrink-0 flex-wrap items-center gap-1 overflow-y-auto border-t border-paper-border pt-1.5 text-[10px] text-paper-muted">
-      <span className="mr-0.5">正文引用 {backlinks.length} 次</span>
+      <span className="mr-0.5">{t('backlinks.count', { count: backlinks.length })}</span>
       {visible.map((link, index) => {
-        const label = `第 ${index + 1} 处引用，P.${link.pageNumber}，${link.rawText}`;
+        const label = t('backlinks.mention', { index: index + 1, page: link.pageNumber, text: link.rawText });
         return (
           <button
             type="button"
@@ -27,7 +28,7 @@ export function BacklinkStrip({ backlinks = [], onJumpToBacklink }: BacklinkStri
             className="rounded-full border border-paper-border bg-white px-1.5 py-0.5 font-mono leading-none hover:border-paper-gold hover:text-paper-gold focus-visible:outline-paper-gold"
             onClick={() => onJumpToBacklink(link.pageNumber, link.rect)}
           >
-            P.{link.pageNumber}
+            {t('reader.page', { page: link.pageNumber })}
           </button>
         );
       })}
@@ -35,11 +36,11 @@ export function BacklinkStrip({ backlinks = [], onJumpToBacklink }: BacklinkStri
         <button
           type="button"
           aria-expanded={expanded}
-          aria-label={expanded ? '收起正文引用' : `展开其余 ${more} 处引用`}
+          aria-label={expanded ? t('backlinks.collapse') : t('backlinks.more', { count: more })}
           className="rounded px-1 font-medium hover:text-paper-gold focus-visible:outline-paper-gold"
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? '收起' : `+${more}`}
+          {expanded ? t('common.collapse') : `+${more}`}
         </button>
       )}
     </div>

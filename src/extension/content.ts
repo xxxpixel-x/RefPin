@@ -1,3 +1,6 @@
+import { pinTitle, timedSnipTitle } from '../i18n/pinTitle';
+import type { DisplayMessage } from '../i18n/types';
+import { describeError, getLocale, message, subscribeLocale, t } from '../i18n/core';
 import {
   extractDomPaper,
   isLikelyAcademicHtmlPage,
@@ -37,6 +40,8 @@ let openTimer: number | null = null;
 let closeTimer: number | null = null;
 let dockZoomUnmountTimer: number | null = null;
 let toastTimer: number | null = null;
+let toastMessage: (() => string) | undefined;
+let dockPreview: { item: CompanionPinItem; anchorCenterRatio: number } | undefined;
 let savedScrollY: number | null = null;
 let activeRefTabIndex = 0;
 let activeBinding: CitationBinding | null = null;
@@ -108,6 +113,7 @@ function ensureShadowUi(): ShadowRoot {
 
   const host = document.createElement('div');
   host.id = UI_HOST_ID;
+  host.lang = getLocale();
   host.style.all = 'initial';
   host.style.position = 'fixed';
   host.style.inset = '0';
@@ -490,7 +496,7 @@ function ensureShadowUi(): ShadowRoot {
 
   returnEl = document.createElement('div');
   returnEl.className = 'return-banner';
-  returnEl.innerHTML = `<button type="button" class="return-btn">↩ 回到刚才读的位置</button><button type="button" class="return-close" aria-label="关闭">×</button>`;
+  returnEl.innerHTML = `<button type="button" class="return-btn">${t('reader.return')}</button><button type="button" class="return-close" aria-label="${t('common.close')}">×</button>`;
   returnEl.querySelector('.return-btn')?.addEventListener('click', () => {
     if (savedScrollY !== null) {
       window.scrollTo({ top: savedScrollY, behavior: 'smooth' });
@@ -522,13 +528,15 @@ function ensureShadowUi(): ShadowRoot {
   return shadowRoot;
 }
 
-function showToast(message: string): void {
+function showToast(message: () => string): void {
   ensureShadowUi();
   if (!toastEl) return;
-  toastEl.textContent = message;
+  toastMessage = message;
+  toastEl.textContent = message();
   toastEl.style.display = 'block';
   if (toastTimer) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => {
+    toastMessage = undefined;
     if (toastEl) toastEl.style.display = 'none';
   }, 1900);
 }
@@ -593,7 +601,7 @@ function pinAssetToSidePanel(asset: CompanionAsset): void {
     item,
     openSidePanel: true,
   });
-  showToast(`已钉住 ${asset.label} 到右侧伴读栏`);
+  showToast(() => t('panel.assetPinned', { name: asset.label }));
 }
 
 function pinReferenceToSidePanel(ref: CompanionReference): void {
@@ -614,7 +622,7 @@ function pinReferenceToSidePanel(ref: CompanionReference): void {
     item,
     openSidePanel: true,
   });
-  showToast(`已钉住文献 [${ref.index}] 到右侧伴读栏`);
+  showToast(() => t('panel.refPinned', { index: ref.index }));
 }
 
 function hidePeekImmediately(): void {
@@ -677,9 +685,9 @@ function renderPeekCard(): void {
       <div class="peek-head">
         <span class="peek-badge">${escapeHtml(asset.label)}</span>
         <div class="peek-actions">
-          ${asset.imageUrl ? '<button type="button" class="btn" data-action="zoom">放大</button>' : ''}
-          ${asset.domAnchorId ? '<button type="button" class="btn" data-action="jump">跳去原处</button>' : ''}
-          <button type="button" class="btn btn-gold" data-action="pin">钉到右侧</button>
+          ${asset.imageUrl ? `<button type="button" class="btn" data-action="zoom">${t('reader.zoomIn')}</button>` : ''}
+          ${asset.domAnchorId ? `<button type="button" class="btn" data-action="jump">${t('pin.locate')}</button>` : ''}
+          <button type="button" class="btn btn-gold" data-action="pin">${t('assets.pin')}</button>
         </div>
       </div>
       <div class="peek-body">
@@ -717,11 +725,11 @@ function renderPeekCard(): void {
 
     peekEl.innerHTML = `
       <div class="peek-head">
-        <span class="peek-badge">参考文献 [${ref.index}]</span>
+        <span class="peek-badge">${t('reference.number', { index: ref.index })}</span>
         <div class="peek-actions">
           <a class="btn" href="${escapeHtml(ref.href || scholarUrl)}" target="_blank" rel="noopener noreferrer">Scholar ↗</a>
-          ${ref.domAnchorId ? '<button type="button" class="btn" data-action="jump">原处</button>' : ''}
-          <button type="button" class="btn btn-gold" data-action="pin">钉到右侧</button>
+          ${ref.domAnchorId ? `<button type="button" class="btn" data-action="jump">${t('pin.locate')}</button>` : ''}
+          <button type="button" class="btn btn-gold" data-action="pin">${t('assets.pin')}</button>
         </div>
       </div>
       <div class="peek-body">
@@ -968,14 +976,14 @@ async function cropDataUrl(
       canvas.height = outH;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        reject(new Error('Canvas context unavailable'));
+        reject(new Error(t('reader.canvasError')));
         return;
       }
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
       const webp = canvas.toDataURL('image/webp', 0.92);
       resolve(webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/png'));
     };
-    img.onerror = () => reject(new Error('Failed to load screenshot'));
+    img.onerror = () => reject(new Error(t('snip.screenshotFailed')));
     img.src = dataUrl;
   });
 }
@@ -987,7 +995,7 @@ function startPageSnipMode(): void {
   hideDockZoomPreview();
 
   snipEl.innerHTML = `
-    <div class="snip-hint">拖拽框选 · Esc 取消</div>
+    <div class="snip-hint">${t('snip.hud')}</div>
     <div class="snip-box"></div>
   `;
   const boxEl = snipEl.querySelector<HTMLDivElement>('.snip-box')!;
@@ -1037,23 +1045,21 @@ function startPageSnipMode(): void {
             })) as { ok?: boolean; dataUrl?: string; error?: string } | undefined;
 
             if (!resp?.ok || !resp.dataUrl) {
-              showToast(`截图失败：${resp?.error || '请刷新页面后重试'}`);
+              showToast(() => t('snip.captureError', { reason: resp?.error || t('panel.refreshPage') }));
               return;
             }
 
             const croppedUrl = await cropDataUrl(resp.dataUrl, rect);
+            const pinnedAt = Date.now();
             const item: CompanionPinItem = {
-              id: `snip:${Date.now()}`,
+              id: `snip:${pinnedAt}`,
               kind: 'snip',
               source: 'snip',
-              title: `自由框选 #${new Date().toLocaleTimeString('zh-CN', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}`,
+              title: timedSnipTitle(pinnedAt),
+              automaticTitle: true,
               subtitle: document.title || window.location.hostname,
               imageUrl: croppedUrl,
-              pinnedAt: Date.now(),
+              pinnedAt,
             };
 
             await chrome.runtime.sendMessage({
@@ -1062,9 +1068,9 @@ function startPageSnipMode(): void {
               item,
               openSidePanel: true,
             });
-            showToast('已将框选区域钉入右侧伴读栏');
+            showToast(() => t('snip.pinned'));
           } catch {
-            showToast('框选截取失败，请刷新页面后重试');
+            showToast(() => t('snip.failed'));
           }
         })();
       });
@@ -1134,16 +1140,17 @@ function showDockZoomPreview(
     dockZoomUnmountTimer = null;
   }
 
-  const kindLabel = item.kind === 'snip' ? 'SNIP' : item.kind.toUpperCase();
+  dockPreview = { item, anchorCenterRatio };
+  const kindLabel = t(`kind.${item.kind}`);
   const pageTag = item.pageNumber
-    ? `<span style="font-family: ui-monospace, monospace; font-size: 11px; color: #78716C;">P.${item.pageNumber}</span>`
+    ? `<span style="font-family: ui-monospace, monospace; font-size: 11px; color: #78716C;"> ${t('reader.page', { page: item.pageNumber })}</span>`
     : '';
 
   let bodyHtml = '';
   if (item.imageUrl) {
     bodyHtml = `
       <div class="dock-zoom-img-wrap">
-        <img class="dock-zoom-img" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.title)}" />
+        <img class="dock-zoom-img" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(pinTitle(item))}" />
       </div>
       ${item.subtitle ? `<div class="dock-zoom-cap">${escapeHtml(item.subtitle)}</div>` : ''}
     `;
@@ -1166,7 +1173,7 @@ function showDockZoomPreview(
   dockZoomEl.innerHTML = `
     <div class="dock-zoom-head">
       <span class="peek-badge">${escapeHtml(kindLabel)}</span>
-      <span class="dock-zoom-title">${escapeHtml(item.title)}</span>
+      <span class="dock-zoom-title">${escapeHtml(pinTitle(item))}</span>
       ${pageTag}
     </div>
     <div class="dock-zoom-body">${bodyHtml}</div>
@@ -1192,6 +1199,7 @@ function showDockZoomPreview(
 }
 
 function hideDockZoomPreview(): void {
+  dockPreview = undefined;
   if (!dockZoomEl) return;
   dockZoomEl.classList.remove('open');
   if (dockZoomUnmountTimer !== null) window.clearTimeout(dockZoomUnmountTimer);
@@ -1285,7 +1293,7 @@ let trBlocks: TranslatableBlock[] = [];
 let trDisplayMode: TranslateDisplayMode = 'off';
 let trRunning = false;
 let trRunToken = 0;
-let trLastError: string | undefined;
+let trLastError: DisplayMessage | undefined;
 
 function getPageTranslateStatus(): PageTranslateStatus {
   const done = trBlocks.filter((b) => b.done).length;
@@ -1509,11 +1517,11 @@ async function startPageTranslation(
       const resp = (await chrome.runtime.sendMessage({
         type: 'REFPIN_TRANSLATE_BATCH',
         texts: batch.map((b) => b.sourceText),
-      })) as { ok?: boolean; translations?: string[]; error?: string } | undefined;
+      })) as { ok?: boolean; translations?: string[]; error?: DisplayMessage } | undefined;
 
       if (token !== trRunToken) return;
       if (!resp?.ok || !Array.isArray(resp.translations)) {
-        trLastError = resp?.error || '翻译请求失败';
+        trLastError = resp?.error || message('translate.requestFailed');
         trRunning = false;
         pushPageTranslateStatus();
         return;
@@ -1531,7 +1539,7 @@ async function startPageTranslation(
       pushPageTranslateStatus();
     } catch (error) {
       if (token !== trRunToken) return;
-      trLastError = error instanceof Error ? error.message : '翻译请求失败';
+      trLastError = describeError(error, message('translate.requestFailed'));
       trRunning = false;
       pushPageTranslateStatus();
       return;
@@ -1617,4 +1625,17 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
   if (message.type === 'REFPIN_PAGE_TRANSLATE_GET_STATUS') {
     sendResponse({ ok: true, status: getPageTranslateStatus() });
   }
+});
+
+subscribeLocale(() => {
+  if (!shadowRoot) return;
+  shadowRoot.host.setAttribute('lang', getLocale());
+  const back = returnEl?.querySelector('.return-btn');
+  if (back) back.textContent = t('reader.return');
+  returnEl?.querySelector('.return-close')?.setAttribute('aria-label', t('common.close'));
+  const hint = snipEl?.querySelector('.snip-hint');
+  if (hint) hint.textContent = t('snip.hud');
+  if (toastEl && toastMessage) toastEl.textContent = toastMessage();
+  if (dockPreview) showDockZoomPreview(dockPreview.item, dockPreview.anchorCenterRatio);
+  if (peekEl?.style.display === 'block') renderPeekCard();
 });

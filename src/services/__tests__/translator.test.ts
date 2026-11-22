@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTranslator, DEFAULT_TRANSLATE_CONFIG, sanitizeSourceText, WEB_TRANSLATE_CONFIG, type TranslateConfig } from '../translator';
 
@@ -29,7 +30,7 @@ describe('shared translator', () => {
   it('requires explicit web configuration before any network request', async () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
-    await expect(createTranslator(storage()).translateTexts(['private'])).rejects.toThrow('配置');
+    await expect(createTranslator(storage()).translateTexts(['private'])).rejects.toThrow(t('translate.missingConfig'));
     expect(fetch).not.toHaveBeenCalled();
   });
 

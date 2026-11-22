@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -45,12 +46,6 @@ interface HoverPeekCardProps {
   } | null;
 }
 
-const KIND_LABEL: Record<InlineCitation['kind'], string> = {
-  figure: 'Figure',
-  table: 'Table',
-  equation: 'Equation',
-  reference: 'Reference',
-};
 
 const SHOW_DELAY = 120;
 const HIDE_DELAY = 260;
@@ -198,8 +193,8 @@ export function HoverPeekCard({
         <>
           <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg px-3 py-2">
             <span className="rounded border border-paper-border bg-white px-1.5 py-0.5 font-mono text-xs font-semibold text-paper-ink">{definition.term}</span>
-            <span className="rounded-full border border-paper-border px-1.5 text-[10px] text-paper-muted">Glossary</span>
-            <span className="ml-auto text-[10px] text-paper-muted">Defined on P.{definition.definedPage}</span>
+            <span className="rounded-full border border-paper-border px-1.5 text-[10px] text-paper-muted">{t('glossary.title')}</span>
+            <span className="ml-auto text-[10px] text-paper-muted">{t('glossary.definedOn', { page: definition.definedPage })}</span>
           </div>
           <div className="p-3">
             <p className="text-[13px] font-semibold text-paper-ink">{definition.expansion}</p>
@@ -209,7 +204,7 @@ export function HoverPeekCard({
                 closeNow();
                 onJump(definition.definedPage, definition.definedRect, mention.rect, mention.pageNumber);
               }}>
-              <CornerDownRight size={13} />跳去定义页
+              <CornerDownRight size={13} />{t('glossary.jump')}
             </button>
           </div>
         </>
@@ -217,14 +212,13 @@ export function HoverPeekCard({
       {citation && <>
       <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg/60 px-3 py-2">
         <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-paper-goldtext">
-          {KIND_LABEL[citation.kind]}
+          {t(`kind.${citation.kind}`)}
         </span>
         <span className="font-mono text-[10px] text-paper-muted">
-          P.
-          {asset?.pageNumber ??
+          {t('reader.page', { page: asset?.pageNumber ??
             activeReference?.pageNumber ??
             citation.nativeDest?.pageNumber ??
-            citation.pageNumber}
+            citation.pageNumber })}
         </span>
         <span className="truncate text-[11px] text-paper-muted">{citation.rawText}</span>
         <button
@@ -241,7 +235,7 @@ export function HoverPeekCard({
             );
           }}
           className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-white hover:text-paper-ink"
-          title="跳去原页"
+          title={t('peek.source')}
         >
           <CornerDownRight className="h-3.5 w-3.5" />
         </button>
@@ -272,7 +266,7 @@ export function HoverPeekCard({
           {activeReference ? (
             <>
               <p className="text-[13px] font-semibold leading-snug text-paper-ink">
-                {activeReference.title || `参考文献 [${activeReference.index}]`}
+                {activeReference.title || t('reference.number', { index: activeReference.index })}
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
                 {activeReference.authors && (
@@ -296,7 +290,7 @@ export function HoverPeekCard({
                   className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-amber-700"
                 >
                   <Pin className="h-3 w-3" />
-                  钉住文献
+                  {t('reference.pin')}
                 </button>
                 <a
                   href={`https://scholar.google.com/scholar?q=${encodeURIComponent(
@@ -335,7 +329,7 @@ export function HoverPeekCard({
                   className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
                 />
                 <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
-                  <CornerDownRight className="h-3 w-3" /> 点击前往目标位置
+                  <CornerDownRight className="h-3 w-3" /> {t('peek.follow')}
                 </span>
               </button>
             </>
@@ -362,7 +356,7 @@ export function HoverPeekCard({
                 className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
               />
               <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
-                <Maximize2 className="h-3 w-3" /> 点击放大查看
+                <Maximize2 className="h-3 w-3" /> {t('peek.enlarge')}
               </span>
             </button>
           ) : (
@@ -383,7 +377,7 @@ export function HoverPeekCard({
               className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-paper-border disabled:text-paper-muted"
             >
               <Pin className="h-3 w-3" />
-              钉到右侧对照
+              {t('peek.pin')}
             </button>
             <button
               type="button"
@@ -397,7 +391,7 @@ export function HoverPeekCard({
               }}
               className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"
             >
-              跳去原页
+              {t('peek.source')}
             </button>
           </div>
         </div>
@@ -411,10 +405,9 @@ export function HoverPeekCard({
 function FallbackMessage({ citation }: { citation: InlineCitation }) {
   return (
     <p className="rounded-lg bg-paper-bg px-3 py-2.5 text-[11px] leading-relaxed text-paper-muted">
-      未自动定位到图像内容。
       {citation.nativeDest
-        ? `PDF 原生链接指向第 ${citation.nativeDest.pageNumber} 页，可点击前往原页或使用「框选钉住」。`
-        : '点击前往原页，或用顶部「框选钉住」把目标区域钉到右侧。'}
+        ? t('peek.fallbackPage', { page: citation.nativeDest.pageNumber })
+        : t('peek.fallback')}
     </p>
   );
 }

@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import { useCallback, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { recropPageRegion } from '../../engine/assetExtractor';
@@ -118,7 +119,7 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
       )}
       {busy && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/60 text-sm text-paper-ink">
-          正在生成高清截图…
+          {t('snip.rendering')}
         </div>
       )}
     </div>

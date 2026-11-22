@@ -1,3 +1,4 @@
+import { t } from '../../i18n/core';
 import {
   forwardRef,
   useCallback,
@@ -258,14 +259,14 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       {snipMode && (
         <div className="pointer-events-none sticky top-3 z-40 flex justify-center">
           <div className="pointer-events-auto rounded-full border border-amber-200 bg-amber-50/95 px-4 py-1.5 text-xs text-amber-800 shadow-sm backdrop-blur">
-            在论文任意区域拖拽框选，松手即钉到对照钉板 · 按 Esc 退出
+            {t('snip.instructions')}
           </div>
         </div>
       )}
 
       {!dims ? (
         <div className="flex h-full items-center justify-center text-sm text-paper-muted">
-          正在打开论文…
+          {t('reader.opening')}
         </div>
       ) : (
         <div data-page-list className="flex w-max min-w-full flex-col items-center gap-7 px-6 py-8">

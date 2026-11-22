@@ -1,3 +1,4 @@
+import { describeError, formatMessage, message, t, type DisplayMessage } from '../../i18n';
 import { useEffect, useRef, useState, type RefObject, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, Languages, Settings } from 'lucide-react';
@@ -142,7 +143,7 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [translation, setTranslation] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<DisplayMessage>('');
   const [copied, setCopied] = useState<'source' | 'translation' | null>(null);
   const timer = useRef<number>();
 
@@ -164,14 +165,14 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       setNotice('');
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(null), 1400);
-    } catch { setNotice('复制失败，请检查浏览器剪贴板权限。'); }
+    } catch { setNotice(message('copy.failed')); }
   }
 
   async function translate() {
     setNotice('');
     if (!config.apiBaseUrl || !config.model) {
       setSettings(true);
-      setNotice('先配置翻译端点和模型，再翻译这段选文。');
+      setNotice(message('translate.configureFirst'));
       return;
     }
     setSettings(false);
@@ -181,8 +182,8 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       const [value] = await webTranslator.translateTexts([text], config);
       setTranslation(value);
     } catch (error) {
-      setNotice(error instanceof TypeError ? '无法连接端点，请检查地址、服务状态及跨域设置。' :
-        error instanceof Error ? error.message : '翻译失败，请重试。');
+      setNotice(error instanceof TypeError ? message('translate.unreachable') :
+        describeError(error, message('translate.retry')));
     } finally { setBusy(false); }
   }
 
@@ -190,7 +191,7 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
     event.preventDefault();
     const next = { ...draft, apiBaseUrl: draft.apiBaseUrl.trim(), model: draft.model.trim(), apiKey: draft.apiKey.trim() };
     if (!/^https?:\/\//i.test(next.apiBaseUrl) || !next.model) {
-      setNotice('请填写 HTTP(S) 端点和模型名。');
+      setNotice(message('translate.invalidConfig'));
       return;
     }
     try {
@@ -200,8 +201,8 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       setDraft(next);
       setSettings(false);
       setTranslation('');
-      setNotice('设置已保存');
-    } catch { setNotice('浏览器未能保存设置，请检查本地存储权限。'); }
+      setNotice(message('settings.saved'));
+    } catch { setNotice(message('settings.saveFailed')); }
   }
   async function clearKey() {
     try {
@@ -209,19 +210,19 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       await webTranslator.saveTranslateConfig(next);
       setConfig(next);
       setDraft(value => ({ ...value, apiKey: '' }));
-      setNotice('密钥已清除');
-    } catch { setNotice('密钥清除失败，请检查本地存储权限。'); }
+      setNotice(message('settings.keyCleared'));
+    } catch { setNotice(message('settings.clearFailed')); }
   }
 
   return <>
-    <div role="group" aria-label="选中文字" className="flex items-center gap-0.5 p-1">
+    <div role="group" aria-label={t('selection.actions')} className="flex items-center gap-0.5 p-1">
       <button type="button" className={actionClass} onClick={() => void copy(text, 'source')}>
-        {copied === 'source' ? <Check size={14} /> : <Copy size={14} />}{copied === 'source' ? '已复制' : '净化复制'}
+        {copied === 'source' ? <Check size={14} /> : <Copy size={14} />}{copied === 'source' ? t('common.copied') : t('copy.clean')}
       </button>
       <button type="button" className={actionClass} disabled={!ready || busy} onClick={() => void translate()}>
-        <Languages size={15} />{busy ? '翻译中…' : '划词翻译'}
+        <Languages size={15} />{busy ? t('translate.busy') : t('translate.selection')}
       </button>
-      <button type="button" className={actionClass + ' ml-auto'} aria-expanded={settings} aria-label="翻译设置" title="翻译设置"
+      <button type="button" className={actionClass + ' ml-auto'} aria-expanded={settings} aria-label={t('translate.settings')} title={t('translate.settings')}
         disabled={!ready || busy} onClick={() => {
           if (settings) restoreSelection();
           setDraft(config); setSettings(!settings); setNotice('');
@@ -230,32 +231,32 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       </button>
     </div>
     {settings && <form onSubmit={save} className="grid w-80 max-w-full gap-2.5 border-t border-paper-border p-3">
-      <label>OpenAI 兼容端点 · 支持 Ollama
+      <label>{t('translate.endpoint')}
         <input type="url" required className={fieldClass} placeholder="http://localhost:11434/v1" value={draft.apiBaseUrl}
           onChange={e => setDraft({ ...draft, apiBaseUrl: e.target.value })} />
       </label>
       <div className="grid grid-cols-[1fr_auto] gap-2">
-        <label>模型<input required className={fieldClass} placeholder="本地或服务端模型名" value={draft.model}
+        <label>{t('translate.model')}<input required className={fieldClass} placeholder={t('translate.modelHint')} value={draft.model}
           onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>
-        <label>目标语言<select className={fieldClass} value={draft.targetLang}
+        <label>{t('translate.target')}<select className={fieldClass} value={draft.targetLang}
           onChange={e => setDraft({ ...draft, targetLang: e.target.value as TranslateConfig['targetLang'] })}>
-          <option value="zh-CN">简体中文</option><option value="en">English</option>
+          <option value="zh-CN">{t('language.chinese')}</option><option value="en">{t('language.english')}</option>
         </select></label>
       </div>
-      <label>API Key（可选）<input type="password" autoComplete="off" className={fieldClass} value={draft.apiKey}
+      <label>{t('translate.optionalKey')}<input type="password" autoComplete="off" className={fieldClass} value={draft.apiKey}
         onChange={e => setDraft({ ...draft, apiKey: e.target.value })} /></label>
-      <p className="text-[11px] leading-relaxed text-paper-muted">密钥仅保存在本机浏览器。点击翻译时，选文和认证信息会发送到上方端点。</p>
+      <p className="text-[11px] leading-relaxed text-paper-muted">{t('translate.privacy')}</p>
       <div className="flex justify-between">
-        <button type="button" className={actionClass} onClick={() => void clearKey()}>清除密钥</button>
-        <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-white">保存设置</button>
+        <button type="button" className={actionClass} onClick={() => void clearKey()}>{t('settings.clearKey')}</button>
+        <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-white">{t('settings.save')}</button>
       </div>
     </form>}
     {!settings && translation && <div className="w-80 max-w-full border-t border-paper-border px-3 py-2">
       <p lang={config.targetLang} className="whitespace-pre-wrap break-words leading-relaxed">{translation}</p>
       <button className={actionClass + ' mt-1 text-paper-muted'} onClick={() => void copy(translation, 'translation')}>
-        {copied === 'translation' ? <Check size={12} /> : <Copy size={12} />}复制译文
+        {copied === 'translation' ? <Check size={12} /> : <Copy size={12} />}{t('translate.copy')}
       </button>
     </div>}
-    {notice && <p role="status" className="max-w-80 border-t border-paper-border px-3 py-2 text-paper-muted">{notice}</p>}
+    {notice && <p role="status" className="max-w-80 border-t border-paper-border px-3 py-2 text-paper-muted">{formatMessage(notice)}</p>}
   </>;
 }

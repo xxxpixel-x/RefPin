@@ -1,3 +1,4 @@
+import { LocalizedError, message } from '../i18n/core';
 import { normalizePdfGlyphs } from '../utils/textCleanup';
 
 export type TranslateProvider = 'free' | 'openai';
@@ -58,11 +59,11 @@ async function translateBatchOpenAI(
   allowPlainText: boolean,
 ): Promise<string[]> {
   const base = new URL(config.apiBaseUrl);
-  if (!['https:', 'http:'].includes(base.protocol)) throw new Error('端点需要使用 HTTP 或 HTTPS');
+  if (!['https:', 'http:'].includes(base.protocol)) throw new LocalizedError(message('translate.invalidProtocol'));
   const path = base.pathname.replace(/\/+$/, '');
   base.pathname = path.endsWith('/chat/completions') ? path : path + '/chat/completions';
   const endpoint = base.toString();
-  const targetName = config.targetLang === 'zh-CN' ? '简体中文' : 'English';
+  const targetName = config.targetLang === 'zh-CN' ? 'Simplified Chinese' : 'English';
 
   const response = await fetchWithTimeout(
     endpoint,
@@ -95,7 +96,8 @@ async function translateBatchOpenAI(
 
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
-    throw new Error(`API HTTP ${response.status}${errText ? `: ${errText.slice(0, 120)}` : ''}`);
+    const reason = message('translate.httpError', { provider: 'API', status: response.status });
+    throw new LocalizedError({ ...reason, detail: errText.slice(0, 120) });
   }
 
   const data = (await response.json()) as {
@@ -111,7 +113,7 @@ async function translateBatchOpenAI(
   if (allowPlainText && texts.length === 1 && cleaned && !/^[\[{"`]/.test(cleaned)) return [cleaned];
   const parsed: unknown = JSON.parse(cleaned);
   if (!Array.isArray(parsed) || parsed.length !== texts.length) {
-    throw new Error('模型返回格式不匹配');
+    throw new LocalizedError(message('translate.invalidResponse'));
   }
 
   return parsed.map((entry) => String(entry ?? '').trim());
@@ -154,7 +156,7 @@ export function createTranslator(
     if (!missing.length) return outputs;
 
     const batch = missing.map(i => source[i]);
-    if (!freeProvider && (!config.apiBaseUrl || !config.model)) throw new Error('请先配置翻译端点和模型');
+    if (!freeProvider && (!config.apiBaseUrl || !config.model)) throw new LocalizedError(message('translate.missingConfig'));
     const translated = useFree
       ? await freeProvider(batch, config.targetLang)
       : await translateBatchOpenAI(batch, config, !freeProvider);

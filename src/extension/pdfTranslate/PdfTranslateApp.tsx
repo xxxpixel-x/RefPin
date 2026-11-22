@@ -1,3 +1,5 @@
+import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from '../../i18n';
+import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
@@ -142,6 +144,7 @@ function PdfPageCanvas({
 }
 
 export function PdfTranslateApp() {
+  const { t, locale } = useI18n();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const pdfUrl = params.get('url') || '';
   const initialModeParam = params.get('mode');
@@ -150,7 +153,7 @@ export function PdfTranslateApp() {
 
   const displayName = useMemo(
     () => deriveDisplayName(pdfUrl, params.get('title') || undefined),
-    [pdfUrl, params],
+    [pdfUrl, params, locale],
   );
 
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
@@ -164,8 +167,10 @@ export function PdfTranslateApp() {
   const [scale, setScale] = useState<number>(1);
   const [loadingPdf, setLoadingPdf] = useState<boolean>(true);
   const [running, setRunning] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DisplayMessage | null>(null);
 
+  const errorRef = useRef(error);
+  errorRef.current = error;
   const pageElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const visiblePagesRef = useRef<Set<number>>(new Set([1, 2]));
   const donePagesRef = useRef<Set<number>>(new Set());
@@ -180,8 +185,9 @@ export function PdfTranslateApp() {
   displayModeRef.current = displayMode;
 
   useEffect(() => {
-    document.title = `${displayName} · 译文`;
-  }, [displayName]);
+    document.documentElement.lang = locale;
+    document.title = t('translate.documentTitle', { name: displayName });
+  }, [displayName, locale, t]);
 
   const getStatus = useCallback(
     (
@@ -192,10 +198,10 @@ export function PdfTranslateApp() {
       done: donePagesRef.current.size,
       total: pageMetas.length,
       running: runningRef.current,
-      error: error || undefined,
+      error: errorRef.current || undefined,
       ...override,
     }),
-    [error, pageMetas.length],
+    [pageMetas.length],
   );
 
   const pushStatus = useCallback(
@@ -225,7 +231,7 @@ export function PdfTranslateApp() {
   useEffect(() => {
     if (!pdfUrl) {
       setLoadingPdf(false);
-      setError('缺少 PDF 地址');
+      setError(message('translate.noPdfUrl'));
       return;
     }
 
@@ -239,7 +245,7 @@ export function PdfTranslateApp() {
         const res = await fetch(pdfUrl, {
           credentials: pdfUrl.startsWith('file://') ? 'omit' : 'include',
         });
-        if (!res.ok) throw new Error(`PDF 加载失败（HTTP ${res.status}）`);
+        if (!res.ok) throw new LocalizedError(message('reader.httpError', { status: res.status }));
         const buffer = await res.arrayBuffer();
         if (cancelled) return;
 
@@ -266,7 +272,7 @@ export function PdfTranslateApp() {
       } catch (err) {
         if (cancelled) return;
         setLoadingPdf(false);
-        setError(err instanceof Error ? err.message : 'PDF 加载失败');
+        setError(err instanceof Error && err.name === 'PasswordException' ? message('reader.encrypted') : describeError(err, message('reader.loadError')));
       }
     })();
 
@@ -318,7 +324,7 @@ export function PdfTranslateApp() {
       setRunning(true);
       runningRef.current = true;
       setError(null);
-      pushStatus({ running: true, total: totalPages });
+      pushStatus({ running: true, total: totalPages, error: undefined });
 
       const pickNextPage = (): number | null => {
         // 先找当前可见且未翻完的页
@@ -355,11 +361,11 @@ export function PdfTranslateApp() {
             const resp = (await chrome.runtime.sendMessage({
               type: 'REFPIN_TRANSLATE_BATCH',
               texts: slice.map((b) => b.text),
-            })) as { ok?: boolean; translations?: string[]; error?: string } | undefined;
+            })) as { ok?: boolean; translations?: string[]; error?: DisplayMessage } | undefined;
 
             if (token !== runTokenRef.current) return;
             if (!resp?.ok || !Array.isArray(resp.translations)) {
-              const errMsg = resp?.error || '翻译请求失败';
+              const errMsg = resp?.error || message('translate.requestFailed');
               setError(errMsg);
               setRunning(false);
               runningRef.current = false;
@@ -383,7 +389,7 @@ export function PdfTranslateApp() {
           pushStatus({ done: nextDone.size, total: totalPages, running: true });
         } catch (err) {
           if (token !== runTokenRef.current) return;
-          const errMsg = err instanceof Error ? err.message : '翻译失败';
+          const errMsg = describeError(err, message('translate.failed'));
           setError(errMsg);
           setRunning(false);
           runningRef.current = false;
@@ -480,6 +486,8 @@ export function PdfTranslateApp() {
           {displayName}
         </span>
 
+        <LanguageToggle />
+
         {pageMetas.length > 0 && (
           <span className="font-mono text-[11px] text-paper-muted">
             {currentPage} / {pageMetas.length}
@@ -491,7 +499,7 @@ export function PdfTranslateApp() {
             type="button"
             onClick={() => setScale((s) => Math.max(0.7, Number((s - 0.1).toFixed(2))))}
             className="px-1.5 py-1 text-paper-muted hover:text-paper-ink"
-            aria-label="缩小"
+            aria-label={t('reader.zoomOut')}
           >
             <Minus className="h-3.5 w-3.5" />
           </button>
@@ -502,7 +510,7 @@ export function PdfTranslateApp() {
             type="button"
             onClick={() => setScale((s) => Math.min(1.6, Number((s + 0.1).toFixed(2))))}
             className="px-1.5 py-1 text-paper-muted hover:text-paper-ink"
-            aria-label="放大"
+            aria-label={t('reader.zoomIn')}
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -523,7 +531,7 @@ export function PdfTranslateApp() {
                 : 'text-paper-muted hover:text-paper-ink',
             )}
           >
-            仅译文
+            {t('translate.only')}
           </button>
           <button
             type="button"
@@ -539,19 +547,21 @@ export function PdfTranslateApp() {
                 : 'text-paper-muted hover:text-paper-ink',
             )}
           >
-            双语
+            {t('translate.bilingual')}
           </button>
           <button
             type="button"
             onClick={restoreOriginalPdf}
             className="rounded-md px-2.5 py-1 font-medium text-paper-muted transition hover:text-paper-ink"
           >
-            原文
+            {t('translate.original')}
           </button>
         </div>
 
         {running ? (
           <button
+            aria-label={t('translate.stop')}
+            title={t('translate.stop')}
             type="button"
             onClick={() => {
               runTokenRef.current += 1;
@@ -573,15 +583,15 @@ export function PdfTranslateApp() {
               className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1 text-[11px] font-medium text-white"
             >
               <Languages className="h-3 w-3" />
-              继续
+              {t('translate.resume')}
             </button>
           )
         )}
       </header>
 
       {error && (
-        <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-xs text-red-700">
-          {error}
+        <div className="border-b border-paper-goldborder bg-paper-goldbg px-4 py-2 text-xs text-paper-ink">
+          {formatMessage(error)}
         </div>
       )}
 

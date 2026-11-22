@@ -1,3 +1,4 @@
+import { LocalizedError, message } from '../i18n/core';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { NormalizedRect, PaperAsset } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
@@ -57,7 +58,7 @@ async function getPageBitmap(
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('无法创建离屏 Canvas 上下文');
+  if (!ctx) throw new LocalizedError(message('reader.canvasError'));
 
   const renderTask = page.render({ canvasContext: ctx, viewport });
   const cancel = () => renderTask.cancel();

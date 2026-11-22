@@ -1,3 +1,4 @@
+import { LocalizedError, message } from '../i18n/core';
 import { createTranslator, DEFAULT_TRANSLATE_CONFIG, fetchWithTimeout, type TranslateTargetLang } from '../services/translator';
 import { STORAGE_KEY_TRANSLATE_CONFIG, type TranslateConfig } from './protocol';
 
@@ -25,11 +26,11 @@ async function getEdgeAuthToken(): Promise<string> {
   }
   const resp = await fetchWithTimeout('https://edge.microsoft.com/translate/auth', {}, 5000);
   if (!resp.ok) {
-    throw new Error(`Edge auth HTTP ${resp.status}`);
+    throw new LocalizedError(message('translate.httpError', { provider: 'Edge auth', status: resp.status }));
   }
   const token = (await resp.text()).trim();
   if (!token || token.length < 20) {
-    throw new Error('Invalid Edge auth token');
+    throw new LocalizedError(message('translate.invalidToken'));
   }
   cachedEdgeToken = { token, expiresAt: now + 7 * 60 * 1000 };
   return token;
@@ -65,14 +66,14 @@ async function translateBatchViaEdge(
     cachedEdgeToken = null;
   }
   if (!resp.ok) {
-    throw new Error(`Edge translate HTTP ${resp.status}`);
+    throw new LocalizedError(message('translate.httpError', { provider: 'Edge translate', status: resp.status }));
   }
 
   const data = (await resp.json()) as Array<{
     translations?: Array<{ text?: string }>;
   }>;
   if (!Array.isArray(data) || data.length !== texts.length) {
-    throw new Error('Edge translate length mismatch');
+    throw new LocalizedError(message('translate.invalidResponse'));
   }
 
   return data.map((item, idx) => {
@@ -107,7 +108,7 @@ async function translateSingleViaGoogle(
     7000,
   );
   if (!response.ok) {
-    throw new Error(`Google Translate HTTP ${response.status}`);
+    throw new LocalizedError(message('translate.httpError', { provider: 'Google Translate', status: response.status }));
   }
 
   const buffer = await response.arrayBuffer();
@@ -120,7 +121,7 @@ async function translateSingleViaGoogle(
     .trim();
 
   if (!translated) {
-    throw new Error('Empty Google Translate response');
+    throw new LocalizedError(message('translate.emptyResponse'));
   }
   return decodeHtmlEntities(translated);
 }
@@ -139,7 +140,7 @@ async function translateSingleViaMyMemory(
 
   const response = await fetchWithTimeout(url, {}, 7000);
   if (!response.ok) {
-    throw new Error(`MyMemory HTTP ${response.status}`);
+    throw new LocalizedError(message('translate.httpError', { provider: 'MyMemory', status: response.status }));
   }
   const data = (await response.json()) as {
     responseStatus?: number;
@@ -150,7 +151,7 @@ async function translateSingleViaMyMemory(
     !translated ||
     /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID LANGUAGE/i.test(translated)
   ) {
-    throw new Error('MyMemory rate-limited or invalid');
+    throw new LocalizedError(message('translate.freeLimit'));
   }
   return decodeHtmlEntities(translated);
 }

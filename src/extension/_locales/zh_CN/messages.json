@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "RefPin · 浮页"
+  },
+  "extDescription": {
+    "message": "阅读网页论文或 PDF 时，悬停预览引用，钉住多张图表并排对照，也可以自由框选需要的区域。"
+  },
+  "actionTitle": {
+    "message": "打开 / 收起 RefPin 浮页伴读侧边栏"
+  },
+  "menuOpenPanel": {
+    "message": "打开 RefPin 浮页伴读侧边栏"
+  },
+  "menuStartSnip": {
+    "message": "RefPin 自由框选截图并钉到右侧"
+  }
+}

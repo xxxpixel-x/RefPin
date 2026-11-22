@@ -29,5 +29,20 @@
     "typescript": "~5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.9"
-  }
+  },
+  "description": "Local-first academic PDF reader and Chrome side panel for citation previews, figure pinning, and bilingual reading.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xxxpixel-x/RefPin.git"
+  },
+  "keywords": [
+    "pdf-reader",
+    "academic-papers",
+    "citation",
+    "local-first",
+    "chrome-extension",
+    "typescript",
+    "bilingual"
+  ]
 }
