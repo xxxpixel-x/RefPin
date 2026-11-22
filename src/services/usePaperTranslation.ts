@@ -4,6 +4,8 @@ import { extractPdfPageBlocks, type TranslatedBlock } from '../engine/pdfParagra
 import { describeError, message, type DisplayMessage } from '../i18n';
 import {
   DEFAULT_TRANSLATE_CONFIG,
+  grantFreeTranslateConsent,
+  needsFreeTranslateConsent,
   readerTranslator,
   type TranslateConfig,
   type TranslateDisplayMode,
@@ -21,6 +23,10 @@ export interface PaperTranslationController {
   updateConfig: (next: TranslateConfig) => Promise<void>;
   setMode: (mode: TranslateDisplayMode) => void;
   toggleTranslate: () => void;
+  /** True while waiting for the reader to acknowledge the public translation service. */
+  consentPending: boolean;
+  acceptConsent: () => void;
+  dismissConsent: () => void;
   resume: () => void;
   stop: () => void;
 }
@@ -44,6 +50,7 @@ export function usePaperTranslation(
   const [error, setError] = useState<DisplayMessage | null>(null);
   const [config, setConfig] = useState<TranslateConfig>(DEFAULT_TRANSLATE_CONFIG);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [consentMode, setConsentMode] = useState<Exclude<TranslateDisplayMode, 'off'> | null>(null);
 
   const lastActiveModeRef = useRef<Exclude<TranslateDisplayMode, 'off'>>('translated');
   const displayModeRef = useRef<TranslateDisplayMode>('off');
@@ -207,12 +214,13 @@ export function usePaperTranslation(
     setDoneCount(0);
     setBlocksByPage({});
     setError(null);
+    setConsentMode(null);
     setDisplayMode('off');
     displayModeRef.current = 'off';
   }, [pdfDoc, stop]);
 
-  const setMode = useCallback(
-    (mode: TranslateDisplayMode) => {
+  const startMode = useCallback(
+    (mode: TranslateDisplayMode, consented = false) => {
       if (mode === 'off') {
         stop();
         setError(null);
@@ -226,6 +234,10 @@ export function usePaperTranslation(
         setError(message('translate.configureFirst'));
         return;
       }
+      if (!consented && displayModeRef.current === 'off' && needsFreeTranslateConsent(cfg)) {
+        setConsentMode(mode);
+        return;
+      }
       lastActiveModeRef.current = mode;
       setDisplayMode(mode);
       displayModeRef.current = mode;
@@ -235,6 +247,17 @@ export function usePaperTranslation(
     },
     [pdfDoc, numPages, runLoop, stop],
   );
+
+  const setMode = useCallback((mode: TranslateDisplayMode) => startMode(mode), [startMode]);
+
+  const acceptConsent = useCallback(() => {
+    grantFreeTranslateConsent();
+    const mode = consentMode;
+    setConsentMode(null);
+    if (mode) startMode(mode, true);
+  }, [consentMode, startMode]);
+
+  const dismissConsent = useCallback(() => setConsentMode(null), []);
 
   const toggleTranslate = useCallback(() => {
     if (displayModeRef.current === 'off') {
@@ -273,6 +296,9 @@ export function usePaperTranslation(
     updateConfig,
     setMode,
     toggleTranslate,
+    consentPending: consentMode !== null,
+    acceptConsent,
+    dismissConsent,
     resume,
     stop,
   };

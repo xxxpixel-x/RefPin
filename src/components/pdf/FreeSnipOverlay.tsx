@@ -112,7 +112,7 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
             height: selection.height,
           }}
         >
-          <span className="absolute -top-6 left-0 rounded bg-paper-ink px-1.5 py-0.5 font-mono text-[10px] text-paper-card">
+          <span className="absolute -top-6 left-0 rounded bg-paper-ink px-1.5 py-0.5 font-mono text-[11px] text-paper-card">
             {Math.round(selection.width)} × {Math.round(selection.height)}
           </span>
         </div>

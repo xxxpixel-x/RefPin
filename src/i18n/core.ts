@@ -25,7 +25,8 @@ function webLocale(): Locale {
     const saved = globalThis.localStorage?.getItem(LOCALE_KEY);
     if (isLocale(saved)) return saved;
   } catch { /* Local storage may be disabled. */ }
-  return browserLocale();
+  // The website opens in English until the reader picks a language; the extension follows the browser UI.
+  return 'en';
 }
 
 export async function detectInitialLocale(): Promise<Locale> {

@@ -20,7 +20,7 @@ export function ReturnBanner({ onNavigate }: { onNavigate: (direction: 'back' | 
           className="rounded-full p-1.5 hover:bg-paper-bg disabled:opacity-30"><Icon size={14} /></button>;
       })}
       <span className="max-w-40 truncate border-l border-paper-border px-2">{place.label && place.label + ' · '}{t('reader.page', { page: place.pageNumber })}</span>
-      <kbd className="hidden text-[10px] text-paper-muted sm:inline">Alt+←/→</kbd>
+      <kbd className="hidden text-[11px] text-paper-muted sm:inline">Alt+←/→</kbd>
       <button type="button" onClick={useReaderStore.getState().dismissHistory} aria-label={t('reader.dismissReturn')}
         className="rounded-full p-1.5 text-paper-muted hover:bg-paper-bg"><X size={12} /></button>
     </div>

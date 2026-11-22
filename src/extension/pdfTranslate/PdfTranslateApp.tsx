@@ -504,7 +504,7 @@ export function PdfTranslateApp() {
     <div className="flex min-h-screen flex-col bg-paper-bg text-paper-ink">
       {/* 极简顶栏 */}
       <header className="sticky top-0 z-40 flex min-h-12 shrink-0 flex-wrap items-center py-1 gap-2.5 border-b border-paper-border bg-paper-card px-4 backdrop-blur">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-paper-card">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-xs font-bold text-paper-card">
           R
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-paper-ink">
@@ -518,7 +518,7 @@ export function PdfTranslateApp() {
         <LanguageToggle />
 
         {pageMetas.length > 0 && (
-          <span className="font-mono text-[11px] text-paper-muted">
+          <span className="font-mono text-xs text-paper-muted">
             {currentPage} / {pageMetas.length}
           </span>
         )}
@@ -532,7 +532,7 @@ export function PdfTranslateApp() {
           >
             <Minus className="h-3.5 w-3.5" />
           </button>
-          <span className="w-10 text-center font-mono text-[11px] text-paper-muted">
+          <span className="w-10 text-center font-mono text-xs text-paper-muted">
             {Math.round(scale * 100)}%
           </span>
           <button
@@ -545,7 +545,7 @@ export function PdfTranslateApp() {
           </button>
         </div>
 
-        <div className="flex rounded-lg bg-paper-bg p-0.5 text-[11px]">
+        <div className="flex rounded-lg bg-paper-bg p-0.5 text-xs">
           <button
             type="button"
             onClick={() => {
@@ -598,7 +598,7 @@ export function PdfTranslateApp() {
               runningRef.current = false;
               pushStatus({ running: false });
             }}
-            className="inline-flex items-center gap-1 rounded-lg bg-paper-ink px-2.5 py-1 text-[11px] font-medium text-paper-card"
+            className="inline-flex items-center gap-1 rounded-lg bg-paper-ink px-2.5 py-1 text-xs font-medium text-paper-card"
           >
             <Square className="h-2.5 w-2.5 fill-current" />
             {donePages.size}/{pageMetas.length}
@@ -609,7 +609,7 @@ export function PdfTranslateApp() {
             <button
               type="button"
               onClick={() => void startTranslation(pdfDoc, pageMetas.length)}
-              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1 text-[11px] font-medium text-paper-card"
+              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1 text-xs font-medium text-paper-card"
             >
               <Languages className="h-3 w-3" />
               {t('translate.resume')}

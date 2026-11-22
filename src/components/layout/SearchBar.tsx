@@ -22,7 +22,7 @@ export function SearchBar({ query, index, count, onQuery, onStep, onClose }: Pro
         if (event.key === 'Enter') { event.preventDefault(); onStep(event.shiftKey ? -1 : 1); }
       }}
       className="w-40 min-w-0 bg-transparent px-1 text-xs outline-none placeholder:text-paper-muted" />
-    <output aria-live="polite" className="whitespace-nowrap px-1 font-mono text-[10px] text-paper-muted">{count ? (index + 1) + ' / ' + count : '0'}</output>
+    <output aria-live="polite" className="whitespace-nowrap px-1 font-mono text-[11px] text-paper-muted">{count ? (index + 1) + ' / ' + count : '0'}</output>
     {([-1, 1] as const).map(delta => {
       const Icon = delta < 0 ? ChevronUp : ChevronDown;
       const title = t(delta < 0 ? 'search.previous' : 'search.next');

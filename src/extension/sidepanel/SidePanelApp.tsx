@@ -1,7 +1,6 @@
 import { openRemotePdf } from '../../services/arxivFetch';
 import { openFullReader } from '../fullReader';
 import { CompanionCommands, flattenOutline } from './CompanionCommands';
-import { ThemeSwitcher } from '../../components/layout/ThemeSwitcher';
 import { OutlineBranch } from '../../components/drawer/AssetDrawer';
 import { usePreviewColor } from '../../components/peek/usePreviewColor';
 import { ReferenceDetails } from '../../components/peek/ReferenceDetails';
@@ -9,21 +8,19 @@ import { BacklinkStrip } from '../../components/BacklinkStrip';
 import { buildStudyNotesMarkdown, exportStudyPackZip, type StudyNotes } from '../../services/noteExporter';
 import { describeError, formatMessage, message, useI18n, type DisplayMessage } from '../../i18n';
 import { pinTitle, timedSnipTitle } from '../../i18n/pinTitle';
-import { LanguageToggle } from '../../i18n/LanguageToggle';
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react';
-import { createPortal } from 'react-dom';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
   ArrowDown,
   ArrowUp,
   BookOpen,
+  Check,
   ChevronDown,
   ChevronRight,
   Crosshair,
@@ -32,7 +29,6 @@ import {
   Image as ImageIcon,
   Languages,
   Loader2,
-  Maximize2,
   Pin,
   RefreshCw,
   RotateCcw,
@@ -70,25 +66,14 @@ import {
   normalizeDocKey,
 } from '../urlRules';
 import { loadTranslateConfig, saveTranslateConfig } from '../translator';
+import { grantFreeTranslateConsent, needsFreeTranslateConsent } from '../../services/translator';
+import { SettingsMenu } from '../../components/layout/SettingsMenu';
 import { ViewportSnipModal } from './ViewportSnipModal';
 import { TranslateSettingsBar } from './TranslateSettingsBar';
 
 type MainTab = 'pins' | 'assets' | 'outline' | 'glossary';
 type AssetFilter = 'all' | CompanionAsset['kind'] | 'reference';
 type SourceMode = 'idle' | 'dom' | 'pdf';
-
-interface ZoomOverlayState {
-  id: string;
-  rect: {
-    top: number;
-    left: number;
-    right: number;
-    bottom: number;
-    width: number;
-    height: number;
-  };
-  phase: 'entering' | 'open' | 'leaving';
-}
 
 const emptyIndex: CompanionIndex = { backlinksMap: {}, outline: [], glossaryMap: {} };
 
@@ -122,7 +107,14 @@ export function SidePanelApp() {
   const [linkedPdfUrl, setLinkedPdfUrl] = useState<string | null>(null);
 
   const [index, setIndex] = useState<CompanionIndex>(emptyIndex);
-  const headings = useMemo(() => flattenOutline(index.outline), [index.outline]);
+  const [allAssets, setAssetsState] = useState<CompanionAsset[]>([]);
+  // Detected section headings belong to the outline, not to the figure list.
+  const assets = useMemo(() => allAssets.filter((asset) => asset.kind !== 'section'), [allAssets]);
+  const outline = useMemo(() => index.outline.length ? index.outline : allAssets
+    .filter((asset) => asset.kind === 'section')
+    .map((asset) => ({ id: asset.key, title: asset.label, pageNumber: asset.pageNumber ?? null,
+      domAnchorId: asset.domAnchorId, children: [] })), [index.outline, allAssets]);
+  const headings = useMemo(() => flattenOutline(outline), [outline]);
   const [termQuery, setTermQuery] = useState('');
   const terms = Object.values(index.glossaryMap);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -141,7 +133,7 @@ export function SidePanelApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   useEffect(() => () => exportJob.current?.abort(), [docKey]);
-  const [assets, setAssets] = useState<CompanionAsset[]>([]);
+  const setAssets = setAssetsState;
   const [references, setReferences] = useState<CompanionReference[]>([]);
   const [pinsByDoc, setPinsByDoc] = useState<Record<string, CompanionPinItem[]>>({});
 
@@ -157,11 +149,10 @@ export function SidePanelApp() {
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
   const [editingPinId, setEditingPinId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string>('');
-  const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
-  const [pageZoomActiveId, setPageZoomActiveId] = useState<string | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [snipScreenshot, setSnipScreenshot] = useState<string | null>(null);
-  const [toast, setToast] = useState<DisplayMessage | null>(null);
+  const [toast, setToast] = useState<{ notice: DisplayMessage; action?: { label: DisplayMessage; run: () => void } } | null>(null);
+  const [consentMode, setConsentMode] = useState<Exclude<TranslateDisplayMode, 'off'> | null>(null);
 
   // ---- 整篇论文翻译控制状态（始终显示在左侧主页面，默认仅译文）----
   const [translateConfig, setTranslateConfig] = useState<TranslateConfig>(
@@ -185,19 +176,9 @@ export function SidePanelApp() {
   const toastTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const zoomEnterTimerRef = useRef<number | null>(null);
-  const zoomLeaveTimerRef = useRef<number | null>(null);
-  const zoomUnmountTimerRef = useRef<number | null>(null);
-  const zoomRaf1Ref = useRef<number | null>(null);
-  const zoomRaf2Ref = useRef<number | null>(null);
-  const pageZoomActiveRef = useRef<string | null>(null);
-  const activeTabIdRef = useRef<number | null>(null);
-  const sourceModeRef = useRef<SourceMode>('idle');
+  const titleClickTimerRef = useRef<number>();
 
   docKeyRef.current = docKey;
-  pageZoomActiveRef.current = pageZoomActiveId;
-  activeTabIdRef.current = activeTabId;
-  sourceModeRef.current = sourceMode;
 
   const pinnedItems = useMemo(
     () => (docKey ? pinsByDoc[docKey] ?? [] : []),
@@ -209,10 +190,11 @@ export function SidePanelApp() {
     [pinnedItems],
   );
 
-  const showToast = useCallback((notice: DisplayMessage) => {
-    setToast(notice);
+  const showToast = useCallback((notice: DisplayMessage, action?: { label: DisplayMessage; run: () => void }) => {
+    setToast({ notice, action });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 1900);
+    // Leave enough time to reach an Undo button.
+    toastTimerRef.current = window.setTimeout(() => setToast(null), action ? 6000 : 1900);
   }, []);
 
   const flashPin = useCallback((id: string) => {
@@ -676,6 +658,23 @@ export function SidePanelApp() {
     }));
   };
 
+  const handleClearPins = () => {
+    const key = docKey;
+    const previous = pinnedItems;
+    if (!key || !previous.length) return;
+    setPinsByDoc((prev) => ({ ...prev, [key]: [] }));
+    showToast(message('dock.cleared', { count: previous.length }), {
+      label: message('common.undo'),
+      run: () => {
+        setPinsByDoc((prev) => {
+          const current = prev[key] ?? [];
+          return { ...prev, [key]: [...previous, ...current.filter((item) => !previous.some((old) => old.id === item.id))] };
+        });
+        setToast(null);
+      },
+    });
+  };
+
   const handleMovePin = (id: string, delta: -1 | 1) => {
     updateCurrentPins((list) => {
       const idx = list.findIndex((item) => item.id === id);
@@ -805,49 +804,8 @@ export function SidePanelApp() {
     await parsePdfBuffer(buffer, file.name, requestId);
   };
 
-  // ---- 钉板悬停自动放大（对齐 PinDock 物理手感，并支持 HTML 页破框浮出到左侧网页）----
-  const clearZoomTimers = useCallback(() => {
-    if (zoomEnterTimerRef.current !== null) {
-      window.clearTimeout(zoomEnterTimerRef.current);
-      zoomEnterTimerRef.current = null;
-    }
-    if (zoomLeaveTimerRef.current !== null) {
-      window.clearTimeout(zoomLeaveTimerRef.current);
-      zoomLeaveTimerRef.current = null;
-    }
-    if (zoomUnmountTimerRef.current !== null) {
-      window.clearTimeout(zoomUnmountTimerRef.current);
-      zoomUnmountTimerRef.current = null;
-    }
-    if (zoomRaf1Ref.current !== null) {
-      window.cancelAnimationFrame(zoomRaf1Ref.current);
-      zoomRaf1Ref.current = null;
-    }
-    if (zoomRaf2Ref.current !== null) {
-      window.cancelAnimationFrame(zoomRaf2Ref.current);
-      zoomRaf2Ref.current = null;
-    }
-  }, []);
-
-  const hidePageZoom = useCallback(() => {
-    if (!pageZoomActiveRef.current) return;
-    setPageZoomActiveId(null);
-    if (activeTabIdRef.current !== null) {
-      void chrome.tabs
-        .sendMessage(activeTabIdRef.current, { type: 'REFPIN_HIDE_ZOOM_PREVIEW' })
-        .catch(() => {});
-    }
-  }, []);
-
-  const dismissZoomImmediately = useCallback(() => {
-    clearZoomTimers();
-    setZoomOverlay(null);
-    hidePageZoom();
-  }, [clearZoomTimers, hidePageZoom]);
-
   const openLightbox = (title: string, caption: string, imageUrl?: string, pageNumber?: number) => {
     if (!imageUrl) return;
-    dismissZoomImmediately();
     setLightboxAsset({
       key: `lb:${title}`,
       kind: 'figure',
@@ -859,206 +817,7 @@ export function SidePanelApp() {
     });
   };
 
-  const scheduleZoomLeave = useCallback(() => {
-    if (zoomEnterTimerRef.current !== null) {
-      window.clearTimeout(zoomEnterTimerRef.current);
-      zoomEnterTimerRef.current = null;
-    }
-    if (zoomLeaveTimerRef.current !== null) {
-      window.clearTimeout(zoomLeaveTimerRef.current);
-    }
-    zoomLeaveTimerRef.current = window.setTimeout(() => {
-      zoomLeaveTimerRef.current = null;
-      hidePageZoom();
-      setZoomOverlay((prev) => (prev ? { ...prev, phase: 'leaving' } : null));
-      if (zoomUnmountTimerRef.current !== null) {
-        window.clearTimeout(zoomUnmountTimerRef.current);
-      }
-      zoomUnmountTimerRef.current = window.setTimeout(() => {
-        zoomUnmountTimerRef.current = null;
-        setZoomOverlay(null);
-      }, 210);
-    }, 75);
-  }, [hidePageZoom]);
-
-  const openInPanelZoom = useCallback((id: string, rect: DOMRect) => {
-    setZoomOverlay({
-      id,
-      rect: {
-        top: rect.top,
-        left: rect.left,
-        right: rect.right,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-      },
-      phase: 'entering',
-    });
-
-    zoomRaf1Ref.current = window.requestAnimationFrame(() => {
-      zoomRaf2Ref.current = window.requestAnimationFrame(() => {
-        setZoomOverlay((prev) =>
-          prev && prev.id === id && prev.phase === 'entering'
-            ? { ...prev, phase: 'open' }
-            : prev,
-        );
-      });
-    });
-  }, []);
-
-  const handlePinHoverStart = useCallback(
-    (item: CompanionPinItem, el: HTMLElement) => {
-      if (item.collapsed || editingPinId === item.id || lightboxAsset || snipScreenshot) {
-        return;
-      }
-      if (zoomLeaveTimerRef.current !== null) {
-        window.clearTimeout(zoomLeaveTimerRef.current);
-        zoomLeaveTimerRef.current = null;
-      }
-      if (zoomUnmountTimerRef.current !== null) {
-        window.clearTimeout(zoomUnmountTimerRef.current);
-        zoomUnmountTimerRef.current = null;
-      }
-
-      if (zoomOverlay?.id === item.id) {
-        setZoomOverlay((prev) => (prev ? { ...prev, phase: 'open' } : prev));
-        return;
-      }
-      if (pageZoomActiveRef.current === item.id) {
-        return;
-      }
-
-      if (zoomEnterTimerRef.current !== null) {
-        window.clearTimeout(zoomEnterTimerRef.current);
-      }
-
-      zoomEnterTimerRef.current = window.setTimeout(() => {
-        zoomEnterTimerRef.current = null;
-        if (!el.isConnected) return;
-        const rect = el.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
-
-        // 优先尝试在左侧 HTML 网页右缘破框浮出大尺寸放大预览；若当前是原生 PDF 或不可通信，无缝降级为侧栏内浮层放大
-        const tabId = activeTabIdRef.current;
-        if (sourceModeRef.current === 'dom' && tabId !== null) {
-          const anchorCenterRatio =
-            (rect.top + rect.height / 2) / Math.max(1, window.innerHeight);
-          void chrome.tabs
-            .sendMessage(tabId, {
-              type: 'REFPIN_SHOW_ZOOM_PREVIEW',
-              item,
-              anchorCenterRatio,
-            })
-            .then((resp) => {
-              const ok = (resp as { ok?: boolean } | undefined)?.ok;
-              if (ok) {
-                setZoomOverlay(null);
-                setPageZoomActiveId(item.id);
-              } else {
-                openInPanelZoom(item.id, rect);
-              }
-            })
-            .catch(() => {
-              openInPanelZoom(item.id, rect);
-            });
-          return;
-        }
-
-        openInPanelZoom(item.id, rect);
-      }, 130);
-    },
-    [editingPinId, lightboxAsset, openInPanelZoom, snipScreenshot, zoomOverlay?.id],
-  );
-
-  const handlePinHoverEnd = useCallback(
-    (id: string) => {
-      if (zoomEnterTimerRef.current !== null) {
-        window.clearTimeout(zoomEnterTimerRef.current);
-        zoomEnterTimerRef.current = null;
-      }
-      if (zoomOverlay?.id === id || pageZoomActiveRef.current === id) {
-        scheduleZoomLeave();
-      }
-    },
-    [scheduleZoomLeave, zoomOverlay?.id],
-  );
-
-  // 切换 Tab / 折叠移除 / 窗口失焦 / Esc 时自动收起悬浮放大
-  useEffect(() => {
-    dismissZoomImmediately();
-  }, [mainTab, docKey, dismissZoomImmediately]);
-
-  useEffect(() => {
-    const activeId = zoomOverlay?.id || pageZoomActiveId;
-    if (!activeId) return;
-    const target = pinnedItems.find((entry) => entry.id === activeId);
-    if (!target || target.collapsed) {
-      dismissZoomImmediately();
-    }
-  }, [pinnedItems, zoomOverlay, pageZoomActiveId, dismissZoomImmediately]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismissZoomImmediately();
-    };
-    const onBlur = () => dismissZoomImmediately();
-    const onDocLeave = () => dismissZoomImmediately();
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('blur', onBlur);
-    document.addEventListener('mouseleave', onDocLeave);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('blur', onBlur);
-      document.removeEventListener('mouseleave', onDocLeave);
-      clearZoomTimers();
-      hidePageZoom();
-    };
-  }, [clearZoomTimers, dismissZoomImmediately, hidePageZoom]);
-
-  const zoomedItem = useMemo(
-    () =>
-      zoomOverlay
-        ? pinnedItems.find((entry) => entry.id === zoomOverlay.id) ?? null
-        : null,
-    [pinnedItems, zoomOverlay],
-  );
-
-  const zoomedOverlayStyle = useMemo<CSSProperties | null>(() => {
-    if (!zoomOverlay || !zoomedItem || typeof window === 'undefined') return null;
-    const { rect, phase } = zoomOverlay;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const targetWidth = Math.max(280, vw - 16);
-    const startScale = Number(
-      Math.min(0.95, Math.max(0.84, rect.width / targetWidth)).toFixed(3),
-    );
-    const isOpen = phase === 'open';
-    const anchorBottom = rect.top + rect.height / 2 > vh * 0.54;
-
-    return {
-      position: 'fixed',
-      left: 8,
-      right: 8,
-      zIndex: 45,
-      ...(anchorBottom
-        ? { bottom: Math.max(10, vh - rect.bottom - 6), transformOrigin: 'center bottom' }
-        : { top: Math.max(54, rect.top - 6), transformOrigin: 'center top' }),
-      opacity: isOpen ? 1 : 0,
-      transform: isOpen
-        ? 'scale(1) translate3d(0, 0, 0)'
-        : `scale(${startScale}) translate3d(0, 0, 0)`,
-      boxShadow: isOpen
-        ? '0 24px 64px -8px rgba(28, 25, 23, 0.24), 0 8px 20px -4px rgba(28, 25, 23, 0.12)'
-        : '0 4px 12px rgba(28, 25, 23, 0.06)',
-      borderRadius: 12,
-      pointerEvents: phase === 'leaving' ? 'none' : 'auto',
-      transition:
-        phase === 'leaving'
-          ? 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease-out, box-shadow 200ms ease-out'
-          : 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease-out, box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1)',
-      willChange: 'transform, opacity',
-    };
-  }, [zoomOverlay, zoomedItem]);
+  useEffect(() => () => window.clearTimeout(titleClickTimerRef.current), []);
 
   // ---- 整篇翻译控制（始终直接作用于左侧主页面：HTML 就地替换 / PDF 原位译文覆盖）----
   const handleUpdateTranslateConfig = (next: TranslateConfig) => {
@@ -1081,9 +840,25 @@ export function SidePanelApp() {
   };
 
   const hasPdfSource = sourceMode === 'pdf' || (sourceMode === 'idle' && inspectTabUrl(docKey).kind === 'pdf');
+  // The public channel sends paragraphs to a third party; ask once before the first translation.
+  const confirmFreeTranslate = (displayMode: Exclude<TranslateDisplayMode, 'off'>) => {
+    if (!needsFreeTranslateConsent(translateConfig)) return true;
+    setConsentMode(displayMode);
+    return false;
+  };
+
+  const acceptTranslateConsent = () => {
+    grantFreeTranslateConsent();
+    const mode = consentMode;
+    setConsentMode(null);
+    if (mode) void handleStartTranslate(mode, true);
+  };
+
   const handleStartTranslate = async (
     displayMode: Exclude<TranslateDisplayMode, 'off'> = 'translated',
+    consented = false,
   ) => {
+    if (!consented && !isPdfTranslateTab && !confirmFreeTranslate(displayMode)) return;
     // 情况 1：已在主页 PDF 译文视图 -> 直接切换模式
     if (isPdfTranslateTab && linkedPdfUrl) {
       void chrome.runtime
@@ -1130,9 +905,7 @@ export function SidePanelApp() {
     }
 
     if (hasPdfSource && linkedPdfUrl) {
-      if (displayMode !== 'off') {
-        await openPdfTranslateInMainTab(linkedPdfUrl, displayMode);
-      }
+      if (displayMode !== 'off') await handleStartTranslate(displayMode);
       return;
     }
 
@@ -1176,7 +949,7 @@ export function SidePanelApp() {
       return;
     }
     if (hasPdfSource && linkedPdfUrl) {
-      void openPdfTranslateInMainTab(linkedPdfUrl, 'translated');
+      void handleStartTranslate('translated');
       return;
     }
     if (pageTranslateStatus.running) {
@@ -1286,7 +1059,7 @@ export function SidePanelApp() {
       <header className="relative z-20 shrink-0 border-b border-paper-border bg-paper-card px-3 py-2.5 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-[11px] font-bold text-paper-card">
+            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-paper-ink text-xs font-bold text-paper-card">
               R
               <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-paper-border bg-paper-gold" />
             </span>
@@ -1296,7 +1069,7 @@ export function SidePanelApp() {
                   RefPin
                 </span>
                 {siteLabel && (
-                  <span className="truncate rounded border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[9.5px] font-medium text-paper-goldtext">
+                  <span className="truncate rounded border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[11px] font-medium text-paper-goldtext">
                     {siteLabel}
                   </span>
                 )}
@@ -1305,12 +1078,11 @@ export function SidePanelApp() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            <LanguageToggle />
             <button
               type="button"
               onClick={handleQuickTranslateClick}
               className={clsx(
-                'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition',
+                'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition',
                 pageTranslateStatus.active || isPdfTranslateTab
                   ? 'bg-paper-ink text-paper-card'
                   : 'border border-paper-border bg-paper-card text-paper-ink hover:border-paper-gold',
@@ -1323,7 +1095,7 @@ export function SidePanelApp() {
             <button
               type="button"
               onClick={() => void handleStartSnip()}
-              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2 py-1 text-[11px] font-medium text-paper-card shadow-sm transition hover:opacity-90"
+              className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-2 py-1 text-xs font-medium text-paper-card shadow-sm transition hover:opacity-90"
               title={t('snip.free')}
             >
               <Scissors className="h-3 w-3" />
@@ -1356,6 +1128,8 @@ export function SidePanelApp() {
             >
               <RefreshCw className={clsx('h-3.5 w-3.5', isLoading && 'animate-spin')} />
             </button>
+            <SettingsMenu onPalette={() => setPaletteOpen(true)}
+              triggerClassName="rounded-lg border border-paper-border bg-paper-card" />
           </div>
         </div>
 
@@ -1364,10 +1138,7 @@ export function SidePanelApp() {
             className="inline-flex items-center gap-1 rounded-md bg-paper-ink px-2 py-1 text-xs font-medium text-paper-card">
             <BookOpen size={13} />{t('panel.fullReader')}
           </button>
-          <ThemeSwitcher />
-          <button type="button" title={t('palette.title')} aria-label={t('palette.title')} onClick={() => setPaletteOpen(true)}
-            className="rounded-md border border-paper-border px-1.5 py-1 font-mono text-[11px]">⌘K</button>
-          <details ref={exportMenu} className="relative ml-auto text-[11px]">
+          <details ref={exportMenu} className="relative ml-auto text-xs">
             <summary className="cursor-pointer rounded-md border border-paper-border px-2 py-1">{t('panel.export')}</summary>
             <div className="absolute right-0 z-20 mt-1 grid w-max gap-1 rounded-md border border-paper-border bg-paper-card p-1 shadow-float">
               {(['copy', 'zip'] as const).map(mode => <button key={mode} disabled={exporting || !docKey} type="button"
@@ -1377,7 +1148,7 @@ export function SidePanelApp() {
           </details>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-2">
-          <p className="min-w-0 flex-1 truncate text-[11px] text-paper-muted" title={docTitle}>
+          <p className="min-w-0 flex-1 truncate text-xs text-paper-muted" title={docTitle}>
             {docTitle}
           </p>
           {(sourceMode === 'dom' || sourceMode === 'idle') && linkedPdfUrl && !isLoading && (
@@ -1387,7 +1158,7 @@ export function SidePanelApp() {
                 const requestId = ++syncRequestRef.current;
                 void fetchAndParsePdfUrl(linkedPdfUrl, docTitle, requestId);
               }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:border-paper-gold hover:text-paper-ink"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-0.5 text-[11px] text-paper-muted transition hover:border-paper-gold hover:text-paper-ink"
             >
               <FileSearch className="h-3 w-3" />
               {t('panel.extractPdf')}
@@ -1408,7 +1179,7 @@ export function SidePanelApp() {
       {/* 原页面翻译快捷控制条（仅在开启翻译时出现） */}
       {(pageTranslateStatus.active || isPdfTranslateTab || pageTranslateStatus.running) && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-paper-border bg-paper-goldbg/60 px-3 py-1.5">
-          <div className="flex rounded-md bg-paper-card p-0.5 text-[10.5px] shadow-sm">
+          <div className="flex rounded-md bg-paper-card p-0.5 text-[11px] shadow-sm">
             {(
               [
                 { id: 'translated', label: t('translate.only') },
@@ -1433,7 +1204,7 @@ export function SidePanelApp() {
           </div>
 
           {pageTranslateStatus.total > 0 && (
-            <span className="ml-auto font-mono text-[10px] text-paper-goldtext">
+            <span className="ml-auto font-mono text-[11px] text-paper-goldtext">
               {pageTranslateStatus.done}/{pageTranslateStatus.total}
             </span>
           )}
@@ -1451,6 +1222,24 @@ export function SidePanelApp() {
         </div>
       )}
 
+      {consentMode && (
+        <div role="dialog" aria-labelledby="panel-consent-title"
+          className="shrink-0 border-b border-paper-goldborder bg-paper-goldbg/60 px-3 py-2.5 text-xs">
+          <p id="panel-consent-title" className="font-semibold text-paper-ink">{t('translate.consentTitle')}</p>
+          <p className="mt-1 leading-relaxed text-paper-muted">{t('translate.consentBody')}</p>
+          <div className="mt-2 flex justify-end gap-2">
+            <button type="button" onClick={() => { setConsentMode(null); setShowTranslateSettings(true); }}
+              className="rounded-lg border border-paper-border bg-paper-card px-3 py-1.5 text-paper-ink hover:bg-paper-bg">
+              {t('translate.consentConfigure')}
+            </button>
+            <button type="button" autoFocus onClick={acceptTranslateConsent}
+              className="rounded-lg bg-paper-ink px-3 py-1.5 font-medium text-paper-card hover:opacity-90">
+              {t('translate.consentContinue')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 极简翻译引擎设置抽屉 */}
       {showTranslateSettings && (
         <TranslateSettingsBar
@@ -1465,25 +1254,20 @@ export function SidePanelApp() {
           ['pins', t('panel.pins'), pinnedItems.length], ['assets', t('panel.assets'), totalAssetsCount],
           ['outline', t('outline.title'), headings.length], ['glossary', t('panel.glossary'), terms.length],
         ] as const).map(([tab, label, count]) => <button key={tab} type="button" aria-pressed={mainTab === tab}
-          onClick={() => setMainTab(tab)} className="flex flex-wrap items-center justify-center gap-1 rounded-md py-1.5 text-[11px] text-paper-muted aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext">
-          {label}<span className="rounded-full bg-paper-bg px-1 font-mono text-[10px]">{count}</span>
+          onClick={() => setMainTab(tab)} className="flex flex-wrap items-center justify-center gap-1 rounded-md py-1.5 text-xs text-paper-muted aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext">
+          {label}<span className="rounded-full bg-paper-bg px-1 font-mono text-[11px]">{count}</span>
         </button>)}
       </nav>
 
       {/* 错误提示 */}
       {(errorMessage || pageTranslateStatus.error) && (
-        <div className="shrink-0 border-b border-paper-goldborder bg-paper-goldbg px-3 py-2 text-[11px] leading-relaxed text-paper-ink">
+        <div className="shrink-0 border-b border-paper-goldborder bg-paper-goldbg px-3 py-2 text-xs leading-relaxed text-paper-ink">
           {formatMessage(errorMessage || pageTranslateStatus.error)}
         </div>
       )}
 
       {/* 主内容区 */}
-      <div
-        className="min-h-0 flex-1 overflow-y-auto p-3"
-        onScroll={() => {
-          if (zoomOverlay || pageZoomActiveId) dismissZoomImmediately();
-        }}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {isLoading && totalAssetsCount === 0 && mainTab === 'assets' ? (
           <div className="flex flex-col items-center justify-center gap-2.5 py-16 text-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-paper-goldborder bg-paper-goldbg text-paper-gold">
@@ -1492,10 +1276,10 @@ export function SidePanelApp() {
             <p className="text-xs font-medium text-paper-ink">
               {t(statusMessage || 'panel.busy')}
             </p>
-            <p className="font-mono text-[11px] text-paper-muted">{progress}%</p>
+            <p className="font-mono text-xs text-paper-muted">{progress}%</p>
           </div>
         ) : mainTab === 'outline' ? (
-          index.outline.length ? <ul>{index.outline.map(item => <OutlineBranch key={item.id} item={item}
+          outline.length ? <ul>{outline.map(item => <OutlineBranch key={item.id} item={item}
             onJump={heading => jump(heading.pageNumber, heading.domAnchorId)} />)}</ul>
             : <p className="py-6 text-center text-xs text-paper-muted">{t('panel.outlineEmpty')}</p>
         ) : mainTab === 'glossary' ? (
@@ -1522,18 +1306,21 @@ export function SidePanelApp() {
               <p className="mt-2.5 text-xs font-medium text-paper-ink">
                 {t('panel.noPins')}
               </p>
+              <p className="mt-1 max-w-[260px] text-xs leading-relaxed text-paper-muted">
+                {t('panel.pinsHelp')}
+              </p>
               <div className="mt-3.5 flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setMainTab('assets')}
-                  className="rounded-lg border border-paper-border bg-paper-bg px-3 py-1.5 text-[11px] font-medium text-paper-ink transition hover:border-paper-gold"
+                  className="rounded-lg border border-paper-border bg-paper-bg px-3 py-1.5 text-xs font-medium text-paper-ink transition hover:border-paper-gold"
                 >
                   {t('panel.fromAssets')}
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleStartSnip()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1.5 text-[11px] font-medium text-paper-card transition hover:opacity-90"
+                  className="inline-flex items-center gap-1 rounded-lg bg-paper-gold px-3 py-1.5 text-xs font-medium text-paper-card transition hover:opacity-90"
                 >
                   <Scissors className="h-3 w-3" />
                   {t('snip.action')}
@@ -1542,11 +1329,12 @@ export function SidePanelApp() {
             </div>
           ) : (
             <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between px-0.5 text-[11px] text-paper-muted">
+              <div className="flex items-center justify-between px-0.5 text-xs text-paper-muted">
                 <span>{t('panel.pinCount', { count: pinnedItems.length })}</span>
                 <button
                   type="button"
-                  onClick={() => updateCurrentPins(() => [])}
+                  onClick={handleClearPins}
+                  title={t('dock.clearAll')}
                   className="inline-flex items-center gap-1 text-paper-muted transition hover:text-paper-gold"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -1554,21 +1342,14 @@ export function SidePanelApp() {
                 </button>
               </div>
 
-              {pinnedItems.map((item, idx) => {
-                const isLifted =
-                  zoomOverlay?.id === item.id && zoomOverlay.phase !== 'leaving';
-                const isPageZoomed = pageZoomActiveId === item.id;
-                return (
+              {pinnedItems.map((item, idx) => (
                 <article
                   key={item.id}
-                  onMouseEnter={(event) => handlePinHoverStart(item, event.currentTarget)}
-                  onMouseLeave={() => handlePinHoverEnd(item.id)}
                   className={clsx(
-                    'overflow-hidden rounded-xl border bg-paper-card shadow-paper will-change-transform transition-[transform,box-shadow,border-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-paper-goldborder hover:shadow-float',
-                    highlightedPinId === item.id || isPageZoomed
+                    'overflow-hidden rounded-xl border bg-paper-card shadow-paper transition-[box-shadow,border-color] duration-200 hover:border-paper-goldborder hover:shadow-float',
+                    highlightedPinId === item.id
                       ? 'border-paper-gold ring-2 ring-paper-goldsoft'
                       : 'border-paper-border',
-                    isLifted && 'scale-[0.985] opacity-35',
                   )}
                 >
                   <div className="flex items-center gap-1.5 border-b border-paper-border bg-paper-bg px-2.5 py-2">
@@ -1616,21 +1397,29 @@ export function SidePanelApp() {
                         className="min-w-0 flex-1 rounded border border-paper-gold bg-paper-card px-1.5 py-0.5 text-xs font-medium text-paper-ink outline-none"
                       />
                     ) : (
-                      <span
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!item.domAnchorId && !item.pageNumber) return;
+                          // Wait briefly so a double-click renames instead of jumping first.
+                          window.clearTimeout(titleClickTimerRef.current);
+                          titleClickTimerRef.current = window.setTimeout(() => jump(item.pageNumber, item.domAnchorId), 220);
+                        }}
                         onDoubleClick={() => {
+                          window.clearTimeout(titleClickTimerRef.current);
                           setEditingPinId(item.id);
                           setEditingTitle(pinTitle(item));
                         }}
-                        className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-paper-ink"
-                        title={t('panel.renameHint')}
+                        className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-paper-ink hover:text-paper-gold"
+                        title={t('pin.titleHint')}
                       >
                         {pinTitle(item)}
-                      </span>
+                      </button>
                     )}
 
-                    <span className="shrink-0 rounded bg-paper-goldbg px-1 text-[9px] text-paper-goldtext">{t(`kind.${item.kind}`)}</span>
+                    <span className="shrink-0 rounded bg-paper-goldbg px-1 text-[11px] text-paper-goldtext">{t(`kind.${item.kind}`)}</span>
                     {item.pageNumber && (
-                      <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] text-paper-goldtext">
+                      <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[11px] text-paper-goldtext">
                         {t('reader.page', { page: item.pageNumber })}
                       </span>
                     )}
@@ -1683,28 +1472,26 @@ export function SidePanelApp() {
                               item.pageNumber,
                             )
                           }
-                          className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1.5"
+                          className="cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1.5"
+                          title={t('lightbox.openHint')}
                         >
                           <CardImage
                             src={item.imageUrl}
                             alt={pinTitle(item)}
                             className="mx-auto max-h-56 w-full object-contain"
                           />
-                          <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-paper-card opacity-0 transition group-hover:opacity-100">
-                            <Maximize2 className="h-3 w-3" />
-                          </span>
                         </div>
                       )}
 
                       {!item.imageUrl && item.tableHtml && (
                         <div
-                          className="max-h-48 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[10.5px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-1 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
+                          className="max-h-48 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[11px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-1 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
                           dangerouslySetInnerHTML={{ __html: item.tableHtml }}
                         />
                       )}
 
                       {!item.imageUrl && !item.tableHtml && item.textPreview && (
-                        <div className="rounded-lg border border-paper-border bg-paper-bg px-2.5 py-2 font-mono text-[11px] leading-relaxed text-paper-ink">
+                        <div className="rounded-lg border border-paper-border bg-paper-bg px-2.5 py-2 font-mono text-xs leading-relaxed text-paper-ink">
                           {item.textPreview}
                         </div>
                       )}
@@ -1715,19 +1502,19 @@ export function SidePanelApp() {
                             {item.reference.title}
                           </p>
                           {(item.reference.authors || item.reference.year) && (
-                            <p className="text-[11px] text-paper-muted">
+                            <p className="text-xs text-paper-muted">
                               {[item.reference.authors, item.reference.year]
                                 .filter(Boolean)
                                 .join(' · ')}
                             </p>
                           )}
-                          <p className="rounded-lg bg-paper-bg p-2 text-[11px] leading-relaxed text-paper-ink">
+                          <p className="rounded-lg bg-paper-bg p-2 text-xs leading-relaxed text-paper-ink">
                             {item.reference.rawText}
                           </p>
                         </div>
                       ) : (
                         item.subtitle && (
-                          <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-paper-muted">
+                          <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-paper-muted">
                             {item.subtitle}
                           </p>
                         )
@@ -1740,7 +1527,7 @@ export function SidePanelApp() {
                           <button
                             type="button"
                             onClick={() => jump(item.pageNumber, item.domAnchorId)}
-                            className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
+                            className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[11px] text-paper-ink transition hover:bg-paper-bg"
                           >
                             <Crosshair className="h-3 w-3" />
                             {t('pin.locate')}
@@ -1752,7 +1539,7 @@ export function SidePanelApp() {
                             <button
                               type="button"
                               onClick={() => void handleExpandPdfCrop(item, 'up')}
-                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[11px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                               title={t('crop.upHint')}
                             >
                               {t('crop.upArrow')}
@@ -1760,7 +1547,7 @@ export function SidePanelApp() {
                             <button
                               type="button"
                               onClick={() => void handleExpandPdfCrop(item, 'down')}
-                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                              className="rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[11px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                               title={t('crop.downHint')}
                             >
                               {t('crop.downArrow')}
@@ -1770,7 +1557,7 @@ export function SidePanelApp() {
                                 <button
                                   type="button"
                                   onClick={() => handleResetPdfCrop(item)}
-                                  className="inline-flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10.5px] text-paper-muted transition hover:text-paper-ink"
+                                  className="inline-flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[11px] text-paper-muted transition hover:text-paper-ink"
                                 >
                                   <RotateCcw className="h-2.5 w-2.5" />
                                   {t('crop.reset')}
@@ -1791,7 +1578,7 @@ export function SidePanelApp() {
                               }
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[10.5px] font-medium text-paper-goldtext transition hover:bg-paper-goldsoft"
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[11px] font-medium text-paper-goldtext transition hover:bg-paper-goldsoft"
                             >
                               {t('reference.source')}
                               <ExternalLink className="h-3 w-3" />
@@ -1802,8 +1589,7 @@ export function SidePanelApp() {
                     </div>
                   )}
                 </article>
-                );
-              })}
+              ))}
             </div>
           )
         ) : totalAssetsCount === 0 ? (
@@ -1852,7 +1638,7 @@ export function SidePanelApp() {
               className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-paper-border bg-paper-card px-4 py-4 text-center transition hover:border-paper-gold"
             >
               <Upload className="h-4 w-4 text-paper-muted" />
-              <span className="text-[11px] font-medium text-paper-ink">
+              <span className="text-xs font-medium text-paper-ink">
                 {t('panel.drop')}
               </span>
             </button>
@@ -1907,18 +1693,18 @@ export function SidePanelApp() {
                     id: 'equation',
                     label: t('filter.equationCount', { count: assets.filter((a) => a.kind === 'equation').length }),
                   },
-                  ...(['algorithm', 'theorem', 'section'] as const).map(kind => ({
+                  ...(['algorithm', 'theorem'] as const).map(kind => ({
                     id: kind, label: t(`kind.${kind}`) + ' ' + assets.filter(asset => asset.kind === kind).length,
                   })),
                   { id: 'reference', label: t('filter.referenceCount', { count: references.length }) },
                 ] as Array<{ id: AssetFilter; label: string }>
-              ).map((chip) => (
+              ).filter((chip) => chip.id === 'all' || chip.id === assetFilter || !/\s0$/.test(chip.label)).map((chip) => (
                 <button
                   key={chip.id}
                   type="button"
                   onClick={() => setAssetFilter(chip.id)}
                   className={clsx(
-                    'rounded-full px-2.5 py-1 text-[10.5px] font-medium transition',
+                    'rounded-full px-2.5 py-1 text-[11px] font-medium transition',
                     assetFilter === chip.id
                       ? 'bg-paper-ink text-paper-card'
                       : 'border border-paper-border bg-paper-card text-paper-muted hover:text-paper-ink',
@@ -1938,7 +1724,7 @@ export function SidePanelApp() {
                   className="overflow-hidden rounded-xl border border-paper-border bg-paper-card p-2.5 shadow-paper transition hover:border-paper-goldborder"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[10.5px] font-semibold text-paper-goldtext">
+                    <span className="inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[11px] font-semibold text-paper-goldtext">
                       {asset.kind === 'table' ? (
                         <Table2 className="h-3 w-3" />
                       ) : (
@@ -1948,7 +1734,7 @@ export function SidePanelApp() {
                     </span>
                     <div className="flex items-center gap-1">
                       {asset.pageNumber && (
-                        <span className="font-mono text-[10px] text-paper-muted">
+                        <span className="font-mono text-[11px] text-paper-muted">
                           {t('reader.page', { page: asset.pageNumber })}
                         </span>
                       )}
@@ -1956,7 +1742,7 @@ export function SidePanelApp() {
                         <button
                           type="button"
                           onClick={() => jump(asset.pageNumber, asset.domAnchorId)}
-                          className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10.5px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
+                          className="rounded-md border border-paper-border px-1.5 py-0.5 text-[11px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink"
                         >
                           {t('common.locate')}
                         </button>
@@ -1965,13 +1751,13 @@ export function SidePanelApp() {
                         type="button"
                         onClick={() => handlePinAsset(asset)}
                         className={clsx(
-                          'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition',
+                          'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition',
                           isPinned
                             ? 'border border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
                             : 'bg-paper-gold text-paper-card hover:opacity-90',
                         )}
                       >
-                        <Pin className="h-2.5 w-2.5" />
+                        {isPinned ? <Check className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
                         {isPinned ? t('pin.pinned') : t('common.pin')}
                       </button>
                     </div>
@@ -1999,19 +1785,19 @@ export function SidePanelApp() {
 
                   {!asset.imageUrl && asset.tableHtml && (
                     <div
-                      className="mt-2 max-h-36 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[10px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-0.5 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-0.5 [&_th]:font-semibold"
+                      className="mt-2 max-h-36 overflow-auto rounded-lg border border-paper-border bg-paper-card text-[11px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-1.5 [&_td]:py-0.5 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-1.5 [&_th]:py-0.5 [&_th]:font-semibold"
                       dangerouslySetInnerHTML={{ __html: asset.tableHtml }}
                     />
                   )}
 
                   {!asset.imageUrl && !asset.tableHtml && asset.textPreview && (
-                    <div className="mt-2 rounded-lg bg-paper-bg px-2 py-1.5 font-mono text-[10.5px] text-paper-ink">
+                    <div className="mt-2 rounded-lg bg-paper-bg px-2 py-1.5 font-mono text-[11px] text-paper-ink">
                       {asset.textPreview}
                     </div>
                   )}
 
-                  <span className="text-[10px] text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>
-                  <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-paper-muted">
+                  <span className="text-[11px] text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>
+                  <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-paper-muted">
                     {asset.caption}
                   </p>
                   {backlinks(asset.key)}
@@ -2033,7 +1819,7 @@ export function SidePanelApp() {
                   className="rounded-xl border border-paper-border bg-paper-card p-2.5 shadow-paper"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="shrink-0 rounded bg-paper-bg px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-paper-ink">
+                    <span className="shrink-0 rounded bg-paper-bg px-1.5 py-0.5 font-mono text-[11px] font-semibold text-paper-ink">
                       [{ref.index}]
                     </span>
                     <div className="flex items-center gap-1">
@@ -2041,7 +1827,7 @@ export function SidePanelApp() {
                         href={scholarUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:text-paper-ink"
+                        className="rounded-md border border-paper-border px-1.5 py-0.5 text-[11px] text-paper-muted transition hover:text-paper-ink"
                       >
                         {t('reference.source')} ↗
                       </a>
@@ -2049,7 +1835,7 @@ export function SidePanelApp() {
                         <button
                           type="button"
                           onClick={() => jump(ref.pageNumber, ref.domAnchorId)}
-                          className="rounded-md border border-paper-border px-1.5 py-0.5 text-[10px] text-paper-muted transition hover:text-paper-ink"
+                          className="rounded-md border border-paper-border px-1.5 py-0.5 text-[11px] text-paper-muted transition hover:text-paper-ink"
                         >
                           {t('common.locate')}
                         </button>
@@ -2058,13 +1844,13 @@ export function SidePanelApp() {
                         type="button"
                         onClick={() => handlePinReference(ref)}
                         className={clsx(
-                          'inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 text-[10.5px] font-medium transition',
+                          'inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 text-[11px] font-medium transition',
                           isPinned
                             ? 'border border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
                             : 'bg-paper-gold text-paper-card hover:opacity-90',
                         )}
                       >
-                        <Pin className="h-2.5 w-2.5" />
+                        {isPinned ? <Check className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
                         {isPinned ? t('pin.pinned') : t('common.pin')}
                       </button>
                     </div>
@@ -2075,7 +1861,7 @@ export function SidePanelApp() {
                   <PanelReferenceDetails reference={ref} />
                   {backlinks(ref.key)}
                   {(ref.authors || ref.year) && (
-                    <p className="mt-0.5 text-[10.5px] text-paper-muted">
+                    <p className="mt-0.5 text-[11px] text-paper-muted">
                       {[ref.authors, ref.year].filter(Boolean).join(' · ')}
                     </p>
                   )}
@@ -2097,184 +1883,6 @@ export function SidePanelApp() {
         onJump={jump} onPinAsset={handlePinAsset} onPinReference={handlePinReference}
         onPin={item => addPinForDoc(docKey, item)} onOpenReader={() => launchReader()}
         onExport={exportNotes} onClose={() => setPaletteOpen(false)} />}
-
-      {/* 钉板悬停自动放大浮层（原生 PDF / 侧栏内无缝降级模式） */}
-      {zoomedItem &&
-        zoomedOverlayStyle &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            style={zoomedOverlayStyle}
-            onMouseEnter={() => {
-              if (zoomLeaveTimerRef.current !== null) {
-                window.clearTimeout(zoomLeaveTimerRef.current);
-                zoomLeaveTimerRef.current = null;
-              }
-              if (zoomUnmountTimerRef.current !== null) {
-                window.clearTimeout(zoomUnmountTimerRef.current);
-                zoomUnmountTimerRef.current = null;
-              }
-              setZoomOverlay((prev) => (prev ? { ...prev, phase: 'open' } : prev));
-            }}
-            onMouseLeave={scheduleZoomLeave}
-          >
-            <article className="overflow-hidden rounded-xl border border-paper-goldborder/90 bg-paper-card ring-1 ring-amber-400/25">
-              <div className="flex items-center gap-1.5 border-b border-paper-border bg-paper-bg px-3 py-2">
-                <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-paper-goldtext">
-                  {t(`kind.${zoomedItem.kind}`)}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-xs font-semibold text-paper-ink">
-                  {pinTitle(zoomedItem)}
-                </span>
-                {zoomedItem.pageNumber && (
-                  <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] text-paper-goldtext">
-                    {t('reader.page', { page: zoomedItem.pageNumber })}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={dismissZoomImmediately}
-                  className="rounded p-0.5 text-paper-muted transition hover:text-paper-ink"
-                  aria-label={t('panel.closePreview')}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              <div className="p-3">
-                {zoomedItem.imageUrl && (
-                  <div
-                    onClick={() =>
-                      openLightbox(
-                        pinTitle(zoomedItem),
-                        zoomedItem.subtitle || '',
-                        zoomedItem.imageUrl,
-                        zoomedItem.pageNumber,
-                      )
-                    }
-                    className="group relative cursor-zoom-in overflow-hidden rounded-lg border border-paper-border bg-paper-bg p-1.5"
-                  >
-                    <CardImage
-                      src={zoomedItem.imageUrl}
-                      alt={pinTitle(zoomedItem)}
-                      className="mx-auto max-h-[60vh] w-full object-contain"
-                    />
-                    <span className="absolute right-2 top-2 rounded-md bg-paper-ink/75 p-1 text-paper-card opacity-0 transition group-hover:opacity-100">
-                      <Maximize2 className="h-3 w-3" />
-                    </span>
-                  </div>
-                )}
-
-                {!zoomedItem.imageUrl && zoomedItem.tableHtml && (
-                  <div
-                    className="max-h-[54vh] overflow-auto rounded-lg border border-paper-border bg-paper-card text-[11px] [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-paper-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-paper-border [&_th]:bg-paper-bg [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold"
-                    dangerouslySetInnerHTML={{ __html: zoomedItem.tableHtml }}
-                  />
-                )}
-
-                {!zoomedItem.imageUrl && !zoomedItem.tableHtml && zoomedItem.textPreview && (
-                  <div className="max-h-[46vh] overflow-auto rounded-lg border border-paper-border bg-paper-bg px-3 py-2.5 font-mono text-xs leading-relaxed text-paper-ink">
-                    {zoomedItem.textPreview}
-                  </div>
-                )}
-
-                {zoomedItem.reference ? (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-semibold leading-snug text-paper-ink">
-                      {zoomedItem.reference.title}
-                    </p>
-                    {(zoomedItem.reference.authors || zoomedItem.reference.year) && (
-                      <p className="text-[11px] text-paper-muted">
-                        {[zoomedItem.reference.authors, zoomedItem.reference.year]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                    )}
-                    <p className="max-h-[34vh] overflow-y-auto rounded-lg bg-paper-bg p-2.5 text-[11px] leading-relaxed text-paper-ink">
-                      {zoomedItem.reference.rawText}
-                    </p>
-                  </div>
-                ) : (
-                  zoomedItem.subtitle && (
-                    <p className="mt-2 max-h-28 overflow-y-auto text-[11px] leading-relaxed text-paper-muted">
-                      {zoomedItem.subtitle}
-                    </p>
-                  )
-                )}
-
-                {backlinks(zoomedItem.id)}
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-paper-border pt-2">
-                  {(zoomedItem.domAnchorId || zoomedItem.pageNumber) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        dismissZoomImmediately();
-                        jump(zoomedItem.pageNumber, zoomedItem.domAnchorId);
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:bg-paper-bg"
-                    >
-                      <Crosshair className="h-3 w-3" />
-                      {t('pin.locate')}
-                    </button>
-                  )}
-
-                  {zoomedItem.source === 'pdf' &&
-                    zoomedItem.cropRect &&
-                    pdfDocRef.current && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void handleExpandPdfCrop(zoomedItem, 'up')}
-                          className="rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
-                        >
-                          {t('crop.upArrow')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleExpandPdfCrop(zoomedItem, 'down')}
-                          className="rounded-md border border-paper-border bg-paper-card px-2 py-1 text-[10.5px] text-paper-ink transition hover:border-paper-goldborder"
-                        >
-                          {t('crop.downArrow')}
-                        </button>
-                        {zoomedItem.originalImageUrl &&
-                          zoomedItem.imageUrl !== zoomedItem.originalImageUrl && (
-                            <button
-                              type="button"
-                              onClick={() => handleResetPdfCrop(zoomedItem)}
-                              className="inline-flex items-center gap-0.5 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[10.5px] font-medium text-paper-goldtext"
-                            >
-                              <RotateCcw className="h-2.5 w-2.5" />
-                              {t('crop.reset')}
-                            </button>
-                          )}
-                      </>
-                    )}
-
-                  {zoomedItem.reference && (
-                    <>
-                      <PanelReferenceDetails reference={zoomedItem.reference} />
-                      <a
-                        href={
-                          zoomedItem.reference.href ||
-                          `https://scholar.google.com/scholar?q=${encodeURIComponent(
-                            zoomedItem.reference.title || zoomedItem.reference.rawText,
-                          )}`
-                        }
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ml-auto inline-flex items-center gap-1 rounded-md border border-paper-goldborder bg-paper-goldbg px-2 py-1 text-[10.5px] font-medium text-paper-goldtext"
-                      >
-                        {t('reference.source')}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </>
-                  )}
-                </div>
-              </div>
-            </article>
-          </div>,
-          document.body,
-        )}
 
       {/* 高清放大灯箱 */}
       <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
@@ -2306,8 +1914,17 @@ export function SidePanelApp() {
 
       {/* 轻量 Toast */}
       {toast && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-[70] -translate-x-1/2 whitespace-nowrap rounded-full bg-paper-ink px-3.5 py-1.5 text-[11px] text-paper-card shadow-float">
-          {formatMessage(toast)}
+        <div role="status" className={clsx(
+          'fixed bottom-4 left-1/2 z-[70] flex max-w-[calc(100vw-24px)] -translate-x-1/2 items-center gap-2.5 rounded-full bg-paper-ink px-3.5 py-1.5 text-xs text-paper-card shadow-float',
+          !toast.action && 'pointer-events-none',
+        )}>
+          <span className="truncate">{formatMessage(toast.notice)}</span>
+          {toast.action && (
+            <button type="button" onClick={toast.action.run}
+              className="shrink-0 rounded-full px-2 py-0.5 font-medium text-paper-gold hover:bg-paper-card/10">
+              {formatMessage(toast.action.label)}
+            </button>
+          )}
         </div>
       )}
     </div>

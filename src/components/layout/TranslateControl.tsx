@@ -29,6 +29,9 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
     updateConfig,
     setMode,
     toggleTranslate,
+    consentPending,
+    acceptConsent,
+    dismissConsent,
     resume,
     stop,
   } = translation;
@@ -62,6 +65,29 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [settingsOpen, setSettingsOpen]);
+
+  useEffect(() => {
+    if (!consentPending) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) dismissConsent();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismissConsent();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [consentPending, dismissConsent]);
+
+  const openCustomApiSettings = () => {
+    dismissConsent();
+    setDraft({ ...config, provider: 'openai' });
+    setNotice(null);
+    setSettingsOpen(true);
+  };
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault();
@@ -102,11 +128,11 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
           <button
             type="button"
             onClick={toggleTranslate}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
+            className="flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
             title={t('translate.oneClickHint')}
           >
             <Languages className="h-3.5 w-3.5 text-paper-gold" />
-            <span className="hidden sm:inline">{t('translate.oneClick')}</span>
+            <span className="hidden xl:inline">{t('translate.oneClick')}</span>
           </button>
           <button
             type="button"
@@ -130,7 +156,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
         </div>
       ) : (
         <div className="flex items-center gap-1 rounded-lg border border-paper-goldborder bg-paper-goldbg/60 p-0.5">
-          <div className="flex items-center rounded-md bg-paper-card p-0.5 text-[11px] shadow-sm">
+          <div className="flex items-center rounded-md bg-paper-card p-0.5 text-xs shadow-sm">
             {(
               [
                 { id: 'translated', label: t('translate.only') },
@@ -161,7 +187,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
               onClick={stop}
               title={t('translate.stop')}
               aria-label={t('translate.stop')}
-              className="inline-flex items-center gap-1 rounded-md bg-paper-ink px-2 py-1 font-mono text-[10.5px] font-medium text-paper-card"
+              className="inline-flex items-center gap-1 rounded-md bg-paper-ink px-2 py-1 font-mono text-[11px] font-medium text-paper-card"
             >
               <Loader2 className="h-3 w-3 animate-spin" />
               <span>
@@ -173,18 +199,18 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
             <button
               type="button"
               onClick={resume}
-              className="inline-flex items-center gap-1 rounded-md bg-paper-gold px-2 py-1 text-[10.5px] font-medium text-paper-card transition hover:opacity-90"
+              className="inline-flex items-center gap-1 rounded-md bg-paper-gold px-2 py-1 text-[11px] font-medium text-paper-card transition hover:opacity-90"
             >
               <Languages className="h-3 w-3" />
               <span>{t('translate.resume')}</span>
-              <span className="font-mono text-[10px]">
+              <span className="font-mono text-[11px]">
                 {doneCount}/{numPages}
               </span>
             </button>
           ) : (
             numPages > 0 && (
               <span
-                className="px-1.5 font-mono text-[10.5px] text-paper-goldtext"
+                className="px-1.5 font-mono text-[11px] text-paper-goldtext"
                 title={t('translate.done', { done: doneCount, total: numPages })}
               >
                 {doneCount}/{numPages}
@@ -214,13 +240,34 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
         </div>
       )}
 
+      {consentPending && !settingsOpen && (
+        <div
+          role="dialog"
+          aria-labelledby="translate-consent-title"
+          className="absolute left-0 top-full z-50 mt-1.5 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-paper-border bg-paper-card p-3.5 text-paper-ink shadow-float"
+        >
+          <p id="translate-consent-title" className="text-sm font-semibold">{t('translate.consentTitle')}</p>
+          <p className="mt-1.5 text-xs leading-relaxed text-paper-muted">{t('translate.consentBody')}</p>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button type="button" onClick={openCustomApiSettings}
+              className="rounded-lg border border-paper-border px-3 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">
+              {t('translate.consentConfigure')}
+            </button>
+            <button type="button" autoFocus onClick={acceptConsent}
+              className="rounded-lg bg-paper-ink px-3 py-1.5 text-xs font-medium text-paper-card transition hover:opacity-90">
+              {t('translate.consentContinue')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {settingsOpen && (
         <form
           onSubmit={(e) => void handleSave(e)}
           className="absolute left-0 top-full z-50 mt-1.5 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-paper-border bg-paper-card p-3 text-xs text-paper-ink shadow-float"
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="grid flex-1 grid-cols-2 gap-1 rounded-lg bg-paper-bg p-0.5 text-[11px]">
+            <div className="grid flex-1 grid-cols-2 gap-1 rounded-lg bg-paper-bg p-0.5 text-xs">
               <button
                 type="button"
                 aria-pressed={draft.provider === 'free'}
@@ -252,7 +299,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
             <div
               role="group"
               aria-label={t('translate.target')}
-              className="grid grid-cols-2 gap-0.5 rounded-lg bg-paper-bg p-0.5 text-[10.5px]"
+              className="grid grid-cols-2 gap-0.5 rounded-lg bg-paper-bg p-0.5 text-[11px]"
             >
               <button
                 type="button"
@@ -286,7 +333,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
           {draft.provider === 'openai' && (
             <div className="mt-2.5 space-y-2">
               <div className="flex flex-wrap items-center gap-1">
-                <span className="mr-0.5 text-[10px] text-paper-muted">{t('translate.presets')}</span>
+                <span className="mr-0.5 text-[11px] text-paper-muted">{t('translate.presets')}</span>
                 {TRANSLATE_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -299,13 +346,13 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
                         model: preset.model,
                       })
                     }
-                    className="rounded border border-paper-border bg-paper-bg px-1.5 py-0.5 text-[10px] text-paper-ink transition hover:border-paper-gold"
+                    className="rounded border border-paper-border bg-paper-bg px-1.5 py-0.5 text-[11px] text-paper-ink transition hover:border-paper-gold"
                   >
                     {t(preset.labelKey)}
                   </button>
                 ))}
               </div>
-              <label className="block text-[11px] text-paper-muted">
+              <label className="block text-xs text-paper-muted">
                 {t('translate.endpoint')}
                 <input
                   type="url"
@@ -317,7 +364,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
                 />
               </label>
               <div className="grid grid-cols-2 gap-2">
-                <label className="block text-[11px] text-paper-muted">
+                <label className="block text-xs text-paper-muted">
                   {t('translate.model')}
                   <input
                     required
@@ -327,7 +374,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
                     className={fieldClass}
                   />
                 </label>
-                <label className="block text-[11px] text-paper-muted">
+                <label className="block text-xs text-paper-muted">
                   {t('translate.optionalKey')}
                   <input
                     type="password"
@@ -342,7 +389,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
             </div>
           )}
 
-          <p className="mt-2 text-[10.5px] leading-relaxed text-paper-muted">
+          <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">
             {t(
               draft.provider === 'free'
                 ? IS_EXTENSION_PAGE
@@ -355,7 +402,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
           </p>
 
           {notice && (
-            <p role="status" className="mt-1.5 text-[11px] text-paper-goldtext">
+            <p role="status" className="mt-1.5 text-xs text-paper-goldtext">
               {formatMessage(notice)}
             </p>
           )}
@@ -365,13 +412,13 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
               type="button"
               disabled={!config.apiKey}
               onClick={() => void handleClearKey()}
-              className="rounded px-2 py-1 text-[11px] text-paper-muted hover:bg-paper-bg disabled:opacity-40"
+              className="rounded px-2 py-1 text-xs text-paper-muted hover:bg-paper-bg disabled:opacity-40"
             >
               {t('settings.clearKey')}
             </button>
             <button
               type="submit"
-              className="rounded-lg bg-paper-ink px-3 py-1.5 text-[11px] font-medium text-paper-card transition hover:opacity-90"
+              className="rounded-lg bg-paper-ink px-3 py-1.5 text-xs font-medium text-paper-card transition hover:opacity-90"
             >
               {t('settings.save')}
             </button>

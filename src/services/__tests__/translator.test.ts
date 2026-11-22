@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createTranslator,
   DEFAULT_TRANSLATE_CONFIG,
+  grantFreeTranslateConsent,
+  needsFreeTranslateConsent,
   resetWebFreeState,
   sanitizeSourceText,
   splitTextForFreeLimit,
@@ -141,5 +143,23 @@ describe('shared translator', () => {
     expect(await translateBatchWebFree(['Attention mechanism'], 'zh-CN')).toEqual(['注意力机制']);
     expect(await translateBatchWebFree(['Multi-head attention & encoder'], 'zh-CN')).toEqual(['多头注意力&编码器']);
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('free translation consent', () => {
+  it('asks before any route that reaches the public channel, and only once', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+    });
+    const custom = { ...DEFAULT_TRANSLATE_CONFIG, provider: 'openai' as const, model: 'm' };
+    expect(needsFreeTranslateConsent(DEFAULT_TRANSLATE_CONFIG)).toBe(true);
+    // A keyless remote endpoint silently falls back to the free channel, so it needs consent too.
+    expect(needsFreeTranslateConsent({ ...custom, apiBaseUrl: 'https://api.example.com/v1', apiKey: '' })).toBe(true);
+    expect(needsFreeTranslateConsent({ ...custom, apiBaseUrl: 'https://api.example.com/v1', apiKey: 'k' })).toBe(false);
+    expect(needsFreeTranslateConsent({ ...custom, apiBaseUrl: 'http://localhost:11434/v1', apiKey: '' })).toBe(false);
+    grantFreeTranslateConsent();
+    expect(needsFreeTranslateConsent(DEFAULT_TRANSLATE_CONFIG)).toBe(false);
   });
 });

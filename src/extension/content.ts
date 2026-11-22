@@ -30,7 +30,6 @@ let isActivated = false;
 // ---- Shadow DOM UI state ----
 let shadowRoot: ShadowRoot | null = null;
 let peekEl: HTMLDivElement | null = null;
-let dockZoomEl: HTMLDivElement | null = null;
 let returnEl: HTMLDivElement | null = null;
 let lightboxEl: HTMLDivElement | null = null;
 let toastEl: HTMLDivElement | null = null;
@@ -38,10 +37,8 @@ let snipEl: HTMLDivElement | null = null;
 
 let openTimer: number | null = null;
 let closeTimer: number | null = null;
-let dockZoomUnmountTimer: number | null = null;
 let toastTimer: number | null = null;
 let toastMessage: (() => string) | undefined;
-let dockPreview: { item: CompanionPinItem; anchorCenterRatio: number } | undefined;
 let savedScrollY: number | null = null;
 let activeRefTabIndex = 0;
 let activeBinding: CitationBinding | null = null;
@@ -411,74 +408,6 @@ function ensureShadowUi(): ShadowRoot {
       pointer-events: none;
       display: none;
     }
-    .dock-zoom {
-      position: fixed;
-      right: 16px;
-      pointer-events: none;
-      width: min(680px, calc(100vw - 32px));
-      background: #FFFFFF;
-      border: 1px solid #FDE68A;
-      border-radius: 14px;
-      box-shadow: 0 24px 64px -8px rgba(28, 25, 23, 0.24), 0 8px 20px -4px rgba(28, 25, 23, 0.12);
-      color: #1C1917;
-      overflow: hidden;
-      display: none;
-      opacity: 0;
-      transform: scale(0.86) translate3d(12px, 0, 0);
-      transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease-out;
-      will-change: transform, opacity;
-    }
-    .dock-zoom.open {
-      opacity: 1;
-      transform: scale(1) translate3d(0, 0, 0);
-    }
-    .dock-zoom-head {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 13px;
-      border-bottom: 1px solid #F0EEEC;
-      background: #FAF9F7;
-    }
-    .dock-zoom-title {
-      font-size: 12.5px;
-      font-weight: 600;
-      color: #1C1917;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 1;
-    }
-    .dock-zoom-body {
-      padding: 12px 14px;
-      max-height: 76vh;
-      overflow: hidden;
-    }
-    .dock-zoom-img-wrap {
-      background: #F7F6F3;
-      border: 1px solid #EFECE9;
-      border-radius: 10px;
-      padding: 8px;
-      text-align: center;
-    }
-    .dock-zoom-img {
-      max-width: 100%;
-      max-height: min(60vh, 540px);
-      object-fit: contain;
-      display: block;
-      margin: 0 auto;
-      border-radius: 6px;
-    }
-    .dock-zoom-cap {
-      margin-top: 9px;
-      font-size: 12px;
-      line-height: 1.55;
-      color: #57534E;
-      display: -webkit-box;
-      -webkit-line-clamp: 5;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
   `;
 
   peekEl = document.createElement('div');
@@ -490,9 +419,6 @@ function ensureShadowUi(): ShadowRoot {
     }
   });
   peekEl.addEventListener('mouseleave', scheduleHidePeek);
-
-  dockZoomEl = document.createElement('div');
-  dockZoomEl.className = 'dock-zoom';
 
   returnEl = document.createElement('div');
   returnEl.className = 'return-banner';
@@ -523,7 +449,7 @@ function ensureShadowUi(): ShadowRoot {
   snipEl = document.createElement('div');
   snipEl.className = 'snip-overlay';
 
-  shadowRoot.append(style, peekEl, dockZoomEl, returnEl, lightboxEl, toastEl, snipEl);
+  shadowRoot.append(style, peekEl, returnEl, lightboxEl, toastEl, snipEl);
   document.documentElement.appendChild(host);
   return shadowRoot;
 }
@@ -822,7 +748,6 @@ function startPageSnipMode(): void {
   ensureShadowUi();
   if (!snipEl) return;
   hidePeekImmediately();
-  hideDockZoomPreview();
 
   snipEl.innerHTML = `
     <div class="snip-hint">${t('snip.hud')}</div>
@@ -971,87 +896,6 @@ updatePaperBadge();
 (window as Window & { navigation?: EventTarget }).navigation?.addEventListener('currententrychange', updatePaperBadge);
 window.addEventListener('popstate', updatePaperBadge);
 installWebBridge();
-
-function showDockZoomPreview(
-  item: CompanionPinItem,
-  anchorCenterRatio: number,
-): void {
-  ensureShadowUi();
-  if (!dockZoomEl) return;
-
-  if (dockZoomUnmountTimer !== null) {
-    window.clearTimeout(dockZoomUnmountTimer);
-    dockZoomUnmountTimer = null;
-  }
-
-  dockPreview = { item, anchorCenterRatio };
-  const kindLabel = t(`kind.${item.kind}`);
-  const pageTag = item.pageNumber
-    ? `<span style="font-family: ui-monospace, monospace; font-size: 11px; color: #78716C;"> ${t('reader.page', { page: item.pageNumber })}</span>`
-    : '';
-
-  let bodyHtml = '';
-  if (item.imageUrl) {
-    bodyHtml = `
-      <div class="dock-zoom-img-wrap">
-        <img class="dock-zoom-img" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(pinTitle(item))}" />
-      </div>
-      ${item.subtitle ? `<div class="dock-zoom-cap">${escapeHtml(item.subtitle)}</div>` : ''}
-    `;
-  } else if (item.tableHtml) {
-    bodyHtml = `
-      <div class="peek-table-wrap" style="max-height: 52vh;">${item.tableHtml}</div>
-      ${item.subtitle ? `<div class="dock-zoom-cap">${escapeHtml(item.subtitle)}</div>` : ''}
-    `;
-  } else if (item.reference) {
-    const meta = [item.reference.authors, item.reference.year].filter(Boolean).join(' · ');
-    bodyHtml = `
-      <div class="ref-title" style="font-size: 13.5px;">${escapeHtml(item.reference.title)}</div>
-      ${meta ? `<div class="ref-meta">${escapeHtml(meta)}</div>` : ''}
-      <div class="ref-raw" style="font-size: 12px; max-height: 44vh; overflow: hidden;">${escapeHtml(item.reference.rawText)}</div>
-    `;
-  } else if (item.textPreview || item.subtitle) {
-    bodyHtml = `<div class="peek-eq">${escapeHtml(item.textPreview || item.subtitle || '')}</div>`;
-  }
-
-  dockZoomEl.innerHTML = `
-    <div class="dock-zoom-head">
-      <span class="peek-badge">${escapeHtml(kindLabel)}</span>
-      <span class="dock-zoom-title">${escapeHtml(pinTitle(item))}</span>
-      ${pageTag}
-    </div>
-    <div class="dock-zoom-body">${bodyHtml}</div>
-  `;
-
-  const anchorBottom = anchorCenterRatio > 0.54;
-  if (anchorBottom) {
-    dockZoomEl.style.top = 'auto';
-    dockZoomEl.style.bottom = '18px';
-    dockZoomEl.style.transformOrigin = 'right bottom';
-  } else {
-    dockZoomEl.style.bottom = 'auto';
-    dockZoomEl.style.top = `${Math.max(18, Math.round(window.innerHeight * Math.min(0.45, Math.max(0.06, anchorCenterRatio - 0.14))))}px`;
-    dockZoomEl.style.transformOrigin = 'right top';
-  }
-
-  dockZoomEl.style.display = 'block';
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      dockZoomEl?.classList.add('open');
-    });
-  });
-}
-
-function hideDockZoomPreview(): void {
-  dockPreview = undefined;
-  if (!dockZoomEl) return;
-  dockZoomEl.classList.remove('open');
-  if (dockZoomUnmountTimer !== null) window.clearTimeout(dockZoomUnmountTimer);
-  dockZoomUnmountTimer = window.setTimeout(() => {
-    dockZoomUnmountTimer = null;
-    if (dockZoomEl) dockZoomEl.style.display = 'none';
-  }, 200);
-}
 
 // ---- 原网页整篇翻译引擎（默认仅看译文，支持双语 / 原文秒切，完整保护行内公式不乱码）----
 interface TranslatableBlock {
@@ -1369,7 +1213,6 @@ async function startPageTranslation(
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     hidePeekImmediately();
-    hideDockZoomPreview();
     if (lightboxEl) lightboxEl.style.display = 'none';
     return;
   }
@@ -1397,21 +1240,6 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
 
   if (message.type === 'REFPIN_START_PAGE_SNIP') {
     startPageSnipMode();
-    sendResponse({ ok: true });
-    return;
-  }
-
-  if (message.type === 'REFPIN_SHOW_ZOOM_PREVIEW' && message.item) {
-    showDockZoomPreview(
-      message.item,
-      typeof message.anchorCenterRatio === 'number' ? message.anchorCenterRatio : 0.3,
-    );
-    sendResponse({ ok: true });
-    return;
-  }
-
-  if (message.type === 'REFPIN_HIDE_ZOOM_PREVIEW') {
-    hideDockZoomPreview();
     sendResponse({ ok: true });
     return;
   }
@@ -1449,6 +1277,5 @@ subscribeLocale(() => {
   const hint = snipEl?.querySelector('.snip-hint');
   if (hint) hint.textContent = t('snip.hud');
   if (toastEl && toastMessage) toastEl.textContent = toastMessage();
-  if (dockPreview) showDockZoomPreview(dockPreview.item, dockPreview.anchorCenterRatio);
   if (peekEl?.style.display === 'block') renderPeekCard();
 });

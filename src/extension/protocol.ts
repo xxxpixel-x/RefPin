@@ -93,12 +93,6 @@ export type ExtensionMessage =
   | { type: 'REFPIN_EXTRACT_DOM'; force?: boolean }
   | { type: 'REFPIN_SCROLL_TO_ANCHOR'; anchorId: string }
   | { type: 'REFPIN_START_PAGE_SNIP' }
-  | {
-      type: 'REFPIN_SHOW_ZOOM_PREVIEW';
-      item: CompanionPinItem;
-      anchorCenterRatio: number;
-    }
-  | { type: 'REFPIN_HIDE_ZOOM_PREVIEW' }
   | { type: 'REFPIN_CAPTURE_VISIBLE_TAB'; windowId?: number }
   | {
       type: 'REFPIN_PIN_FROM_PAGE';

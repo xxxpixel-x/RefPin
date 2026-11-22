@@ -40,8 +40,6 @@ interface PinnedCardProps {
   dockPosition?: DockPosition;
   dockWidth?: number;
   dockHeight?: number;
-  isLifted?: boolean;
-  isZoomedOverlay?: boolean;
   onUnpin: (id: string) => void;
   onToggleCollapse: (id: string) => void;
   onJump: (pageNumber: number, cropRect?: PinnedItem['cropRect']) => void;
@@ -50,9 +48,6 @@ interface PinnedCardProps {
   onOpenLightbox: (item: PinnedItem) => void;
   onRename: (id: string, title: string) => void;
   onMove: (id: string, direction: -1 | 1) => void;
-  onHoverStart?: (id: string, el: HTMLElement) => void;
-  onHoverEnd?: (id: string) => void;
-  onRequestCloseZoom?: () => void;
 }
 
 export function PinnedCard({
@@ -63,8 +58,6 @@ export function PinnedCard({
   dockPosition = 'right',
   dockWidth = 388,
   dockHeight = 264,
-  isLifted = false,
-  isZoomedOverlay = false,
   onUnpin,
   onToggleCollapse,
   onJump,
@@ -73,9 +66,6 @@ export function PinnedCard({
   onOpenLightbox,
   onRename,
   onMove,
-  onHoverStart,
-  onHoverEnd,
-  onRequestCloseZoom,
 }: PinnedCardProps) {
   const { filter, colorToggle } = usePreviewColor(item.id);
   const cardRef = useRef<HTMLElement>(null);
@@ -83,35 +73,25 @@ export function PinnedCard({
   const displayTitle = pinTitle(item);
   const [draft, setDraft] = useState(displayTitle);
 
+  const titleClickTimer = useRef<number>();
+
   useEffect(() => setDraft(displayTitle), [displayTitle]);
+  useEffect(() => () => window.clearTimeout(titleClickTimer.current), []);
   useEffect(() => {
-    if (highlighted && !isZoomedOverlay) {
-      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [highlighted, isZoomedOverlay]);
+    if (highlighted) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [highlighted]);
 
   const reference = item.reference;
-  const isSnip = item.kind === 'snip';
-  const isHorizontalDock = !isZoomedOverlay && (dockPosition === 'top' || dockPosition === 'bottom');
+  const isHorizontalDock = dockPosition === 'top' || dockPosition === 'bottom';
   const cropModified = hasCropChanged(item);
 
-  const imageMaxHeight = isZoomedOverlay
-    ? 'min(58vh, 520px)'
-    : isHorizontalDock
-      ? '100%'
-      : `${Math.round(Math.min(460, Math.max(220, dockWidth * 0.62)))}px`;
+  const imageMaxHeight = isHorizontalDock
+    ? '100%'
+    : `${Math.round(Math.min(460, Math.max(220, dockWidth * 0.62)))}px`;
 
   return (
     <article
       ref={cardRef}
-      onMouseEnter={() => {
-        if (isZoomedOverlay || item.collapsed || editing) return;
-        if (cardRef.current) onHoverStart?.(item.id, cardRef.current);
-      }}
-      onMouseLeave={() => {
-        if (isZoomedOverlay) return;
-        onHoverEnd?.(item.id);
-      }}
       className={clsx(
         'group relative overflow-hidden rounded-xl border bg-paper-card will-change-transform',
         isHorizontalDock
@@ -119,18 +99,12 @@ export function PinnedCard({
             ? 'flex h-auto w-[248px] shrink-0 self-start flex-col'
             : 'flex h-full w-[296px] shrink-0 flex-col'
           : 'w-full',
-        !isZoomedOverlay &&
-          'shadow-paper transition-[transform,box-shadow,border-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-paper-goldborder hover:shadow-float',
-        isZoomedOverlay && 'border-paper-goldborder/90 ring-1 ring-paper-gold/25',
-        !isZoomedOverlay &&
-          (highlighted
-            ? 'border-paper-gold ring-2 ring-paper-gold/50'
-            : 'border-paper-border'),
-        isLifted && !isZoomedOverlay && 'scale-[0.985] opacity-35',
+        'shadow-paper transition-[box-shadow,border-color] duration-200 hover:border-paper-goldborder hover:shadow-float',
+        highlighted ? 'border-paper-gold ring-2 ring-paper-gold/50' : 'border-paper-border',
       )}
     >
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-2">
-        <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-paper-goldtext">
+        <span className="shrink-0 rounded bg-paper-goldbg px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-paper-goldtext">
           {t(`kind.${item.kind}`)}
         </span>
 
@@ -153,27 +127,22 @@ export function PinnedCard({
                 setEditing(false);
               }
             }}
-            className="min-w-0 flex-1 rounded border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-[11px] text-paper-ink outline-none"
+            className="min-w-0 flex-1 rounded border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 text-xs text-paper-ink outline-none"
           />
         ) : (
           <button
             type="button"
             onClick={() => {
-              if (!isSnip) {
-                onRequestCloseZoom?.();
-                onJump(item.pageNumber, item.cropRect);
-              }
+              // Wait briefly so a double-click renames instead of jumping first.
+              window.clearTimeout(titleClickTimer.current);
+              titleClickTimer.current = window.setTimeout(() => onJump(item.pageNumber, item.cropRect), 220);
             }}
             onDoubleClick={() => {
-              if (isSnip) {
-                setEditing(true);
-              }
+              window.clearTimeout(titleClickTimer.current);
+              setEditing(true);
             }}
-            className={clsx(
-              'min-w-0 flex-1 truncate text-left font-medium text-paper-ink hover:text-paper-gold',
-              isZoomedOverlay ? 'text-xs' : 'text-[11px]',
-            )}
-            title={isSnip ? t('pin.renameHint') : t('pin.jumpHint')}
+            className="min-w-0 flex-1 truncate text-left text-xs font-medium text-paper-ink hover:text-paper-gold"
+            title={t('pin.titleHint')}
           >
             {displayTitle}
           </button>
@@ -181,22 +150,18 @@ export function PinnedCard({
 
         <button
           type="button"
-          onClick={() => {
-            onRequestCloseZoom?.();
-            onJump(item.pageNumber, item.cropRect);
-          }}
-          className="shrink-0 rounded px-1 font-mono text-[10px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-gold"
+          onClick={() => onJump(item.pageNumber, item.cropRect)}
+          className="shrink-0 rounded px-1 font-mono text-[11px] text-paper-muted transition hover:bg-paper-bg hover:text-paper-gold"
           title={t('pin.jump')}
         >
           {t('reader.page', { page: item.pageNumber })}
         </button>
 
-        {!isZoomedOverlay && (
-          <>
+        <>
             <button
               type="button"
               onClick={() => onMove(item.id, -1)}
-              className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
+              className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink focus-visible:opacity-100 group-hover:opacity-100"
               aria-label={isHorizontalDock ? t('pin.moveLeft') : t('pin.moveUp')}
               title={isHorizontalDock ? t('pin.moveLeft') : t('pin.moveUp')}
             >
@@ -209,7 +174,7 @@ export function PinnedCard({
             <button
               type="button"
               onClick={() => onMove(item.id, 1)}
-              className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink group-hover:opacity-100"
+              className="rounded p-0.5 text-paper-muted opacity-0 transition hover:text-paper-ink focus-visible:opacity-100 group-hover:opacity-100"
               aria-label={isHorizontalDock ? t('pin.moveRight') : t('pin.moveDown')}
               title={isHorizontalDock ? t('pin.moveRight') : t('pin.moveDown')}
             >
@@ -219,15 +184,11 @@ export function PinnedCard({
                 <ArrowDown className="h-3 w-3" />
               )}
             </button>
-          </>
-        )}
+        </>
 
         <button
           type="button"
-          onClick={() => {
-            onRequestCloseZoom?.();
-            onToggleCollapse(item.id);
-          }}
+          onClick={() => onToggleCollapse(item.id)}
           className="rounded p-0.5 text-paper-muted transition hover:text-paper-ink"
           aria-label={item.collapsed ? t('common.expand') : t('common.collapse')}
         >
@@ -237,10 +198,7 @@ export function PinnedCard({
         </button>
         <button
           type="button"
-          onClick={() => {
-            onRequestCloseZoom?.();
-            onUnpin(item.id);
-          }}
+          onClick={() => onUnpin(item.id)}
           className="rounded p-0.5 text-paper-muted transition hover:text-paper-gold"
           aria-label={t('common.remove')}
         >
@@ -270,18 +228,13 @@ export function PinnedCard({
                   'w-full cursor-zoom-in object-contain transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
                   isHorizontalDock && 'h-full',
                 )}
-                onClick={() => {
-                  onRequestCloseZoom?.();
-                  onOpenLightbox(item);
-                }}
+                onClick={() => onOpenLightbox(item)}
               />
               <div className="absolute right-1.5 top-1.5">{colorToggle}</div>
               <div
                 className={clsx(
                   'absolute inset-x-1.5 bottom-1.5 flex flex-wrap items-center justify-center gap-1 transition-opacity duration-200',
-                  isZoomedOverlay
-                    ? 'opacity-100'
-                    : 'opacity-0 group-hover/image:opacity-100',
+                  'opacity-0 group-focus-within/image:opacity-100 group-hover/image:opacity-100',
                 )}
               >
                 <button
@@ -290,7 +243,7 @@ export function PinnedCard({
                     event.stopPropagation();
                     onExpandCrop(item.id, 'up');
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[11px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('crop.upHint')}
                 >
                   <ArrowUpToLine className="h-2.5 w-2.5" /> {t('crop.up')}
@@ -301,7 +254,7 @@ export function PinnedCard({
                     event.stopPropagation();
                     onExpandCrop(item.id, 'down');
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[11px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('crop.downHint')}
                 >
                   <ArrowDownToLine className="h-2.5 w-2.5" /> {t('crop.down')}
@@ -313,7 +266,7 @@ export function PinnedCard({
                       event.stopPropagation();
                       onResetCrop(item.id);
                     }}
-                    className="flex items-center gap-0.5 rounded-md border border-paper-goldborder bg-paper-goldbg/95 px-1.5 py-1 text-[10px] font-medium text-paper-goldtext shadow-sm backdrop-blur-sm transition hover:bg-paper-goldsoft"
+                    className="flex items-center gap-0.5 rounded-md border border-paper-goldborder bg-paper-goldbg/95 px-1.5 py-1 text-[11px] font-medium text-paper-goldtext shadow-sm backdrop-blur-sm transition hover:bg-paper-goldsoft"
                     title={t('crop.resetHint')}
                   >
                     <RotateCcw className="h-2.5 w-2.5" /> {t('crop.reset')}
@@ -323,10 +276,9 @@ export function PinnedCard({
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onRequestCloseZoom?.();
                     onOpenLightbox(item);
                   }}
-                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[10px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
+                  className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card/95 px-1.5 py-1 text-[11px] text-paper-ink shadow-sm backdrop-blur-sm transition hover:border-paper-goldborder hover:bg-paper-card"
                   title={t('lightbox.openHint')}
                 >
                   <Maximize2 className="h-2.5 w-2.5" /> {t('lightbox.open')}
@@ -342,14 +294,13 @@ export function PinnedCard({
             >
               <p
                 className={clsx(
-                  'font-medium leading-snug text-paper-ink',
-                  isZoomedOverlay ? 'text-xs' : 'text-[11px]',
+                  'text-xs font-medium leading-snug text-paper-ink',
                   isHorizontalDock && 'line-clamp-2',
                 )}
               >
                 {reference.title || t('reference.number', { index: reference.index })}
               </p>
-              <div className="mt-1 flex flex-wrap items-center gap-1 text-[9px]">
+              <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
                 {reference.authors && (
                   <span
                     className={clsx(
@@ -369,11 +320,7 @@ export function PinnedCard({
               <p
                 className={clsx(
                   'mt-2 leading-relaxed text-paper-muted',
-                  isZoomedOverlay
-                    ? 'max-h-[34vh] overflow-y-auto text-[11px]'
-                    : isHorizontalDock
-                      ? 'line-clamp-2 text-[10px]'
-                      : 'line-clamp-3 text-[10px]',
+                  isHorizontalDock ? 'line-clamp-2 text-[11px]' : 'line-clamp-3 text-[11px]',
                 )}
               >
                 {reference.rawText}
@@ -386,7 +333,7 @@ export function PinnedCard({
                   )}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
+                  className="flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[11px] text-paper-ink transition hover:bg-paper-goldbg"
                 >
                   <Search className="h-2.5 w-2.5" /> Scholar
                   <ExternalLink className="h-2 w-2 text-paper-muted" />
@@ -403,8 +350,7 @@ export function PinnedCard({
               {item.subtitle && (
                 <p
                   className={clsx(
-                    'font-medium leading-snug text-paper-ink',
-                    isZoomedOverlay ? 'text-xs' : 'text-[11px]',
+                    'text-xs font-medium leading-snug text-paper-ink',
                     isHorizontalDock && 'line-clamp-2',
                   )}
                 >
@@ -415,11 +361,7 @@ export function PinnedCard({
                 <p
                   className={clsx(
                     'mt-1.5 leading-relaxed text-paper-muted',
-                    isZoomedOverlay
-                      ? 'max-h-[34vh] overflow-y-auto text-[11px]'
-                      : isHorizontalDock
-                        ? 'line-clamp-2 text-[10px]'
-                        : 'line-clamp-3 text-[10px]',
+                    isHorizontalDock ? 'line-clamp-2 text-[11px]' : 'line-clamp-3 text-[11px]',
                   )}
                 >
                   {item.textPreview}
@@ -427,7 +369,7 @@ export function PinnedCard({
               )}
             </div>
           ) : (
-            <p className="rounded-lg bg-paper-bg px-2.5 py-2 text-[10px] text-paper-muted">
+            <p className="rounded-lg bg-paper-bg px-2.5 py-2 text-[11px] text-paper-muted">
               {item.previewStatus === 'restoring' ? t('pin.restoring') :
                 item.previewStatus === 'unavailable' ? t('pin.unavailable') : item.subtitle || t('pin.noPreview')}
             </p>
@@ -437,11 +379,7 @@ export function PinnedCard({
             <p
               className={clsx(
                 'mt-1.5 shrink-0 leading-relaxed text-paper-muted',
-                isZoomedOverlay
-                  ? 'line-clamp-5 text-[11px]'
-                  : isHorizontalDock
-                    ? 'line-clamp-1 text-[10px]'
-                    : 'line-clamp-2 text-[10px]',
+                isHorizontalDock ? 'line-clamp-1 text-[11px]' : 'line-clamp-2 text-[11px]',
               )}
             >
               {item.subtitle}
@@ -449,10 +387,7 @@ export function PinnedCard({
           )}
           {!!backlinks?.length && (
             <div className="mt-1.5">
-              <BacklinkStrip backlinks={backlinks} onJumpToBacklink={(pageNumber, rect) => {
-                onRequestCloseZoom?.();
-                onJumpToBacklink(pageNumber, rect);
-              }} />
+              <BacklinkStrip backlinks={backlinks} onJumpToBacklink={onJumpToBacklink} />
             </div>
           )}
         </div>

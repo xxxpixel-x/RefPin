@@ -150,11 +150,11 @@ export function CommandDialog({ commands, numPages, onJump, onClose }: {
         {results.map((command, i) => <button type="button" tabIndex={-1} id={'command-' + i} role="option" aria-selected={i === index}
           key={command.id} onMouseDown={e => e.preventDefault()} onClick={e => execute(command, e.shiftKey)}
           className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs hover:bg-paper-bg aria-selected:bg-paper-goldbg">
-          <span className="flex-1 truncate">{command.label}</span><span className="text-[10px] text-paper-muted">{command.category}</span>
+          <span className="flex-1 truncate">{command.label}</span><span className="text-[11px] text-paper-muted">{command.category}</span>
         </button>)}
       </div>
       {!results.length && <p className="px-4 pb-4 text-xs text-paper-muted">{t('palette.empty')}</p>}
-      <footer className="border-t border-paper-border px-4 py-2 text-[10px] text-paper-muted">{t('palette.keys')}</footer>
+      <footer className="border-t border-paper-border px-4 py-2 text-[11px] text-paper-muted">{t('palette.keys')}</footer>
     </div>
   </dialog>;
 }

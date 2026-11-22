@@ -4,14 +4,16 @@ import { t } from '../../i18n/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Check,
   CornerDownRight,
   ExternalLink,
   Maximize2,
   Pin,
   Search,
+  X,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { findAssetForCitation } from '../../engine/backlinks';
+import { findAssetForCitation, glossaryPinId } from '../../engine/backlinks';
 import type {
   GlossaryEntry,
   InlineCitation,
@@ -23,6 +25,8 @@ import type {
 export interface PeekTrigger {
   mention: ReaderMention;
   anchorEl: HTMLElement;
+  /** Opened by a click: stays open until dismissed instead of following the pointer. */
+  locked?: boolean;
 }
 
 interface HoverPeekCardProps {
@@ -41,6 +45,9 @@ interface HoverPeekCardProps {
   ) => void;
   onOpenLightbox: (asset: PaperAsset) => void;
   onPeek: (mention: ReaderMention) => void;
+  /** Called whenever the card closes itself (Esc, outside press, close button). */
+  onDismiss?: () => void;
+  pinnedIds?: string[];
   fallbackPreview?: {
     citationId?: string;
     imageUrl: string;
@@ -65,6 +72,8 @@ export function HoverPeekCard({
   onJump,
   onOpenLightbox,
   onPeek,
+  onDismiss,
+  pinnedIds = [],
   fallbackPreview,
 }: HoverPeekCardProps) {
   const [activeTrigger, setActiveTrigger] = useState<PeekTrigger | null>(null);
@@ -76,19 +85,25 @@ export function HoverPeekCard({
   const hoveringCard = useRef(false);
   const peekRef = useRef(onPeek);
   peekRef.current = onPeek;
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  const activeRef = useRef<PeekTrigger | null>(null);
+  activeRef.current = activeTrigger;
 
   useEffect(() => {
-    // Starting a selection must immediately clear even a delayed/floating peek.
-    const dismissForSelection = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('[data-pdf-viewer]')) return;
+    // Any press outside the card (including starting a text selection) closes it,
+    // so a click-locked card never lingers after the reader moves on.
+    const dismissOnOutsidePress = (event: PointerEvent) => {
+      if (event.target instanceof Node && cardRef.current?.contains(event.target)) return;
       window.clearTimeout(enterTimer.current);
       window.clearTimeout(leaveTimer.current);
       hoveringCard.current = false;
+      if (activeRef.current) dismissRef.current?.();
       setActiveTrigger(null);
     };
-    document.addEventListener('pointerdown', dismissForSelection, true);
+    document.addEventListener('pointerdown', dismissOnOutsidePress, true);
     return () => {
-      document.removeEventListener('pointerdown', dismissForSelection, true);
+      document.removeEventListener('pointerdown', dismissOnOutsidePress, true);
       window.clearTimeout(enterTimer.current);
       window.clearTimeout(leaveTimer.current);
     };
@@ -98,16 +113,24 @@ export function HoverPeekCard({
     window.clearTimeout(enterTimer.current);
     window.clearTimeout(leaveTimer.current);
     if (!trigger) {
-      if (!hoveringCard.current) {
+      if (activeRef.current?.locked) setActiveTrigger(null);
+      else if (!hoveringCard.current) {
         leaveTimer.current = window.setTimeout(() => setActiveTrigger(null), HIDE_DELAY);
       }
       return;
     }
-    enterTimer.current = window.setTimeout(() => {
+    const show = () => {
+      const sameMention = activeRef.current?.mention.id === trigger.mention.id;
       setActiveTrigger(trigger);
+      if (sameMention) return;
       setActiveRefIndex(0);
       peekRef.current(trigger.mention);
-    }, SHOW_DELAY);
+    };
+    if (trigger.locked) {
+      show();
+      return;
+    }
+    enterTimer.current = window.setTimeout(show, SHOW_DELAY);
     return () => window.clearTimeout(enterTimer.current);
   }, [trigger]);
 
@@ -161,15 +184,28 @@ export function HoverPeekCard({
 
   useEffect(() => {
     if (!activeTrigger) return;
+    const close = () => {
+      hoveringCard.current = false;
+      setActiveTrigger(null);
+      dismissRef.current?.();
+    };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        hoveringCard.current = false;
-        setActiveTrigger(null);
-      }
+      if (event.key === 'Escape') close();
+    };
+    // The card follows its citation while the page scrolls and closes once the citation leaves view.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && cardRef.current?.contains(event.target)) return;
+      const rect = activeTrigger.anchorEl.getBoundingClientRect();
+      if (!activeTrigger.anchorEl.isConnected || rect.bottom < 0 || rect.top > window.innerHeight) close();
+      else recalcPosition();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [activeTrigger]);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [activeTrigger, recalcPosition]);
 
   if (!activeTrigger || !mention || (!citation && !definition)) return null;
 
@@ -180,13 +216,39 @@ export function HoverPeekCard({
 
   const scheduleClose = () => {
     hoveringCard.current = false;
+    if (activeTrigger.locked) return;
     leaveTimer.current = window.setTimeout(() => setActiveTrigger(null), HIDE_DELAY);
   };
 
   const closeNow = () => {
     hoveringCard.current = false;
     setActiveTrigger(null);
+    onDismiss?.();
   };
+
+  const closeButton = (
+    <button type="button" onClick={closeNow} aria-label={t('common.close')} title={t('common.close')}
+      className="rounded-md p-1 text-paper-muted transition hover:bg-paper-card hover:text-paper-ink">
+      <X className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  const pinButton = (pinned: boolean, label: string, onClick: () => void, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={clsx(
+        'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:bg-paper-border disabled:text-paper-muted',
+        pinned
+          ? 'border border-paper-goldborder bg-paper-goldbg text-paper-goldtext'
+          : 'bg-paper-gold text-paper-card hover:bg-paper-gold/90',
+      )}
+    >
+      {pinned ? <Check className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+      {pinned ? t('pin.pinned') : label}
+    </button>
+  );
 
   return createPortal(
     <div
@@ -202,24 +264,18 @@ export function HoverPeekCard({
         <>
           <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg px-3 py-2">
             <span className="rounded border border-paper-border bg-paper-card px-1.5 py-0.5 font-mono text-xs font-semibold text-paper-ink">{definition.term}</span>
-            <span className="rounded-full border border-paper-border px-1.5 text-[10px] text-paper-muted">{t('glossary.title')}</span>
-            <span className="ml-auto text-[10px] text-paper-muted">{t('glossary.definedOn', { page: definition.definedPage })}</span>
+            <span className="rounded-full border border-paper-border px-1.5 text-[11px] text-paper-muted">{t('glossary.title')}</span>
+            <span className="ml-auto text-[11px] text-paper-muted">{t('glossary.definedOn', { page: definition.definedPage })}</span>
+            {closeButton}
           </div>
           <div className="p-3">
             <p className="text-[13px] font-semibold text-paper-ink">{definition.expansion}</p>
-            <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">{definition.contextSentence}</p>
+            <p className="mt-2 text-xs leading-relaxed text-paper-muted">{definition.contextSentence}</p>
             <div className="mt-3 flex items-center gap-2">
-              {onPinGlossary && (
-                <button
-                  type="button"
-                  onClick={() => onPinGlossary(definition)}
-                  className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90"
-                >
-                  <Pin className="h-3 w-3" />
-                  {t('glossary.pin')}
-                </button>
+              {onPinGlossary && pinButton(
+                pinnedIds.includes(glossaryPinId(definition.term)), t('glossary.pin'), () => onPinGlossary(definition),
               )}
-              <button type="button" className="flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink hover:bg-paper-bg"
+              <button type="button" className="flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-xs text-paper-ink hover:bg-paper-bg"
                 onClick={() => {
                   closeNow();
                   onJump(definition.definedPage, definition.definedRect, mention.rect, mention.pageNumber);
@@ -232,16 +288,16 @@ export function HoverPeekCard({
       )}
       {citation && <>
       <div className="flex items-center gap-2 border-b border-paper-border bg-paper-bg/60 px-3 py-2">
-        <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-paper-goldtext">
+        <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-paper-goldtext">
           {t(`kind.${citation.kind}`)}
         </span>
-        <span className="font-mono text-[10px] text-paper-muted">
+        <span className="font-mono text-[11px] text-paper-muted">
           {t('reader.page', { page: asset?.pageNumber ??
             activeReference?.pageNumber ??
             citation.nativeDest?.pageNumber ??
             citation.pageNumber })}
         </span>
-        <span className="truncate text-[11px] text-paper-muted">{citation.rawText}</span>
+        <span className="truncate text-xs text-paper-muted">{citation.rawText}</span>
         {previewImage && colorToggle}
         <button
           type="button"
@@ -259,9 +315,11 @@ export function HoverPeekCard({
           }}
           className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-paper-card hover:text-paper-ink"
           title={t('peek.source')}
+          aria-label={t('peek.source')}
         >
           <CornerDownRight className="h-3.5 w-3.5" />
         </button>
+        {closeButton}
       </div>
 
       {citation.kind === 'reference' ? (
@@ -274,7 +332,7 @@ export function HoverPeekCard({
                   type="button"
                   onClick={() => setActiveRefIndex(index)}
                   className={clsx(
-                    'rounded-md px-2 py-0.5 font-mono text-[10px] transition',
+                    'rounded-md px-2 py-0.5 font-mono text-[11px] transition',
                     index === activeRefIndex
                       ? 'bg-paper-ink text-paper-card'
                       : 'bg-paper-bg text-paper-muted hover:text-paper-ink',
@@ -291,7 +349,7 @@ export function HoverPeekCard({
               <p className="text-[13px] font-semibold leading-snug text-paper-ink">
                 {activeReference.title || t('reference.number', { index: activeReference.index })}
               </p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
                 {activeReference.authors && (
                   <span className="rounded border border-paper-border px-1.5 py-0.5 text-paper-muted">
                     {activeReference.authors}
@@ -303,26 +361,19 @@ export function HoverPeekCard({
                   </span>
                 )}
               </div>
-              <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-paper-muted">
+              <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-paper-muted">
                 {activeReference.rawText}
               </p>
               <ReferenceDetails key={activeReference.key} reference={activeReference} />
               <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onPinReference(activeReference)}
-                  className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90"
-                >
-                  <Pin className="h-3 w-3" />
-                  {t('reference.pin')}
-                </button>
+                {pinButton(pinnedIds.includes(activeReference.key), t('reference.pin'), () => onPinReference(activeReference))}
                 <a
                   href={`https://scholar.google.com/scholar?q=${encodeURIComponent(
                     activeReference.title || activeReference.rawText,
                   )}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"
+                  className="flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
                 >
                   <Search className="h-3 w-3" />
                   Google Scholar
@@ -354,7 +405,7 @@ export function HoverPeekCard({
                   onLoad={recalcPosition}
                   className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
                 />
-                <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
+                <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[11px] text-paper-muted transition group-hover:text-paper-ink">
                   <CornerDownRight className="h-3 w-3" /> {t('peek.follow')}
                 </span>
               </button>
@@ -382,7 +433,7 @@ export function HoverPeekCard({
                 onLoad={recalcPosition}
                 className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
               />
-              <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
+              <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-paper-card py-1 text-[11px] text-paper-muted transition group-hover:text-paper-ink">
                 {asset ? <Maximize2 className="h-3 w-3" /> : <CornerDownRight className="h-3 w-3" />}
                 {t(asset ? 'peek.enlarge' : 'peek.follow')}
               </span>
@@ -392,21 +443,13 @@ export function HoverPeekCard({
           )}
 
           {asset?.caption && (
-            <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-paper-muted">
+            <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-paper-muted">
               {asset.caption}
             </p>
           )}
 
           <div className="mt-2.5 flex items-center gap-2">
-            <button
-              type="button"
-              disabled={!asset}
-              onClick={() => asset && onPinAsset(asset)}
-              className="flex items-center gap-1 rounded-lg bg-paper-gold px-2.5 py-1.5 text-[11px] font-medium text-paper-card transition hover:bg-paper-gold/90 disabled:cursor-not-allowed disabled:bg-paper-border disabled:text-paper-muted"
-            >
-              <Pin className="h-3 w-3" />
-              {t('peek.pin')}
-            </button>
+            {pinButton(!!asset && pinnedIds.includes(asset.key), t('peek.pin'), () => { if (asset) onPinAsset(asset); }, !asset)}
             <button
               type="button"
               onClick={() => {
@@ -418,7 +461,7 @@ export function HoverPeekCard({
                   citation.pageNumber,
                 );
               }}
-              className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"
+              className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg"
             >
               {t('peek.source')}
             </button>
@@ -433,7 +476,7 @@ export function HoverPeekCard({
 
 function FallbackMessage({ citation }: { citation: InlineCitation }) {
   return (
-    <p className="rounded-lg bg-paper-bg px-3 py-2.5 text-[11px] leading-relaxed text-paper-muted">
+    <p className="rounded-lg bg-paper-bg px-3 py-2.5 text-xs leading-relaxed text-paper-muted">
       {citation.nativeDest
         ? t('peek.fallbackPage', { page: citation.nativeDest.pageNumber })
         : t('peek.fallback')}

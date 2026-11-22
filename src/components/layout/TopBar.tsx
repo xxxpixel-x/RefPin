@@ -1,12 +1,12 @@
-import { ThemeSwitcher } from './ThemeSwitcher';
+import { SettingsMenu } from './SettingsMenu';
 import { TranslateControl } from './TranslateControl';
 import { useReaderStore } from '../../store/useReaderStore';
 import type { PaperTranslationController } from '../../services/usePaperTranslation';
-import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { t } from '../../i18n/core';
 import { useState } from 'react';
 import {
   FileUp,
+  Home,
   Minus,
   PanelLeft,
   PanelRight,
@@ -33,13 +33,22 @@ interface TopBarProps {
   onJumpPage: (page: number) => void;
   onSearch?: () => void;
   onPalette?: () => void;
+  onShowShortcuts?: () => void;
   onZoom: (nextScale: number) => void;
+  onFitWidth?: () => void;
   onToggleSnip: () => void;
   onToggleDrawer: () => void;
   onToggleDock?: () => void;
   onReset: () => void;
   onOpenFile: (file: File) => void;
 }
+
+// Shared look for the bordered toolbar buttons; labels never wrap and hide on narrow windows.
+const toolButton =
+  'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg';
+const toggledButton =
+  'aria-pressed:border-paper-goldborder aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext';
+const iconButton = 'shrink-0 rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink';
 
 export function TopBar({
   fileName,
@@ -57,7 +66,9 @@ export function TopBar({
   onJumpPage,
   onSearch,
   onPalette,
+  onShowShortcuts,
   onZoom,
+  onFitWidth,
   onToggleSnip,
   onToggleDrawer,
   onToggleDock,
@@ -68,29 +79,19 @@ export function TopBar({
   const [pageInput, setPageInput] = useState('');
 
   return (
-    <header className="relative z-30 flex min-h-[52px] shrink-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 lg:flex-nowrap border-b border-paper-border bg-paper-card/85 px-3 backdrop-blur">
-      <button
-        type="button"
-        aria-pressed={drawerOpen}
-        onClick={onToggleDrawer}
-        className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg aria-pressed:border-paper-goldborder aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"
-        title={t('reader.toggleAssets')}
-      >
+    <header className="relative z-30 flex h-[52px] shrink-0 items-center gap-2 border-b border-paper-border bg-paper-card/85 px-3 backdrop-blur">
+      <button type="button" aria-pressed={drawerOpen} onClick={onToggleDrawer}
+        className={clsx(toolButton, toggledButton)} title={t('reader.toggleAssets')} aria-label={t('reader.toggleAssets')}>
         <PanelLeft className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{t('reader.assets')}</span>
-        <span className="rounded bg-paper-goldbg px-1 font-mono text-[10px] text-paper-goldtext">
-          {assetCount}
-        </span>
+        <span className="hidden lg:inline">{t('reader.assets')}</span>
+        <span className="rounded bg-paper-goldbg px-1 font-mono text-xs text-paper-goldtext">{assetCount}</span>
       </button>
 
-      <span className="hidden text-sm font-semibold tracking-tight text-paper-ink md:inline">
-        RefPin
-      </span>
-      <span className="hidden max-w-[180px] truncate text-xs text-paper-muted md:inline lg:max-w-[260px]">
+      <span className="hidden min-w-0 max-w-[260px] truncate text-xs text-paper-muted xl:inline" title={fileName}>
         {fileName}
       </span>
 
-      <span className="ml-1 flex items-center gap-1 rounded-lg border border-paper-border bg-paper-card px-1 py-0.5">
+      <span className="flex shrink-0 items-center gap-1 rounded-lg border border-paper-border bg-paper-card px-1 py-0.5 focus-within:border-paper-gold">
         <input
           value={pageInput}
           onChange={(event) => setPageInput(event.target.value.replace(/[^\d]/g, ''))}
@@ -106,85 +107,66 @@ export function TopBar({
           className="w-9 bg-transparent text-center font-mono text-xs text-paper-ink outline-none placeholder:text-paper-ink"
           aria-label={t('reader.goToPage')}
         />
-        <span className="font-mono text-xs text-paper-muted">/ {numPages}</span>
+        <span className="whitespace-nowrap font-mono text-xs text-paper-muted">/ {numPages}</span>
       </span>
 
-      <div className="flex items-center rounded-lg border border-paper-border bg-paper-card">
-        <button
-          type="button"
-          onClick={() => onZoom(scale - 0.15)}
-          className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink"
-          aria-label={t('reader.zoomOut')}
-        >
+      <div className="flex shrink-0 items-center rounded-lg border border-paper-border bg-paper-card">
+        <button type="button" onClick={() => onZoom(scale - 0.15)} title={t('reader.zoomOut')}
+          className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink" aria-label={t('reader.zoomOut')}>
           <Minus className="h-3.5 w-3.5" />
         </button>
-        <span className="w-11 text-center font-mono text-[11px] text-paper-muted">
+        <button type="button" onClick={onFitWidth} disabled={!onFitWidth} title={t('reader.fitWidth')} aria-label={t('reader.fitWidth')}
+          className="w-12 rounded py-1 text-center font-mono text-xs text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink disabled:hover:bg-transparent">
           {Math.round(scale * 100)}%
-        </span>
-        <button
-          type="button"
-          onClick={() => onZoom(scale + 0.15)}
-          className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink"
-          aria-label={t('reader.zoomIn')}
-        >
+        </button>
+        <button type="button" onClick={() => onZoom(scale + 0.15)} title={t('reader.zoomIn')}
+          className="px-1.5 py-1.5 text-paper-muted transition hover:text-paper-ink" aria-label={t('reader.zoomIn')}>
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
 
       <button
         type="button"
+        aria-pressed={snipMode}
         onClick={onToggleSnip}
-        className={clsx(
-          'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs transition',
-          snipMode
-            ? 'bg-paper-gold text-paper-card shadow-sm'
-            : 'border border-paper-border text-paper-ink hover:bg-paper-bg',
-        )}
+        className={clsx(toolButton, snipMode && 'border-paper-gold bg-paper-gold text-paper-card shadow-sm hover:bg-paper-gold')}
         title={t('snip.shortcut')}
+        aria-label={t('snip.shortcut')}
       >
         <Scissors className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{t('snip.tool')}</span>
+        <span className="hidden xl:inline">{t('snip.tool')}</span>
       </button>
 
       {translation && <TranslateControl translation={translation} numPages={numPages} />}
 
-      {onPalette && <button type="button" title={t('palette.title')} aria-label={t('palette.title')} onClick={onPalette}
-        className="shrink-0 rounded-md border border-paper-border px-1.5 py-1 font-mono text-[10px] text-paper-muted hover:bg-paper-bg">
-        {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'}
-      </button>}
       {onSearch && <>
-        <button type="button" title={t('search.find')} aria-label={t('search.find')} onClick={onSearch}
-          className="rounded-md p-1.5 text-paper-muted hover:bg-paper-bg"><Search size={15} /></button>
+        <button type="button" title={t('search.find')} aria-label={t('search.find')} onClick={onSearch} className={iconButton}>
+          <Search size={15} />
+        </button>
         <button type="button" title={t('ruler.toggle')} aria-label={t('ruler.toggle')} aria-pressed={ruler}
           onClick={() => useReaderStore.getState().setReadingRulerEnabled(!ruler)}
-          className="rounded-md p-1.5 text-paper-muted hover:bg-paper-bg aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"><Ruler size={15} /></button>
+          className={clsx(iconButton, 'aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext')}>
+          <Ruler size={15} />
+        </button>
       </>}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {onToggleDock && (
-          <button
-            type="button"
-            aria-pressed={!dockCollapsed}
-            onClick={onToggleDock}
-            className="flex items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg aria-pressed:border-paper-goldborder aria-pressed:bg-paper-goldbg aria-pressed:text-paper-goldtext"
-            title={t('dock.toggle')}
-          >
+          <button type="button" aria-pressed={!dockCollapsed} onClick={onToggleDock}
+            className={clsx(toolButton, toggledButton)} title={t('dock.toggle')} aria-label={t('dock.toggle')}>
             <PanelRight className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t('panel.pins')}</span>
-            <span className="rounded bg-paper-goldbg px-1 font-mono text-[10px] text-paper-goldtext">
-              {pinCount}
-            </span>
+            <span className="hidden lg:inline">{t('panel.pins')}</span>
+            <span className="rounded bg-paper-goldbg px-1 font-mono text-xs text-paper-goldtext">{pinCount}</span>
           </button>
         )}
-        <ThemeSwitcher />
-        <LanguageToggle />
-        <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">
+        <label className={clsx(toolButton, 'cursor-pointer focus-within:border-paper-gold')} title={t('reader.switchFile')}>
           <FileUp className="h-3.5 w-3.5" />
           <span className="hidden xl:inline">{t('reader.switchFile')}</span>
           <input
             type="file"
             accept="application/pdf"
-            className="hidden"
+            aria-label={t('reader.switchFile')}
+            className="sr-only"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) onOpenFile(file);
@@ -192,13 +174,9 @@ export function TopBar({
             }}
           />
         </label>
-
-        <button
-          type="button"
-          onClick={onReset}
-          className="text-[11px] text-paper-muted transition hover:text-paper-ink"
-        >
-          {t('reader.home')}
+        <SettingsMenu onPalette={onPalette} onShowShortcuts={onShowShortcuts} />
+        <button type="button" onClick={onReset} title={t('reader.home')} aria-label={t('reader.home')} className={iconButton}>
+          <Home size={15} />
         </button>
       </div>
 

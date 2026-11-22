@@ -101,6 +101,7 @@ interface ReaderState {
   resetPinnedCrop: (id: string, fallbackImageUrl?: string) => void;
   togglePinCollapse: (id: string) => void;
   clearPinnedItems: () => void;
+  restorePinnedItems: (items: PinnedItem[]) => void;
   renamePinnedItem: (id: string, title: string) => void;
   movePinnedItem: (id: string, direction: 'up' | 'down') => void;
 
@@ -158,7 +159,7 @@ function loadSavedDockLayout(): {
   dockHeight: number;
   dockCollapsed: boolean;
 } {
-  const defaults = { dockPosition: 'right' as DockPosition, dockWidth: 388, dockHeight: 264, dockCollapsed: false };
+  const defaults = { dockPosition: 'right' as DockPosition, dockWidth: 340, dockHeight: 264, dockCollapsed: false };
   if (typeof window === 'undefined') return defaults;
   try {
     const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
@@ -450,6 +451,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     })),
 
   clearPinnedItems: () => set({ pinnedItems: [] }),
+  restorePinnedItems: (items) => set({ pinnedItems: items }),
 
   renamePinnedItem: (id, title) =>
     set((state) => ({

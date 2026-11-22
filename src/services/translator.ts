@@ -15,6 +15,24 @@ export interface TranslateConfig {
   model: string;
 }
 
+// The no-setup provider sends paragraphs to a third-party service, so readers acknowledge that once.
+const FREE_CONSENT_KEY = 'refpin.freeTranslateConsent.v1';
+
+/** A custom endpoint without a key falls back to the free channel unless it is a local model server. */
+export function usesFreeTranslateChannel(config: Pick<TranslateConfig, 'provider' | 'apiKey' | 'apiBaseUrl'>): boolean {
+  return config.provider === 'free' ||
+    (!config.apiKey && !/^http:\/\/(?:localhost|127\.0\.0\.1)\b/i.test(config.apiBaseUrl));
+}
+
+export function needsFreeTranslateConsent(config: TranslateConfig): boolean {
+  if (!usesFreeTranslateChannel(config)) return false;
+  try { return localStorage.getItem(FREE_CONSENT_KEY) !== '1'; } catch { return true; }
+}
+
+export function grantFreeTranslateConsent(): void {
+  try { localStorage.setItem(FREE_CONSENT_KEY, '1'); } catch { /* Ask again next session. */ }
+}
+
 export const DEFAULT_TRANSLATE_CONFIG: TranslateConfig = {
   provider: 'free',
   targetLang: 'zh-CN',
@@ -444,9 +462,7 @@ export function createTranslator(
 
   async function translateTexts(texts: string[], overrideConfig?: Partial<TranslateConfig>) {
     const config = { ...(await loadTranslateConfig()), ...overrideConfig };
-    const useFree = Boolean(
-      freeProvider && (config.provider === 'free' || (!config.apiKey && !/^http:\/\/(?:localhost|127\.0\.0\.1)\b/i.test(config.apiBaseUrl))),
-    );
+    const useFree = Boolean(freeProvider && usesFreeTranslateChannel(config));
     const source = texts.map(sanitizeSourceText);
     const keys = source.map((text) =>
       JSON.stringify([

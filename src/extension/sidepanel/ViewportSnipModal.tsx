@@ -157,7 +157,7 @@ export function ViewportSnipModal({
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-paper-border bg-paper-card px-3 py-2.5">
-        <span className="text-[11px] text-paper-muted">
+        <span className="text-xs text-paper-muted">
           {canConfirm ? t('snip.confirmEnter') : t('snip.drag')}
         </span>
         <div className="flex items-center gap-2">

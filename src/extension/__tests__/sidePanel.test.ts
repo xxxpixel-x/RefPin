@@ -52,6 +52,11 @@ it('navigates and exports an HTML paper in the companion, with enrichment off by
     await click(algorithmCard!);
     await click(button('Pins1'));
     expect(container.textContent).toContain('Rank candidates');
+    // Clearing is undoable from the toast.
+    await click(button('Clear all pins'));
+    expect(container.textContent).not.toContain('Rank candidates');
+    await click(button('Undo'));
+    expect(container.textContent).toContain('Rank candidates');
     await click(button('Mention 1, Algorithm 2'));
     await click(button('Outline1'));
     await click(button('1 Introduction'));
@@ -65,6 +70,16 @@ it('navigates and exports an HTML paper in the companion, with enrichment off by
     expect(markdown).toContain('Algorithm 2');
     expect(markdown).toContain('Multi-Head Attention');
     expect(markdown).not.toContain('P.0');
+    // The public translation channel asks once before any text is sent from the page.
+    localStorage.removeItem('refpin.freeTranslateConsent.v1');
+    await click(button('Translate'));
+    expect(container.textContent).toContain('Use the public translation service?');
+    expect(sendMessage).not.toHaveBeenCalledWith(6, expect.objectContaining({ type: 'REFPIN_PAGE_TRANSLATE_START' }));
+    await click(button('Continue'));
+    expect(sendMessage).toHaveBeenCalledWith(6, { type: 'REFPIN_PAGE_TRANSLATE_START', displayMode: 'translated' });
+    expect(container.textContent).not.toContain('Use the public translation service?');
+    // Theme lives in the overflow menu now.
+    await click(button('Settings'));
     await click(button('Dark'));
     expect(localStorage.getItem('refpin.theme.v1')).toBe('dark');
     localStorage.setItem('refpin.theme.v1', 'sepia');

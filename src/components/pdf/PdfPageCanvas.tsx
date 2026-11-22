@@ -360,7 +360,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         />
       )}
 
-      <span className="pointer-events-none absolute bottom-2 right-3 select-none z-20 font-mono text-[10px] tracking-wider text-paper-muted/70">
+      <span className="pointer-events-none absolute bottom-2 right-3 select-none z-20 font-mono text-[11px] tracking-wider text-paper-muted/70">
         {pageNumber}
       </span>
 

@@ -44,17 +44,18 @@ export function LandingView({
   const [requestedFile, setRequestedFile] = useState('');
 
   return (
-    <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-12">
+    <div className="relative flex min-h-screen flex-col items-center justify-center px-6 py-12">
       <div className="absolute right-4 top-4 flex items-center gap-2"><ThemeSwitcher /><LanguageToggle /></div>
       <div className="w-full max-w-xl">
-        <div className="mb-6 flex items-center justify-center gap-2.5">
+        <h1 className="mb-1 flex items-center justify-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-ink text-[13px] font-semibold text-paper-card">
             R
           </span>
           <span className="text-base font-semibold tracking-tight text-paper-ink">
             {t('brand.name')}
           </span>
-        </div>
+        </h1>
+        <p className="mx-auto mb-7 mt-2 max-w-md text-center text-sm leading-relaxed text-paper-muted">{t('landing.features')}</p>
 
         <button
           type="button"
@@ -145,7 +146,7 @@ export function LandingView({
                     <FileText size={17} className="shrink-0 text-paper-muted group-hover:text-paper-gold" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-paper-ink" title={sample?.title ?? entry.fileName}>{sample?.title ?? entry.fileName}</span>
-                      <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-paper-muted">
+                      <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-muted">
                         <span className="tabular-nums">{t('reader.pageOf', { page: entry.lastPage, total: entry.numPages })}</span>
                         <span aria-label={t('archive.pinCount', { count: entry.pinnedItems.length })} className="inline-flex items-center gap-1 rounded bg-paper-bg px-1.5">
                           <Pin size={10} />{entry.pinnedItems.length}
@@ -153,7 +154,7 @@ export function LandingView({
                         {!sample && !entry.hasCachedPdf && <span>{t('archive.reselect')}</span>}
                       </span>
                     </span>
-                    <time dateTime={new Date(entry.lastOpenedAt).toISOString()} className="shrink-0 text-[11px] text-paper-muted">{relativeTime(entry.lastOpenedAt)}</time>
+                    <time dateTime={new Date(entry.lastOpenedAt).toISOString()} className="shrink-0 text-xs text-paper-muted">{relativeTime(entry.lastOpenedAt)}</time>
                   </button>
                   <button type="button" aria-label={t('archive.removeName', { name: entry.fileName })} title={t('archive.remove')}
                     className="rounded p-1.5 text-paper-muted hover:bg-paper-bg hover:text-paper-ink"

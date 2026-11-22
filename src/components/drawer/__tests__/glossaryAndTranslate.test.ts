@@ -214,8 +214,17 @@ describe('web glossary drawer, pinning, and one-click translation', () => {
       await act(async () => root.render(createElement(Harness)));
       expect(container.textContent).toContain('一键翻译');
 
+      localStorage.removeItem('refpin.freeTranslateConsent.v1');
       const startBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('一键翻译'))!;
       await act(async () => startBtn.click());
+
+      // The public no-setup channel asks once before any paragraph leaves the device.
+      expect(container.textContent).toContain('使用公共翻译通道？');
+      expect(latestState?.displayMode).toBe('off');
+      expect(translateSpy).not.toHaveBeenCalled();
+      const continueBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '继续翻译')!;
+      await act(async () => continueBtn.click());
+      expect(localStorage.getItem('refpin.freeTranslateConsent.v1')).toBe('1');
 
       // Wait for async page streaming to finish
       await act(async () => {
@@ -294,7 +303,7 @@ describe('web glossary drawer, pinning, and one-click translation', () => {
       expect(useReaderStore.getState().dockCollapsed).toBe(true);
       expect(container.textContent).not.toContain('Multi-Head Attention');
 
-      const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-label="展开对照钉板（快捷键 ]）"]');
+      const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-label="展开钉板（快捷键 ]）"]');
       expect(expandBtn).toBeTruthy();
       await act(async () => expandBtn!.click());
       expect(useReaderStore.getState().dockCollapsed).toBe(false);

@@ -7,6 +7,7 @@ import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { LandingView } from './components/landing/LandingView';
 import { CommandPalette } from './components/layout/CommandPalette';
+import { ShortcutHelp } from './components/layout/ShortcutHelp';
 import { buildStudyNotesMarkdown, exportStudyPackZip } from './services/noteExporter';
 import { TopBar } from './components/layout/TopBar';
 import { getCachedPageLines, searchPageLines } from './engine/pageLinesCache';
@@ -98,6 +99,8 @@ export default function App() {
   });
   const consumeLink = useCallback(() => setSharedArxiv(undefined), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [fitOnOpen, setFitOnOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const exportInProgress = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -139,7 +142,7 @@ export default function App() {
   const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
-  const [toast, setToast] = useState<DisplayMessage | null>(null);
+  const [toast, setToast] = useState<{ notice: DisplayMessage; action?: { label: DisplayMessage; run: () => void } } | null>(null);
 
   const flushArchive = useCallback(() => {
     window.clearTimeout(saveTimerRef.current);
@@ -186,11 +189,29 @@ export default function App() {
     return () => { active = false; };
   }, [pdfDoc, bootingName]);
 
-  const showToast = useCallback((notice: DisplayMessage) => {
-    setToast(notice);
+  const showToast = useCallback((notice: DisplayMessage, action?: { label: DisplayMessage; run: () => void }) => {
+    setToast({ notice, action });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
+    // Leave enough time to reach an Undo button.
+    toastTimerRef.current = window.setTimeout(() => setToast(null), action ? 6000 : 1800);
   }, []);
+
+  const handleClearPins = useCallback(() => {
+    const store = useReaderStore.getState();
+    const previous = store.pinnedItems;
+    if (!previous.length) return;
+    const doc = store.pdfDoc;
+    store.clearPinnedItems();
+    showToast(message('dock.cleared', { count: previous.length }), {
+      label: message('common.undo'),
+      run: () => {
+        const current = useReaderStore.getState();
+        if (current.pdfDoc !== doc) return;
+        current.restorePinnedItems([...previous, ...current.pinnedItems.filter(item => !previous.some(old => old.id === item.id))]);
+        setToast(null);
+      },
+    });
+  }, [showToast]);
 
   const handleExport = useCallback(async (mode: 'copy' | 'zip') => {
     const notes = useReaderStore.getState();
@@ -275,6 +296,7 @@ export default function App() {
           return;
         }
         const requestedPage = startPage && Math.min(startPage, doc.numPages);
+        setFitOnOpen(!archive?.scale);
         const scrollTop = requestedPage ? undefined : archive?.lastScrollTop;
         archiveSession.current = {
           sampleId: sampleId ?? archive?.sampleId, scrollTop: scrollTop ?? 0, openedAt: Date.now(),
@@ -522,42 +544,24 @@ export default function App() {
       });
   }, []);
 
+  // Hovering previews a mention; a click locks that preview open so the reader can choose
+  // between pinning it and jumping to it. A locked card ignores hovers until it is dismissed.
   const handleMentionHover = useCallback(
     (mention: ReaderMention, anchorEl: HTMLElement) => {
-      setHoverTrigger({ mention, anchorEl });
+      setHoverTrigger(previous => previous?.locked ? previous : { mention, anchorEl });
     },
     [],
   );
 
   const handleMentionLeave = useCallback(() => {
-    setHoverTrigger(null);
+    setHoverTrigger(previous => previous?.locked ? previous : null);
   }, []);
 
   const handleMentionClick = useCallback(
     (mention: ReaderMention, anchorEl: HTMLElement) => {
-      if ('term' in mention) {
-        setHoverTrigger({ mention, anchorEl });
-        return;
-      }
-      const citation = mention;
-      const store = useReaderStore.getState();
-      const asset = findAssetForCitation(citation, store.assetsMap);
-      if (asset) {
-        handlePinAsset(asset);
-        return;
-      }
-      const reference = findReferenceForCitation(citation, store.referencesMap);
-      if (reference) {
-        handlePinReference(reference);
-        return;
-      }
-      if (citation.nativeDest) {
-        const y = citation.nativeDest.targetY;
-        handleJump(citation.nativeDest.pageNumber, y === undefined ? undefined : { x: 0.05, y, width: 0.9, height: 0.02 },
-          citation.rect, citation.pageNumber);
-      }
+      setHoverTrigger({ mention, anchorEl, locked: true });
     },
-    [handleJump, handlePinAsset, handlePinReference],
+    [],
   );
 
   const handleExpandCrop = useCallback(
@@ -636,7 +640,7 @@ export default function App() {
     });
   }, []);
 
-  // 全局快捷键：S 开关框选、[ 开关资产墙、G 开关术语栏、T 一键翻译、Esc 收起浮窗/灯箱/框选
+  // 全局快捷键：S 开关框选、[ 开关论文索引、G 开关术语栏、T 一键翻译、Esc 收起浮窗/框选
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useReaderStore.getState();
@@ -646,7 +650,7 @@ export default function App() {
         setPaletteOpen(value => !value);
         return;
       }
-      if (!state.pdfDoc || paletteOpen) return;
+      if (!state.pdfDoc || paletteOpen || shortcutsOpen) return;
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         toggleSearch();
@@ -670,6 +674,11 @@ export default function App() {
           target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
+        return;
+      }
+      if (event.key === '?') {
+        event.preventDefault();
+        setShortcutsOpen(true);
         return;
       }
       if (event.altKey) {
@@ -707,7 +716,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bootingName, paletteOpen, toggleSearch, closeSearch, navigateHistory, translation]);
+  }, [bootingName, paletteOpen, shortcutsOpen, toggleSearch, closeSearch, navigateHistory, translation]);
 
   const assetsList = useMemo(
     () =>
@@ -800,9 +809,14 @@ export default function App() {
         dockCollapsed={dockCollapsed}
         translation={translation}
         onPalette={() => setPaletteOpen(true)}
+        onShowShortcuts={() => setShortcutsOpen(true)}
         onSearch={toggleSearch}
         onJumpPage={handleJump}
         onZoom={(nextScale) => useReaderStore.getState().setScale(nextScale)}
+        onFitWidth={() => {
+          const fit = viewerRef.current?.getFitWidthScale();
+          if (fit) useReaderStore.getState().setScale(fit);
+        }}
         onToggleSnip={() => useReaderStore.getState().setSnipMode(!snipMode)}
         onToggleDrawer={() => useReaderStore.getState().setDrawerOpen(!drawerOpen)}
         onToggleDock={() => useReaderStore.getState().toggleDockCollapsed()}
@@ -847,6 +861,7 @@ export default function App() {
           onPinReference={handlePinReference}
           onPinGlossary={handlePinGlossary}
           onLocate={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
+          allowPush={dockPosition === 'left' || dockPosition === 'right'}
         />
 
         <main ref={readerRef} className="relative min-h-0 min-w-0 flex-1">
@@ -872,11 +887,13 @@ export default function App() {
             initialScrollTop={initialScrollTop}
             onScrollTopChange={handleScrollTop}
             onPageChange={(page) => useReaderStore.getState().setCurrentPage(page)}
+            fitWidthOnLoad={fitOnOpen}
+            onFitScale={(fit) => useReaderStore.getState().setScale(fit)}
             onMentionHover={handleMentionHover}
             onMentionLeave={handleMentionLeave}
             onMentionClick={handleMentionClick}
           />
-          {!snipMode && <SelectionToolbar viewerRef={readerRef} />}
+          {!snipMode && <SelectionToolbar viewerRef={readerRef} onOpenSettings={() => translation.setSettingsOpen(true)} />}
         </main>
 
         <PinDock
@@ -908,7 +925,7 @@ export default function App() {
           onMove={(id, delta) => useReaderStore.getState().movePinnedItem(id, delta === -1 ? 'up' : 'down')}
           onExport={handleExport}
           exporting={exporting}
-          onClear={() => useReaderStore.getState().clearPinnedItems()}
+          onClear={handleClearPins}
         />
       </div>
 
@@ -923,15 +940,28 @@ export default function App() {
         onJump={handleJump}
         onOpenLightbox={setLightboxAsset}
         onPeek={handlePeek}
+        onDismiss={() => setHoverTrigger(null)}
+        pinnedIds={pinnedIds}
         fallbackPreview={fallbackPreview}
       />
 
       <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
       {palette}
+      {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}
 
+      {/* Top-centred so it never collides with the jump-back bar at the bottom of the page. */}
       {toast && (
-        <div role="status" className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-paper-card shadow-float">
-          {formatMessage(toast)}
+        <div role="status" className={clsx(
+          'fixed left-1/2 top-[64px] z-[70] flex -translate-x-1/2 items-center gap-3 rounded-full bg-paper-ink px-4 py-2 text-xs text-paper-card shadow-float',
+          !toast.action && 'pointer-events-none',
+        )}>
+          <span>{formatMessage(toast.notice)}</span>
+          {toast.action && (
+            <button type="button" onClick={toast.action.run}
+              className="rounded-full px-2 py-0.5 font-medium text-paper-gold hover:bg-paper-card/10">
+              {formatMessage(toast.action.label)}
+            </button>
+          )}
         </div>
       )}
     </div>

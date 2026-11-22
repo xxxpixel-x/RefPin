@@ -37,7 +37,7 @@ export function ReferenceDetails({ reference, deferUntilVisible = false }: { ref
     const timer = setTimeout(() => setCopied('ready'), 1600);
     return () => clearTimeout(timer);
   }, [copied]);
-  return <div ref={card} className="mt-2 space-y-2 border-t border-paper-border pt-2 text-[11px]">
+  return <div ref={card} className="mt-2 space-y-2 border-t border-paper-border pt-2 text-xs">
     <label className="flex cursor-pointer items-center gap-1.5 text-paper-muted">
       <input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)}
         className="accent-paper-gold" />{t('scholar.toggle')}

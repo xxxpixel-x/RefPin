@@ -13,9 +13,11 @@ export function BacklinkStrip({ backlinks = [], onJumpToBacklink }: BacklinkStri
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? backlinks : backlinks.slice(0, VISIBLE_COUNT);
   const more = backlinks.length - VISIBLE_COUNT;
+  // "Cited 0 times" on every card is noise; only show the strip when there is somewhere to go.
+  if (!backlinks.length) return null;
 
   return (
-    <div className="flex max-h-24 w-full shrink-0 flex-wrap items-center gap-1 overflow-y-auto border-t border-paper-border pt-1.5 text-[10px] text-paper-muted">
+    <div className="flex max-h-24 w-full shrink-0 flex-wrap items-center gap-1 overflow-y-auto border-t border-paper-border pt-1.5 text-[11px] text-paper-muted">
       <span className="mr-0.5">{t('backlinks.count', { count: backlinks.length })}</span>
       {visible.map((link, index) => {
         const label = link.domAnchorId ? t('backlinks.htmlMention', { index: index + 1, text: link.rawText }) : t('backlinks.mention', { index: index + 1, page: link.pageNumber, text: link.rawText });

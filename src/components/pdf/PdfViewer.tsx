@@ -35,6 +35,16 @@ export interface PdfViewerHandle {
   stepRuler: (delta: -1 | 1) => void;
   getScrollTop: () => number;
   getScrollLeft: () => number;
+  /** Scale at which the widest page fits the viewer width, once page sizes are known. */
+  getFitWidthScale: () => number | undefined;
+}
+
+const PAGE_LIST_PADDING_X = 48;
+
+function fitWidthScale(dims: Array<{ width: number }>, viewerWidth: number) {
+  const widest = Math.max(1, ...dims.map(dim => dim.width));
+  const fit = Math.floor(((viewerWidth - PAGE_LIST_PADDING_X - 8) / widest) * 100) / 100;
+  return Math.min(2.5, Math.max(0.6, fit));
 }
 
 interface Props {
@@ -56,6 +66,9 @@ interface Props {
   onMentionLeave?: () => void;
   onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onPageChange?: (pageNumber: number) => void;
+  /** Shrink to fit the viewer width when the paper first loads (new papers without a saved zoom). */
+  fitWidthOnLoad?: boolean;
+  onFitScale?: (scale: number) => void;
 }
 
 export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
@@ -77,6 +90,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     onMentionLeave,
     onMentionClick,
     onPageChange,
+    fitWidthOnLoad,
+    onFitScale,
   },
   ref,
 ) {
@@ -95,6 +110,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   const [flash, setFlash] = useState<FlashHighlight | null>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
   const [containerWidth, setContainerWidth] = useState<number>(1040);
+  const fitOnLoadRef = useRef({ fitWidthOnLoad, onFitScale, scale });
+  fitOnLoadRef.current = { fitWidthOnLoad, onFitScale, scale };
   const visibleCallbackRef = useRef(onVisiblePagesChange);
   visibleCallbackRef.current = onVisiblePagesChange;
 
@@ -134,7 +151,15 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
             return { width: viewport.width, height: viewport.height };
           }),
         );
-        if (!cancelled) setDims(list);
+        if (cancelled) return;
+        // Fit before the first layout so the initial page scroll lands at the final scale.
+        const fit = fitOnLoadRef.current;
+        const viewerWidth = scrollRef.current?.clientWidth ?? 0;
+        if (fit.fitWidthOnLoad && fit.onFitScale && viewerWidth > 0 && list.length) {
+          const next = fitWidthScale(list, viewerWidth);
+          if (next < fit.scale) fit.onFitScale(next);
+        }
+        setDims(list);
       } catch {
         // 文档释放 / 损坏时不要永久停在“正在打开论文…”
         if (!cancelled) setDims([]);
@@ -268,8 +293,12 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       stepRuler,
       getScrollTop: () => scrollRef.current?.scrollTop ?? 0,
       getScrollLeft: () => scrollRef.current?.scrollLeft ?? 0,
+      getFitWidthScale: () => {
+        const viewerWidth = scrollRef.current?.clientWidth ?? 0;
+        return dims?.length && viewerWidth > 0 ? fitWidthScale(dims, viewerWidth) : undefined;
+      },
     }),
-    [scrollToPosition, stepRuler],
+    [scrollToPosition, stepRuler, dims],
   );
 
   const handleScroll = useCallback(() => {

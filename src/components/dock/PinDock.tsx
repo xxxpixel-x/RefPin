@@ -74,12 +74,6 @@ interface CardRectSnapshot {
   height: number;
 }
 
-interface ZoomOverlayState {
-  id: string;
-  rect: CardRectSnapshot;
-  phase: 'entering' | 'open' | 'leaving';
-}
-
 const MIN_DOCK_WIDTH = 220;
 const MIN_DOCK_HEIGHT = 148;
 const MIN_MAIN_WIDTH = 220;
@@ -172,7 +166,6 @@ export function PinDock({
     target: DockPosition;
     bounds: CardRectSnapshot;
   } | null>(null);
-  const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   const [viewportTick, setViewportTick] = useState(0);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -189,84 +182,29 @@ export function PinDock({
     target: DockPosition;
   } | null>(null);
 
-  const enterTimerRef = useRef<number | null>(null);
-  const leaveTimerRef = useRef<number | null>(null);
-  const unmountTimerRef = useRef<number | null>(null);
-  const raf1Ref = useRef<number | null>(null);
-  const raf2Ref = useRef<number | null>(null);
-
   const isHorizontal = position === 'top' || position === 'bottom';
-
-  const clearZoomTimers = useCallback(() => {
-    if (enterTimerRef.current !== null) {
-      window.clearTimeout(enterTimerRef.current);
-      enterTimerRef.current = null;
-    }
-    if (leaveTimerRef.current !== null) {
-      window.clearTimeout(leaveTimerRef.current);
-      leaveTimerRef.current = null;
-    }
-    if (unmountTimerRef.current !== null) {
-      window.clearTimeout(unmountTimerRef.current);
-      unmountTimerRef.current = null;
-    }
-    if (raf1Ref.current !== null) {
-      window.cancelAnimationFrame(raf1Ref.current);
-      raf1Ref.current = null;
-    }
-    if (raf2Ref.current !== null) {
-      window.cancelAnimationFrame(raf2Ref.current);
-      raf2Ref.current = null;
-    }
-  }, []);
-
-  const dismissZoomImmediately = useCallback(() => {
-    clearZoomTimers();
-    setZoomOverlay(null);
-  }, [clearZoomTimers]);
-
-  useEffect(() => () => clearZoomTimers(), [clearZoomTimers]);
-
-
-  // 当前放大的卡片被移除或折叠时立即收起
-  useEffect(() => {
-    if (!zoomOverlay) return;
-    const target = items.find((entry) => entry.id === zoomOverlay.id);
-    if (!target || target.collapsed) {
-      dismissZoomImmediately();
-    }
-  }, [items, zoomOverlay, dismissZoomImmediately]);
-
-  // 切换停靠方向或收起钉板时关闭悬浮放大
-  useEffect(() => {
-    dismissZoomImmediately();
-  }, [position, isDockCollapsed, dismissZoomImmediately]);
 
   // 监听窗口大小变化以动态夹紧宽度/高度
   useEffect(() => {
     const onResize = () => {
       setViewportTick((v) => v + 1);
-      dismissZoomImmediately();
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [dismissZoomImmediately]);
+  }, []);
 
-  // 按 Esc 取消拖动停靠或关闭放大卡片
+  // 按 Esc 取消拖动停靠
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (dockDragRef.current) {
-        dockDragRef.current = null;
-        setDragDropPreview(null);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-      dismissZoomImmediately();
+      if (event.key !== 'Escape' || !dockDragRef.current) return;
+      dockDragRef.current = null;
+      setDragDropPreview(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dismissZoomImmediately]);
+  }, []);
 
   const getWorkspaceRect = useCallback((): DOMRect => {
     if (workspaceRef?.current) {
@@ -304,7 +242,6 @@ export function PinDock({
 
         if (!drag.active) {
           drag.active = true;
-          dismissZoomImmediately();
           document.body.style.cursor = 'grabbing';
           document.body.style.userSelect = 'none';
         }
@@ -352,7 +289,6 @@ export function PinDock({
       window.removeEventListener('mouseup', onUp);
     };
   }, [
-    dismissZoomImmediately,
     getWorkspaceRect,
     onHeightChange,
     onPositionChange,
@@ -381,174 +317,6 @@ export function PinDock({
     return Math.min(maxH, Math.max(MIN_DOCK_HEIGHT, height));
   }, [height, viewportTick, workspaceRef]);
 
-
-  const handleCardHoverStart = useCallback(
-    (id: string, el: HTMLElement) => {
-      if (resizingRef.current || dockDragRef.current?.active) return;
-      if (leaveTimerRef.current !== null) {
-        window.clearTimeout(leaveTimerRef.current);
-        leaveTimerRef.current = null;
-      }
-      if (unmountTimerRef.current !== null) {
-        window.clearTimeout(unmountTimerRef.current);
-        unmountTimerRef.current = null;
-      }
-
-      if (zoomOverlay?.id === id) {
-        setZoomOverlay((prev) => (prev ? { ...prev, phase: 'open' } : prev));
-        return;
-      }
-
-      if (enterTimerRef.current !== null) {
-        window.clearTimeout(enterTimerRef.current);
-      }
-
-      enterTimerRef.current = window.setTimeout(() => {
-        enterTimerRef.current = null;
-        if (!el.isConnected || resizingRef.current || dockDragRef.current?.active) return;
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) return;
-
-        setZoomOverlay({
-          id,
-          rect: {
-            top: r.top,
-            left: r.left,
-            right: r.right,
-            bottom: r.bottom,
-            width: r.width,
-            height: r.height,
-          },
-          phase: 'entering',
-        });
-
-        raf1Ref.current = window.requestAnimationFrame(() => {
-          raf2Ref.current = window.requestAnimationFrame(() => {
-            setZoomOverlay((prev) =>
-              prev && prev.id === id && prev.phase === 'entering'
-                ? { ...prev, phase: 'open' }
-                : prev,
-            );
-          });
-        });
-      }, 130);
-    },
-    [zoomOverlay?.id],
-  );
-
-  const scheduleZoomLeave = useCallback(() => {
-    if (enterTimerRef.current !== null) {
-      window.clearTimeout(enterTimerRef.current);
-      enterTimerRef.current = null;
-    }
-    if (leaveTimerRef.current !== null) {
-      window.clearTimeout(leaveTimerRef.current);
-    }
-    leaveTimerRef.current = window.setTimeout(() => {
-      leaveTimerRef.current = null;
-      setZoomOverlay((prev) => (prev ? { ...prev, phase: 'leaving' } : null));
-      if (unmountTimerRef.current !== null) {
-        window.clearTimeout(unmountTimerRef.current);
-      }
-      unmountTimerRef.current = window.setTimeout(() => {
-        unmountTimerRef.current = null;
-        setZoomOverlay(null);
-      }, 210);
-    }, 75);
-  }, []);
-
-  const handleCardHoverEnd = useCallback(
-    (id: string) => {
-      if (enterTimerRef.current !== null) {
-        window.clearTimeout(enterTimerRef.current);
-        enterTimerRef.current = null;
-      }
-      if (zoomOverlay?.id === id) {
-        scheduleZoomLeave();
-      }
-    },
-    [scheduleZoomLeave, zoomOverlay?.id],
-  );
-
-  const zoomedItem = useMemo(
-    () => (zoomOverlay ? items.find((entry) => entry.id === zoomOverlay.id) ?? null : null),
-    [items, zoomOverlay],
-  );
-
-  const zoomedOverlayStyle = useMemo<CSSProperties | null>(() => {
-    if (!zoomOverlay || !zoomedItem || typeof window === 'undefined') return null;
-    const { rect, phase } = zoomOverlay;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const isRef = zoomedItem.kind === 'reference';
-
-    const maxAllowedW = Math.max(360, vw - 28);
-    const preferredW = Math.max(rect.width * 1.44, isRef ? 440 : 520);
-    const capW = Math.min(maxAllowedW, isRef ? 580 : 760);
-    const targetWidth = Math.round(
-      rect.width >= capW
-        ? Math.min(maxAllowedW, rect.width * 1.15)
-        : Math.min(capW, preferredW),
-    );
-    const startScale = Number(Math.min(0.95, Math.max(0.62, rect.width / targetWidth)).toFixed(3));
-    const isOpen = phase === 'open';
-
-    const style: CSSProperties = {
-      position: 'fixed',
-      width: targetWidth,
-      zIndex: 45,
-      opacity: isOpen ? 1 : 0,
-      transform: isOpen ? 'scale(1) translate3d(0, 0, 0)' : `scale(${startScale}) translate3d(0, 0, 0)`,
-      boxShadow: isOpen
-        ? '0 24px 64px -8px rgba(28, 25, 23, 0.22), 0 8px 20px -4px rgba(28, 25, 23, 0.10)'
-        : '0 4px 12px rgba(28, 25, 23, 0.06)',
-      borderRadius: 12,
-      pointerEvents: phase === 'leaving' ? 'none' : 'auto',
-      transition:
-        phase === 'leaving'
-          ? 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease-out, box-shadow 200ms ease-out'
-          : 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease-out, box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1)',
-      willChange: 'transform, opacity',
-    };
-
-    if (position === 'right') {
-      style.right = Math.max(10, vw - rect.right);
-      const anchorBottom = rect.top + rect.height / 2 > vh * 0.54;
-      if (anchorBottom) {
-        style.bottom = Math.max(14, vh - rect.bottom - 10);
-        style.transformOrigin = 'right bottom';
-      } else {
-        style.top = Math.max(58, rect.top - 10);
-        style.transformOrigin = 'right top';
-      }
-    } else if (position === 'left') {
-      style.left = Math.max(10, rect.left);
-      const anchorBottom = rect.top + rect.height / 2 > vh * 0.54;
-      if (anchorBottom) {
-        style.bottom = Math.max(14, vh - rect.bottom - 10);
-        style.transformOrigin = 'left bottom';
-      } else {
-        style.top = Math.max(58, rect.top - 10);
-        style.transformOrigin = 'left top';
-      }
-    } else if (position === 'top') {
-      const cx = rect.left + rect.width / 2;
-      const left = Math.min(Math.max(12, cx - targetWidth / 2), vw - targetWidth - 12);
-      const originX = Math.round(Math.min(targetWidth - 20, Math.max(20, cx - left)));
-      style.top = Math.max(56, rect.top);
-      style.left = left;
-      style.transformOrigin = `${originX}px top`;
-    } else {
-      const cx = rect.left + rect.width / 2;
-      const left = Math.min(Math.max(12, cx - targetWidth / 2), vw - targetWidth - 12);
-      const originX = Math.round(Math.min(targetWidth - 20, Math.max(20, cx - left)));
-      style.bottom = Math.max(12, vh - rect.bottom);
-      style.left = left;
-      style.transformOrigin = `${originX}px bottom`;
-    }
-
-    return style;
-  }, [position, zoomOverlay, zoomedItem]);
 
   const allHorizontalCollapsed =
     isHorizontal && !showSynced && items.length > 0 && items.every((item) => Boolean(item.collapsed));
@@ -580,7 +348,6 @@ export function PinDock({
 
   const startResize = (event: React.MouseEvent) => {
     event.preventDefault();
-    dismissZoomImmediately();
     resizingRef.current = {
       axis: isHorizontal ? 'y' : 'x',
       pos: position,
@@ -647,14 +414,14 @@ export function PinDock({
           {isHorizontal ? (
             <span className="text-xs font-medium text-paper-ink">
               {t('dock.title')}
-              <span className="ml-1 font-mono text-[10px] text-paper-muted">({items.length})</span>
+              <span className="ml-1 font-mono text-[11px] text-paper-muted">({items.length})</span>
             </span>
           ) : (
             <>
-              <span className="rounded-full border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 font-mono text-[10px] font-medium text-paper-goldtext">
+              <span className="rounded-full border border-paper-goldborder bg-paper-goldbg px-1.5 py-0.5 font-mono text-[11px] font-medium text-paper-goldtext">
                 {items.length}
               </span>
-              <span className="mt-0.5 select-none text-[10px] font-medium tracking-widest text-paper-muted [writing-mode:vertical-rl] group-hover:text-paper-ink">
+              <span className="mt-0.5 select-none text-[11px] font-medium tracking-widest text-paper-muted [writing-mode:vertical-rl] group-hover:text-paper-ink">
                 {t('dock.title')}
               </span>
             </>
@@ -715,14 +482,14 @@ export function PinDock({
           <Pin className="h-3.5 w-3.5 shrink-0 text-paper-gold" />
           <span className="truncate text-xs font-medium text-paper-ink">
             {t('dock.title')}
-            <span className="ml-1 font-mono text-[10px] text-paper-muted">({items.length})</span>
+            <span className="ml-1 font-mono text-[11px] text-paper-muted">({items.length})</span>
           </span>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {onExport && <div ref={exportRef} className="relative">
               <button type="button" title={t('notes.export')} aria-label={t('notes.export')} aria-expanded={exportMenu}
                 disabled={exporting} onClick={() => setExportMenu(!exportMenu)}
-                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-ink hover:bg-paper-card">
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-paper-ink hover:bg-paper-card">
                 {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
                 {(isHorizontal || clampedWidth >= 410) && t('notes.export')}
               </button>
@@ -759,11 +526,8 @@ export function PinDock({
             {items.length > 0 && (
               <button
                 type="button"
-                onClick={() => {
-                  dismissZoomImmediately();
-                  onClear();
-                }}
-                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-muted transition hover:bg-paper-card hover:text-paper-gold"
+                onClick={onClear}
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-paper-muted transition hover:bg-paper-card hover:text-paper-gold"
                 title={t('dock.clearAll')}
               >
                 <Eraser className="h-3 w-3" />
@@ -773,14 +537,11 @@ export function PinDock({
 
             <button
               type="button"
-              onClick={() => {
-                dismissZoomImmediately();
-                setDockCollapsed(true);
-              }}
+              onClick={() => setDockCollapsed(true)}
               title={t('dock.collapse')}
               aria-label={t('dock.collapse')}
               aria-expanded
-              className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[10px] font-medium text-paper-ink transition hover:border-paper-goldborder hover:bg-paper-goldbg hover:text-paper-goldtext"
+              className="flex items-center gap-0.5 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[11px] font-medium text-paper-ink transition hover:border-paper-goldborder hover:bg-paper-goldbg hover:text-paper-goldtext"
             >
               {(isHorizontal || clampedWidth >= 280) && <span>{t('common.collapse')}</span>}
               <CollapseIcon className="h-3 w-3" />
@@ -795,10 +556,10 @@ export function PinDock({
           <div className="flex h-8 shrink-0 items-center gap-2 px-3">
             <button type="button" aria-expanded={showSynced} disabled={!enabled}
               onClick={() => setSyncCollapsed(value => !value)}
-              className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-paper-ink disabled:text-paper-muted">
+              className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-paper-ink disabled:text-paper-muted">
               <ChevronDown className={clsx('h-3 w-3 shrink-0 transition-transform', !(showSynced && synced.length > 0) && '-rotate-90')} />
               <span className="truncate">{t('dock.autoSyncTitle')}</span>
-              <span className="rounded border border-paper-border bg-paper-card px-1 font-mono text-[10px]">{synced.length}</span>
+              <span className="rounded border border-paper-border bg-paper-card px-1 font-mono text-[11px]">{synced.length}</span>
             </button>
             <button type="button" role="switch" aria-checked={enabled} aria-label={t('dock.autoSync')}
               onClick={() => setEnabled(!enabled)}
@@ -815,18 +576,18 @@ export function PinDock({
                   onClick={() => onPreviewAsset(asset)}
                   className="h-9 w-12 shrink-0 overflow-hidden rounded border border-paper-border bg-paper-bg">
                   {asset.imageUrl ? <img alt={asset.label} src={asset.imageUrl} className="pdf-image h-full w-full object-contain" />
-                    : <span className="text-[10px] text-paper-muted">{t('asset.noThumbnail')}</span>}
+                    : <span className="text-[11px] text-paper-muted">{t('asset.noThumbnail')}</span>}
                 </button>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[11px] font-semibold text-paper-ink">{asset.label}</p>
+                  <p className="truncate text-xs font-semibold text-paper-ink">{asset.label}</p>
                   <button type="button" aria-label={t('asset.jumpTo', { name: asset.label, page: asset.pageNumber })}
                     onClick={() => onJump(asset.pageNumber, asset.cropRect)}
-                    className="flex items-center gap-0.5 font-mono text-[10px] text-paper-muted hover:text-paper-gold">
+                    className="flex items-center gap-0.5 font-mono text-[11px] text-paper-muted hover:text-paper-gold">
                     <span className="mr-1 rounded bg-paper-goldbg px-1 text-paper-goldtext">{t(`kind.${asset.kind}`)}</span>{t('reader.page', { page: asset.pageNumber })}<ArrowUpRight size={11} />
                   </button>
                 </div>
                 <button type="button" onClick={() => onPinAsset(asset)} aria-label={t('asset.pinName', { name: asset.label })}
-                  className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-[11px] font-medium text-paper-card">
+                  className="flex shrink-0 items-center gap-1 rounded bg-paper-gold px-2 py-1 text-xs font-medium text-paper-card">
                   <Pin size={11} />{t('common.pin')}
                 </button>
               </article>
@@ -837,12 +598,10 @@ export function PinDock({
         {/* 卡片列表 */}
         <div
           ref={listRef}
-          onScroll={dismissZoomImmediately}
           onWheel={(event) => {
             if (!isHorizontal || !listRef.current) return;
             if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
               listRef.current.scrollLeft += event.deltaY;
-              dismissZoomImmediately();
             }
           }}
           className={clsx(
@@ -863,7 +622,10 @@ export function PinDock({
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dashed border-paper-border bg-paper-card text-paper-muted">
                 <Pin className="h-4 w-4" />
               </span>
-              <p className={clsx('text-[11px] text-paper-muted', !isHorizontal && 'mt-2.5')}>{t('dock.empty')}</p>
+              <div className={clsx('max-w-[260px]', isHorizontal ? 'text-left' : 'mt-2.5')}>
+                <p className="text-xs font-medium text-paper-ink">{t('dock.empty')}</p>
+                <p className="mt-1 text-xs leading-relaxed text-paper-muted">{t('dock.emptyHelp')}</p>
+              </div>
             </div>
           ) : (
             items.map((item) => (
@@ -876,7 +638,6 @@ export function PinDock({
                 dockPosition={position}
                 dockWidth={clampedWidth}
                 dockHeight={clampedHeight}
-                isLifted={zoomOverlay?.id === item.id && zoomOverlay.phase !== 'leaving'}
                 onUnpin={onUnpin}
                 onToggleCollapse={onToggleCollapse}
                 onJump={onJump}
@@ -885,57 +646,11 @@ export function PinDock({
                 onOpenLightbox={onOpenLightbox}
                 onRename={onRename}
                 onMove={move}
-                onHoverStart={handleCardHoverStart}
-                onHoverEnd={handleCardHoverEnd}
               />
             ))
           )}
         </div>
       </aside>
-
-      {/* 卡片悬停自动放大浮层（平滑优雅动效，支持全部卡片操作） */}
-      {zoomOverlay &&
-        zoomedItem &&
-        zoomedOverlayStyle &&
-        createPortal(
-          <div
-            style={zoomedOverlayStyle}
-            onMouseEnter={() => {
-              if (leaveTimerRef.current !== null) {
-                window.clearTimeout(leaveTimerRef.current);
-                leaveTimerRef.current = null;
-              }
-              if (unmountTimerRef.current !== null) {
-                window.clearTimeout(unmountTimerRef.current);
-                unmountTimerRef.current = null;
-              }
-              setZoomOverlay((prev) =>
-                prev && prev.id === zoomedItem.id ? { ...prev, phase: 'open' } : prev,
-              );
-            }}
-            onMouseLeave={scheduleZoomLeave}
-          >
-            <PinnedCard
-              item={zoomedItem}
-              backlinks={backlinksMap[zoomedItem.id]}
-              onJumpToBacklink={onJumpToBacklink}
-              dockPosition={position}
-              dockWidth={clampedWidth}
-              dockHeight={clampedHeight}
-              isZoomedOverlay
-              onUnpin={onUnpin}
-              onToggleCollapse={onToggleCollapse}
-              onJump={onJump}
-              onExpandCrop={onExpandCrop}
-              onResetCrop={onResetCrop}
-              onOpenLightbox={onOpenLightbox}
-              onRename={onRename}
-              onMove={move}
-              onRequestCloseZoom={dismissZoomImmediately}
-            />
-          </div>,
-          document.body,
-        )}
 
       {/* 拖动钉板停靠时的目标区域预览浮层 */}
       {dragDropPreview &&

@@ -1,13 +1,14 @@
 import { IS_EXTENSION_PAGE } from '../../config/runtime';
 import { describeError, formatMessage, message, t, type DisplayMessage } from '../../i18n';
-import { useEffect, useRef, useState, type RefObject, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, Languages, Settings } from 'lucide-react';
 import { cleanPdfSelectedText } from '../../utils/textCleanup';
 import {
   DEFAULT_TRANSLATE_CONFIG,
+  grantFreeTranslateConsent,
+  needsFreeTranslateConsent,
   selectionTranslator,
-  TRANSLATE_PRESETS,
   type TranslateConfig,
 } from '../../services/translator';
 
@@ -34,7 +35,13 @@ interface Anchor {
   above: boolean;
 }
 
-export function SelectionToolbar({ viewerRef }: { viewerRef: RefObject<HTMLElement> }) {
+interface SelectionToolbarProps {
+  viewerRef: RefObject<HTMLElement>;
+  /** Opens the shared translation settings so there is a single place to configure providers. */
+  onOpenSettings: () => void;
+}
+
+export function SelectionToolbar({ viewerRef, onOpenSettings }: SelectionToolbarProps) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   const rangeRef = useRef<Range>();
@@ -134,20 +141,24 @@ export function SelectionToolbar({ viewerRef }: { viewerRef: RefObject<HTMLEleme
     <div ref={toolbar} className="fixed z-[60] max-w-[calc(100vw-16px)] overflow-y-auto rounded-lg border border-paper-border bg-paper-card text-xs text-paper-ink shadow-float"
       style={{ left: anchor.left, [anchor.above ? 'bottom' : 'top']: anchor.edge, maxHeight: Math.max(48, window.innerHeight - anchor.edge - 8) }}
       onMouseDown={event => { if ((event.target as Element).closest('button')) event.preventDefault(); }}>
-      <SelectionActions key={anchor.text} text={anchor.text} restoreSelection={restoreSelection} />
+      <SelectionActions key={anchor.text} text={anchor.text} restoreSelection={restoreSelection} onOpenSettings={onOpenSettings} />
     </div>, document.body,
   );
 }
 
 const actionClass = 'inline-flex items-center gap-1.5 rounded px-2 py-1.5 hover:bg-paper-bg disabled:text-paper-muted';
-const fieldClass = 'mt-1 w-full rounded-md border border-paper-border bg-paper-card px-2 py-1.5 text-paper-ink focus:border-paper-gold focus:outline-none';
 
-function SelectionActions({ text, restoreSelection }: { text: string; restoreSelection: () => void }) {
+interface SelectionActionsProps {
+  text: string;
+  restoreSelection: () => void;
+  onOpenSettings: () => void;
+}
+
+function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionActionsProps) {
   const [config, setConfig] = useState<TranslateConfig>(DEFAULT_TRANSLATE_CONFIG);
-  const [draft, setDraft] = useState(config);
-  const [settings, setSettings] = useState(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [askConsent, setAskConsent] = useState(false);
   const [translation, setTranslation] = useState('');
   const [notice, setNotice] = useState<DisplayMessage>('');
   const [copied, setCopied] = useState<'source' | 'translation' | null>(null);
@@ -157,14 +168,12 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
     let active = true;
     void selectionTranslator.loadTranslateConfig().then(saved => {
       if (!active) return;
-      const initial = IS_EXTENSION_PAGE && !saved.apiKey ? { ...saved, provider: 'free' as const } : saved;
-      setConfig(initial);
-      setDraft(initial);
+      setConfig(IS_EXTENSION_PAGE && !saved.apiKey ? { ...saved, provider: 'free' as const } : saved);
       setReady(true);
     });
     const unsubscribe = selectionTranslator.subscribeConfig(next => {
       setConfig(next);
-      setDraft(next);
+      setTranslation('');
     });
     return () => { active = false; unsubscribe(); window.clearTimeout(timer.current); };
   }, []);
@@ -179,14 +188,18 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
     } catch { setNotice(message('copy.failed')); }
   }
 
-  async function translate() {
+  async function translate(consented = false) {
     setNotice('');
     if (config.provider !== 'free' && (!config.apiBaseUrl || !config.model)) {
-      setSettings(true);
       setNotice(message('translate.configureFirst'));
+      onOpenSettings();
       return;
     }
-    setSettings(false);
+    if (!consented && needsFreeTranslateConsent(config)) {
+      setAskConsent(true);
+      return;
+    }
+    setAskConsent(false);
     restoreSelection();
     setBusy(true);
     try {
@@ -198,33 +211,6 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
     } finally { setBusy(false); }
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    const next = { ...draft, apiBaseUrl: draft.apiBaseUrl.trim(), model: draft.model.trim(), apiKey: draft.apiKey.trim() };
-    if (next.provider !== 'free' && (!/^https?:\/\//i.test(next.apiBaseUrl) || !next.model)) {
-      setNotice(message('translate.invalidConfig'));
-      return;
-    }
-    try {
-      await selectionTranslator.saveTranslateConfig(next);
-      restoreSelection();
-      setConfig(next);
-      setDraft(next);
-      setSettings(false);
-      setTranslation('');
-      setNotice(message('settings.saved'));
-    } catch { setNotice(message('settings.saveFailed')); }
-  }
-  async function clearKey() {
-    try {
-      const next = { ...config, apiKey: '' };
-      await selectionTranslator.saveTranslateConfig(next);
-      setConfig(next);
-      setDraft(value => ({ ...value, apiKey: '' }));
-      setNotice(message('settings.keyCleared'));
-    } catch { setNotice(message('settings.clearFailed')); }
-  }
-
   return <>
     <div role="group" aria-label={t('selection.actions')} className="flex items-center gap-0.5 p-1">
       <button type="button" className={actionClass} onClick={() => void copy(text, 'source')}>
@@ -233,56 +219,22 @@ function SelectionActions({ text, restoreSelection }: { text: string; restoreSel
       <button type="button" className={actionClass} disabled={!ready || busy} onClick={() => void translate()}>
         <Languages size={15} />{busy ? t('translate.busy') : t('translate.selection')}
       </button>
-      <button type="button" className={actionClass + ' ml-auto'} aria-expanded={settings} aria-label={t('translate.settings')} title={t('translate.settings')}
-        disabled={!ready || busy} onClick={() => {
-          if (settings) restoreSelection();
-          setDraft(config); setSettings(!settings); setNotice('');
-        }}>
+      <button type="button" className={actionClass + ' ml-auto'} aria-label={t('translate.settings')} title={t('translate.settings')}
+        onClick={onOpenSettings}>
         <Settings size={14} />
       </button>
     </div>
-    {settings && <form onSubmit={save} className="grid w-80 max-w-full gap-2.5 border-t border-paper-border p-3">
-      <div className="grid grid-cols-[1fr_auto] gap-2">
-        <label>{t('translate.settings')}
-          <select className={fieldClass} value={draft.provider}
-            onChange={e => setDraft({ ...draft, provider: e.target.value as TranslateConfig['provider'] })}>
-            <option value="free">{t('translate.free')}</option><option value="openai">{t('translate.custom')}</option>
-          </select>
-        </label>
-        <label>{t('translate.target')}<select className={fieldClass} value={draft.targetLang}
-          onChange={e => setDraft({ ...draft, targetLang: e.target.value as TranslateConfig['targetLang'] })}>
-          <option value="zh-CN">{t('language.chinese')}</option><option value="en">{t('language.english')}</option>
-        </select></label>
+    {askConsent && <div role="dialog" aria-labelledby="selection-consent-title" className="w-80 max-w-full border-t border-paper-border p-3">
+      <p id="selection-consent-title" className="font-semibold">{t('translate.consentTitle')}</p>
+      <p className="mt-1 leading-relaxed text-paper-muted">{t('translate.consentBody')}</p>
+      <div className="mt-2.5 flex justify-end gap-2">
+        <button type="button" className="rounded-lg border border-paper-border px-3 py-1.5 hover:bg-paper-bg"
+          onClick={() => { setAskConsent(false); onOpenSettings(); }}>{t('translate.consentConfigure')}</button>
+        <button type="button" className="rounded-lg bg-paper-ink px-3 py-1.5 font-medium text-paper-card hover:opacity-90"
+          onClick={() => { grantFreeTranslateConsent(); void translate(true); }}>{t('translate.consentContinue')}</button>
       </div>
-      {draft.provider !== 'free' && <>
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-1 text-[10px] text-paper-muted">{t('translate.presets')}</span>
-          {TRANSLATE_PRESETS.map(preset => (
-            <button key={preset.id} type="button"
-              onClick={() => setDraft({ ...draft, provider: 'openai', apiBaseUrl: preset.apiBaseUrl, model: preset.model })}
-              className="rounded border border-paper-border bg-paper-bg px-1.5 py-0.5 text-[10px] text-paper-ink transition hover:border-paper-gold">
-              {t(preset.labelKey)}
-            </button>
-          ))}
-        </div>
-        <label>{t('translate.endpoint')}
-          <input type="url" required className={fieldClass} placeholder="http://localhost:11434/v1" value={draft.apiBaseUrl}
-            onChange={e => setDraft({ ...draft, apiBaseUrl: e.target.value })} />
-        </label>
-        <label>{t('translate.model')}<input required className={fieldClass} placeholder={t('translate.modelHint')} value={draft.model}
-          onChange={e => setDraft({ ...draft, model: e.target.value })} /></label>
-        <label>{t('translate.optionalKey')}<input type="password" autoComplete="off" className={fieldClass} value={draft.apiKey}
-          onChange={e => setDraft({ ...draft, apiKey: e.target.value })} /></label>
-      </>}
-      <p className="text-[11px] leading-relaxed text-paper-muted">{t(draft.provider === 'free'
-        ? (IS_EXTENSION_PAGE ? 'translate.freeNotice' : 'translate.webFreeNotice')
-        : (!draft.apiKey && !/^http:\/\/(?:localhost|127\.0\.0\.1)\b/i.test(draft.apiBaseUrl) ? 'translate.keyFallback' : 'translate.privacy'))}</p>
-      <div className="flex justify-between">
-        <button type="button" disabled={!config.apiKey} className={actionClass} onClick={() => void clearKey()}>{t('settings.clearKey')}</button>
-        <button type="submit" className="rounded bg-paper-ink px-3 py-1.5 text-paper-card">{t('settings.save')}</button>
-      </div>
-    </form>}
-    {!settings && translation && <div className="w-80 max-w-full border-t border-paper-border px-3 py-2">
+    </div>}
+    {translation && <div className="w-80 max-w-full border-t border-paper-border px-3 py-2">
       <p lang={config.targetLang} className="whitespace-pre-wrap break-words leading-relaxed">{translation}</p>
       <button className={actionClass + ' mt-1 text-paper-muted'} onClick={() => void copy(translation, 'translation')}>
         {copied === 'translation' ? <Check size={12} /> : <Copy size={12} />}{t('translate.copy')}
