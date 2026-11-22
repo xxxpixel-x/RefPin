@@ -4,11 +4,15 @@
 
 English | [简体中文](./README.zh-CN.md)
 
+[![Latest Release](https://img.shields.io/github/v/release/xxxpixel-x/RefPin?color=D97706&label=Release)](https://github.com/xxxpixel-x/RefPin/releases/latest)
 [![CI](https://github.com/xxxpixel-x/RefPin/actions/workflows/ci.yml/badge.svg)](https://github.com/xxxpixel-x/RefPin/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/License-MIT-1C1917)](./LICENSE)
 ![Local-First](https://img.shields.io/badge/Local--First-offline_core-D97706)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-1C1917)
+![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-78716C)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-78716C)
+
+> **Want to try the browser extension without installing Node.js?**
+> Download **`RefPin-Extension-v*.zip`** from [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest), unzip it, and open **`INSTALL-GUIDE.html`** for a 3-step visual walkthrough (Windows / macOS / Linux).
 
 ## Why RefPin?
 
@@ -44,10 +48,15 @@ On Chromium 114–115, open RefPin from the browser’s side panel. Opening it p
 Works on **Windows, macOS, and Linux** (Chrome 114+, Edge 114+, Brave, Arc, Vivaldi):
 
 1. Download **`RefPin-Extension-v*.zip`** from [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest) and extract it to a permanent folder.
-2. Double-click **`INSTALL-GUIDE.html`** inside for the interactive 3-step visual guide (works offline, no security prompts on Windows/macOS/Linux), **or**:
+2. Double-click **`INSTALL-GUIDE.html`** inside for the interactive 3-step visual guide (works offline, auto-detects Windows/macOS/Linux shortcuts, no OS security warnings), **or**:
    - Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
    - Drag the **`RefPin-Extension/`** folder directly onto the Extensions page (or click **Load unpacked** and select it).
 3. Pin the RefPin icon to your toolbar and open any paper. For local `file://` PDFs, enable **Allow access to file URLs** in the extension’s details (or drop a PDF straight into the side panel).
+
+| Release archive | Audience |
+| --- | --- |
+| `RefPin-Extension-v*.zip` | End users on Windows, macOS, and Linux — includes the ready-to-load `RefPin-Extension/` folder and offline bilingual `INSTALL-GUIDE.html`. |
+| `RefPin-Store-Package-v*.zip` | Store packaging — clean MV3 archive with `manifest.json` at the root for Chrome Web Store and Microsoft Edge Add-ons submission. |
 
 ### Option B · Run the local web reader from source
 
@@ -96,12 +105,28 @@ Translation is opt-in. In the web reader, only the selection and configured cred
 | `storage` | Keep local settings and the interface language, and pass a pending pin to a newly opened panel. |
 | `<all_urls>` | Read paper pages across publishers, fetch linked PDFs, and reach the selected translation endpoint. The content script runs on HTTP(S) pages. Local PDF file access has its own browser switch. |
 
+## Project structure
+
+```text
+RefPin/
+├── src/
+│   ├── engine/       # Pure-frontend PDF parsing, citation/glossary/backlink detection, WebP cropping, Vitest suites
+│   ├── components/   # Web reader UI (PdfViewer, HoverPeekCard, SelectionToolbar, PinDock, AssetDrawer, LandingView)
+│   ├── storage/      # Native IndexedDB local reading archive & bounded PDF blob cache
+│   ├── services/     # Decoupled translation service (Web OpenAI-compatible/Ollama + Extension adapters)
+│   ├── i18n/         # Shared zero-dependency EN / ZH-CN catalogs and reactive language toggle
+│   ├── store/        # Zustand reader state
+│   └── extension/    # Chrome MV3 companion (manifest, _locales, background, content, sidepanel, pdfTranslate)
+├── scripts/          # Cross-platform build-extension.mjs & pack-extension.mjs (ZIP + offline install guide)
+└── .github/workflows/# CI (test + build + build:ext) and tagged Release automation
+```
+
 ## Roadmap
 
-- [x] **Phase 0 · Local PDF reading.** Native and text-detected citations, hover previews, selectable text, and a figure dock.
-- [x] **Phase 1 · Companion reading.** Four-way docking, free snips, crop adjustment, Auto-Sync, backlinks, glossary, recent papers, optional translation, and bilingual web and extension interfaces.
-- [ ] **Phase 2 · Portable reading sessions.** Export and import pins and reading positions between devices.
-- [ ] **Phase 3 · Broader coverage.** Expand fixtures for publisher layouts and additional interface languages.
+- [x] **Phase 0 · Foundations & reliability.** Vitest regression suite, GitHub Actions CI, WebP cropping, `AbortSignal` cancellation, pre-transfer PDF fingerprinting, encrypted/scanned PDF handling, and cross-platform Release packaging.
+- [x] **Phase 1 · Context-preserving companion.** Bidirectional citation backlinks, selectable `TextLayer` + Clean Copy + opt-in translation, off-screen canvas/textLayer memory release, IndexedDB local archive & Recent Papers, current-page Auto-Sync, full-paper acronym/symbol glossary, Author-Year & superscript citations, and global **EN / 简体中文** web + extension UI.
+- [ ] **Phase 2 · Daily-driver reader.** `Algorithm` / `Theorem` / `Section` detection, PDF Outline & `Ctrl+F` search, multi-step jump history (`Alt+←/→`) & reading ruler, Dark / Sepia eye-care themes, and PWA `file_handlers`.
+- [ ] **Phase 3 · Research workflow & ecosystem.** One-click Markdown / Obsidian `.zip` study note export, opt-in OpenAlex / Crossref citation enrichment & BibTeX, `Ctrl+K` command palette, and Chrome Web Store / Microsoft Edge Add-ons publishing.
 
 ## Contributing
 

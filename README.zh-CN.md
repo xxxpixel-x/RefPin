@@ -4,11 +4,15 @@
 
 [English](./README.md) | 简体中文
 
+[![Latest Release](https://img.shields.io/github/v/release/xxxpixel-x/RefPin?color=D97706&label=Release)](https://github.com/xxxpixel-x/RefPin/releases/latest)
 [![CI](https://github.com/xxxpixel-x/RefPin/actions/workflows/ci.yml/badge.svg)](https://github.com/xxxpixel-x/RefPin/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/License-MIT-1C1917)](./LICENSE)
 ![Local-First](https://img.shields.io/badge/Local--First-offline_core-D97706)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-1C1917)
+![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-78716C)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-78716C)
+
+> **不想折腾代码或 Node.js，只想直接装插件？**
+> 前往 [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest) 下载 **`RefPin-Extension-v*.zip`**，解压后双击 **`INSTALL-GUIDE.html`**，跟着 3 步图文向导即可装好（支持 Windows / macOS / Linux）。
 
 ## 为什么做 RefPin？
 
@@ -44,10 +48,15 @@ Chromium 114–115 可从浏览器的侧边栏手动打开浮页。通过右键�
 适用于 **Windows、macOS、Linux**（Chrome 114+、Edge 114+、Brave、Arc、Vivaldi）：
 
 1. 前往 [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest) 下载 **`RefPin-Extension-v*.zip`**，并完整解压到一个不会误删的文件夹。
-2. 双击压缩包里的 **`INSTALL-GUIDE.html`** 查看 3 步交互式图文向导（离线打开、不触发系统安全拦截，支持一键复制扩展页地址），**或直接按以下步骤安装**：
+2. 双击压缩包里的 **`INSTALL-GUIDE.html`** 查看 3 步交互式图文向导（离线打开、自动适配 Windows / macOS / Linux 快捷键、不触发系统安全拦截，支持一键复制扩展页地址），**或直接按以下步骤安装**：
    - 打开 `chrome://extensions`（或 `edge://extensions`），开启**开发者模式**。
    - 直接把 **`RefPin-Extension`** 文件夹拖进浏览器扩展页窗口（或点击**加载已解压的扩展程序**选中它）。
 3. 将 RefPin 图标固定到工具栏即可伴读任意论文。阅读电脑上的 `file://` 本地 PDF 时，请在扩展详情页开启**允许访问文件网址**（也可直接把 PDF 拖进侧边栏）。
+
+| Release 压缩包 | 用途 |
+| --- | --- |
+| `RefPin-Extension-v*.zip` | 面向普通用户（Windows / macOS / Linux 通用），内含免编译插件目录 `RefPin-Extension/` 与离线中英双语 `INSTALL-GUIDE.html`。 |
+| `RefPin-Store-Package-v*.zip` | 面向应用商店提审，`manifest.json` 位于根目录，可直接上传 Chrome Web Store 或 Microsoft Edge 外接程序商店。 |
 
 ### 方式二 · 从源码运行网页阅读器或自行构建
 
@@ -96,12 +105,28 @@ npm run pack:ext
 | `storage` | 保存本机配置与界面语言，并将待处理的钉选交给刚打开的侧栏。 |
 | `<all_urls>` | 读取不同出版平台的论文页、获取关联 PDF 并访问所选翻译端点。内容脚本匹配 HTTP(S) 页面，本地文件访问由浏览器单独控制。 |
 
+## 项目结构
+
+```text
+RefPin/
+├── src/
+│   ├── engine/       # 纯前端 PDF 解析、引用/术语/回链识别、WebP 裁切与 Vitest 回归测试
+│   ├── components/   # 网页阅读器 UI（PdfViewer、HoverPeekCard、SelectionToolbar、PinDock、AssetDrawer、LandingView）
+│   ├── storage/      # 原生 IndexedDB 本地阅读档案与容量受控的 PDF 缓存
+│   ├── services/     # 解耦翻译服务（网页端兼容 OpenAI/Ollama，扩展端独立适配）
+│   ├── i18n/         # 共享零依赖中英双语词典与实时语言切换
+│   ├── store/        # Zustand 全局阅读状态
+│   └── extension/    # Chrome MV3 伴读扩展（manifest、_locales、background、content、sidepanel、pdfTranslate）
+├── scripts/          # 跨平台 build-extension.mjs 与 pack-extension.mjs（免编译 ZIP + 离线安装向导）
+└── .github/workflows/# CI 自动校验与 Tag 自动发布 GitHub Release
+```
+
 ## 路线图
 
-- [x] **阶段 0 · 本地 PDF 阅读。** 原生链接与文本引用识别、悬停预览、文本选取和图表钉板。
-- [x] **阶段 1 · 论文伴读。** 四向停靠、自由框选、裁切微调、当前页自动伴读、引用回链、术语表、最近阅读、按需翻译，以及网页与扩展双语界面。
-- [ ] **阶段 2 · 阅读档案迁移。** 导出和导入钉板与阅读位置，方便换设备后继续阅读。
-- [ ] **阶段 3 · 扩大覆盖。** 为更多出版平台的版式补充测试样本，并增加界面语言。
+- [x] **阶段 0 · 开源基建与引擎加固。** Vitest 回归测试、GitHub Actions CI、WebP 裁图、`AbortSignal` 取消、防脱附 PDF 指纹、加密/扫描 PDF 友好兜底，以及 Win/macOS/Linux 免编译 Release 自动打包。
+- [x] **阶段 1 · 核心伴读与双语化。** 图表/文献双向引用回链、可选中文本层 + 净化复制 + 按需翻译、离屏 Canvas 与文本层内存回收、IndexedDB 本地档案与最近阅读、当前页自动伴读（Auto-Sync）、全文缩写/术语浮窗、Author-Year 与上标引用，以及网页端与扩展全量 **EN / 简体中文** 双语界面。
+- [ ] **阶段 2 · 主力日常阅读器。** `Algorithm` / `Theorem` / `Section` 识别、PDF 原生目录与 `Ctrl+F` 全文搜索、多步跳转历史栈（`Alt+←/→`）与视觉阅读标尺、深色 / 暖纸护眼模式，以及 PWA 文件关联。
+- [ ] **阶段 3 · 科研工作流与商店生态。** 一键导出 Markdown / Obsidian `.zip` 图文精读包、可选 OpenAlex / Crossref 文献富卡片与 BibTeX、`Ctrl+K` 命令面板，以及上架 Microsoft Edge / Chrome 官方扩展商店。
 
 ## 参与贡献
 
