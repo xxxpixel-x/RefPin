@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
 import {
   MOCK_ASSETS,
   MOCK_CITATIONS,
   MOCK_PARAGRAPH_LINES,
   MOCK_PINNED,
   MOCK_REFERENCES,
-  MOCK_STATS,
 } from '../mocks/mockPaperData';
 import { LandingView } from '../components/landing/LandingView';
 import { TopBar } from '../components/layout/TopBar';
@@ -16,11 +16,11 @@ import { LightboxModal } from '../components/dock/LightboxModal';
 import { AssetDrawer } from '../components/drawer/AssetDrawer';
 import { SAMPLES } from '../config/samples';
 import type {
+  DockPosition,
   InlineCitation,
   JumpAnchor,
   PaperAsset,
   PinnedItem,
-  ReadingStats,
   ReferenceEntry,
 } from '../types/paper';
 
@@ -33,12 +33,15 @@ export function BPreview() {
   const [snipMode, setSnipMode] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(MOCK_PINNED);
-  const [stats, setStats] = useState<ReadingStats>(MOCK_STATS);
+  const [dockPosition, setDockPosition] = useState<DockPosition>('right');
+  const [dockWidth, setDockWidth] = useState(388);
+  const [dockHeight, setDockHeight] = useState(264);
   const [jumpAnchor, setJumpAnchor] = useState<JumpAnchor>(null);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number>();
+  const workspaceRef = useRef<HTMLDivElement>(null);
 
   const assetsMap = useMemo(
     () => Object.fromEntries(MOCK_ASSETS.map((asset) => [asset.key, asset])),
@@ -71,13 +74,14 @@ export function BPreview() {
             pageNumber: asset.pageNumber,
             imageUrl: asset.imageUrl,
             cropRect: asset.cropRect,
+            originalCropRect: asset.cropRect,
+            originalImageUrl: asset.imageUrl,
             createdAt: Date.now(),
           },
           ...items,
         ];
       });
-      setStats((value) => ({ ...value, pinCount: value.pinCount + 1 }));
-      showToast('已钉到右侧对照');
+      showToast('已钉到对照钉板');
     },
     [showToast],
   );
@@ -102,7 +106,6 @@ export function BPreview() {
           ...items,
         ];
       });
-      setStats((value) => ({ ...value, pinCount: value.pinCount + 1 }));
       showToast('已钉住文献');
     },
     [showToast],
@@ -115,32 +118,13 @@ export function BPreview() {
         fromScrollTop: 0,
         label: `回到第 ${currentPage} 页刚才读的位置`,
       });
-      if (pageNumber !== currentPage) {
-        setStats((value) => ({
-          ...value,
-          savedFlips: value.savedFlips + 1,
-          savedScrollPx: value.savedScrollPx + Math.abs(pageNumber - currentPage) * 1100,
-        }));
-      }
       setCurrentPage(pageNumber);
       setHoverTrigger(null);
     },
     [currentPage],
   );
 
-  const handlePeek = useCallback((citation: InlineCitation) => {
-    setStats((value) => ({ ...value, peekCount: value.peekCount + 1 }));
-    if (citation.nativeDest && citation.nativeDest.pageNumber !== citation.pageNumber) {
-      setStats((value) => ({
-        ...value,
-        savedFlips: value.savedFlips + 1,
-        savedScrollPx:
-          value.savedScrollPx +
-          Math.abs((citation.nativeDest?.pageNumber ?? citation.pageNumber) - citation.pageNumber) *
-            1100,
-      }));
-    }
-  }, []);
+  const handlePeek = useCallback((_citation: InlineCitation) => {}, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -196,8 +180,6 @@ export function BPreview() {
         isParsing={false}
         parseProgress={100}
         assetCount={MOCK_ASSETS.length}
-        referenceCount={MOCK_REFERENCES.length}
-        stats={stats}
         onJumpPage={setCurrentPage}
         onZoom={(value) => setScale(Math.min(2.5, Math.max(0.6, value)))}
         onToggleSnip={() => setSnipMode((value) => !value)}
@@ -206,7 +188,13 @@ export function BPreview() {
         onOpenFile={(file) => setFileName(file.name)}
       />
 
-      <div className="relative flex min-h-0 flex-1">
+      <div
+        ref={workspaceRef}
+        className={clsx(
+          'relative flex min-h-0 flex-1 overflow-hidden',
+          dockPosition === 'top' || dockPosition === 'bottom' ? 'flex-col' : 'flex-row',
+        )}
+      >
         <AssetDrawer
           open={drawerOpen}
           assets={MOCK_ASSETS}
@@ -221,7 +209,7 @@ export function BPreview() {
         />
 
         <main
-          className={`relative min-w-0 flex-1 overflow-y-auto overflow-x-hidden py-6 pr-6 transition-[padding-left] duration-200 ${
+          className={`relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden py-6 pr-6 transition-[padding-left] duration-200 ${
             drawerOpen ? 'pl-[304px]' : 'pl-6'
           }`}
         >
@@ -291,6 +279,13 @@ export function BPreview() {
 
         <PinDock
           items={pinnedItems}
+          position={dockPosition}
+          width={dockWidth}
+          height={dockHeight}
+          workspaceRef={workspaceRef}
+          onPositionChange={setDockPosition}
+          onWidthChange={setDockWidth}
+          onHeightChange={setDockHeight}
           onUnpin={(id) => setPinnedItems((items) => items.filter((item) => item.id !== id))}
           onToggleCollapse={(id) =>
             setPinnedItems((items) =>
@@ -310,10 +305,29 @@ export function BPreview() {
                   direction === 'up'
                     ? Math.min(1 - y, item.cropRect.height + delta)
                     : Math.min(1 - item.cropRect.y, item.cropRect.height + delta);
-                return { ...item, cropRect: { ...item.cropRect, y, height } };
+                return {
+                  ...item,
+                  originalCropRect: item.originalCropRect ?? item.cropRect,
+                  originalImageUrl: item.originalImageUrl ?? item.imageUrl,
+                  cropRect: { ...item.cropRect, y, height },
+                };
               }),
             );
             showToast(direction === 'up' ? '已向上扩展裁切范围' : '已向下扩展裁切范围');
+          }}
+          onResetCrop={(id) => {
+            setPinnedItems((items) =>
+              items.map((item) =>
+                item.id === id && item.originalCropRect
+                  ? {
+                      ...item,
+                      cropRect: item.originalCropRect,
+                      imageUrl: item.originalImageUrl ?? item.imageUrl,
+                    }
+                  : item,
+              ),
+            );
+            showToast('已还原初始裁切范围');
           }}
           onOpenLightbox={(item) =>
             setLightboxAsset({

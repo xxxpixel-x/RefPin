@@ -1,25 +1,57 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  ArrowLeft,
-  FileText,
-  Pin,
-  Scissors,
-  Upload,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import clsx from 'clsx';
+import { LandingView } from './components/landing/LandingView';
+import { TopBar } from './components/layout/TopBar';
+import { ReturnBanner } from './components/layout/ReturnBanner';
+import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
+import { PinDock } from './components/dock/PinDock';
+import { LightboxModal } from './components/dock/LightboxModal';
+import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
 import { loadPdfDocument } from './engine/pdfLoader';
 import { parsePaper } from './engine/parsePaper';
+import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
 import { useReaderStore } from './store/useReaderStore';
 import { SAMPLES } from './config/samples';
-import { clamp } from './engine/utils';
-import type { InlineCitation } from './types/paper';
+import type {
+  InlineCitation,
+  NormalizedRect,
+  PaperAsset,
+  PinnedItem,
+  ReferenceEntry,
+  SamplePaperMeta,
+} from './types/paper';
 
-/**
- * A 线调试台：只用于验证解析引擎与 PDF 画布。
- * B 线会用自己的 Landing / TopBar / HoverPeekCard / PinDock / AssetDrawer 替换这里。
- */
+interface FallbackPreviewState {
+  citationId: string;
+  imageUrl: string;
+  pageNumber: number;
+  cropRect: NormalizedRect;
+}
+
+function findAssetForCitation(
+  citation: InlineCitation,
+  assetsMap: Record<string, PaperAsset>,
+): PaperAsset | undefined {
+  for (const key of citation.targetKeys) {
+    if (assetsMap[key]) return assetsMap[key];
+    const baseKey = key.replace(/[a-z]$/, '');
+    if (baseKey !== key && assetsMap[baseKey]) return assetsMap[baseKey];
+  }
+  return undefined;
+}
+
+function findReferenceForCitation(
+  citation: InlineCitation,
+  referencesMap: Record<string, ReferenceEntry>,
+): ReferenceEntry | undefined {
+  for (const key of citation.targetKeys) {
+    if (referencesMap[key]) return referencesMap[key];
+  }
+  return undefined;
+}
+
 export default function App() {
   const pdfDoc = useReaderStore((state) => state.pdfDoc);
   const fileName = useReaderStore((state) => state.fileName);
@@ -29,70 +61,349 @@ export default function App() {
   const isParsing = useReaderStore((state) => state.isParsing);
   const parseProgress = useReaderStore((state) => state.parseProgress);
   const parseError = useReaderStore((state) => state.parseError);
-  const citationsByPage = useReaderStore((state) => state.citationsByPage);
   const assetsMap = useReaderStore((state) => state.assetsMap);
   const referencesMap = useReaderStore((state) => state.referencesMap);
+  const citationsByPage = useReaderStore((state) => state.citationsByPage);
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
+  const drawerOpen = useReaderStore((state) => state.drawerOpen);
   const snipMode = useReaderStore((state) => state.snipMode);
   const jumpAnchor = useReaderStore((state) => state.jumpAnchor);
-  const stats = useReaderStore((state) => state.stats);
+  const dockPosition = useReaderStore((state) => state.dockPosition);
+  const dockWidth = useReaderStore((state) => state.dockWidth);
+  const dockHeight = useReaderStore((state) => state.dockHeight);
 
   const viewerRef = useRef<PdfViewerHandle>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const openRequestRef = useRef(0);
-  const hoverTimerRef = useRef<number | null>(null);
-  const [hover, setHover] = useState<{ citation: InlineCitation; anchor: HTMLElement } | null>(
-    null,
+  const activePeekIdRef = useRef<string | null>(null);
+  const nativePreviewCacheRef = useRef(
+    new Map<string, { imageUrl: string; pageNumber: number; cropRect: NormalizedRect }>(),
   );
+  const toastTimerRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+
+  const [bootingName, setBootingName] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
+  const [initialPage, setInitialPage] = useState<number | undefined>(undefined);
+  const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
+  const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
+  const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
+  const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const citationCount = Object.values(citationsByPage).reduce(
-    (sum, list) => sum + list.length,
-    0,
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
+  }, []);
+
+  const flashPinnedCard = useCallback((id: string) => {
+    setHighlightedPinId(id);
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => setHighlightedPinId(null), 1400);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    },
+    [],
   );
 
-  const openPaper = async (
-    source: string | ArrayBuffer,
-    name: string,
-  ) => {
-    const requestId = ++openRequestRef.current;
-    setBootError(null);
-    setHover(null);
-    const store = useReaderStore.getState();
-    store.resetPaper();
-    try {
-      const doc = await loadPdfDocument(source);
-      if (requestId !== openRequestRef.current) {
-        void doc.destroy().catch(() => {});
+  const openPaper = useCallback(
+    async (source: string | ArrayBuffer, name: string, startPage?: number) => {
+      const requestId = ++openRequestRef.current;
+      setBootError(null);
+      setBootingName(name);
+      setInitialPage(startPage);
+      setHoverTrigger(null);
+      setFallbackPreview(null);
+      setLightboxAsset(null);
+      activePeekIdRef.current = null;
+      nativePreviewCacheRef.current.clear();
+
+      useReaderStore.getState().resetPaper();
+
+      try {
+        const doc = await loadPdfDocument(source);
+        if (requestId !== openRequestRef.current) {
+          void doc.destroy().catch(() => {});
+          return;
+        }
+        setBootingName(null);
+        useReaderStore.getState().setPdfDocument(doc, name, source);
+        useReaderStore.getState().setParsing(true);
+
+        const result = await parsePaper(doc, (percent) => {
+          if (requestId === openRequestRef.current) {
+            useReaderStore.getState().setParseProgress(percent);
+          }
+        });
+        if (requestId !== openRequestRef.current) return;
+        useReaderStore.getState().setParseResult(result);
+      } catch (error) {
+        if (requestId !== openRequestRef.current) return;
+        setBootingName(null);
+        const message = error instanceof Error ? error.message : '论文打开失败，请确认 PDF 文件有效';
+        useReaderStore.getState().setParseError(message);
+        setBootError(message);
+      } finally {
+        if (requestId === openRequestRef.current) {
+          useReaderStore.getState().setParsing(false);
+        }
+      }
+    },
+    [],
+  );
+
+  const handleOpenFile = useCallback(
+    async (file: File) => {
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        setBootError('请选择 .pdf 格式的论文文件');
         return;
       }
-      useReaderStore.getState().setPdfDocument(doc, name, source);
-      useReaderStore.getState().setParsing(true);
-      const result = await parsePaper(doc, (percent) => {
-        if (requestId === openRequestRef.current) {
-          useReaderStore.getState().setParseProgress(percent);
-        }
-      });
-      if (requestId !== openRequestRef.current) return;
-      useReaderStore.getState().setParseResult(result);
-    } catch (error) {
-      if (requestId !== openRequestRef.current) return;
-      const message = error instanceof Error ? error.message : '论文打开失败';
-      useReaderStore.getState().setParseError(message);
-      setBootError(message);
-    } finally {
-      if (requestId === openRequestRef.current) {
-        useReaderStore.getState().setParsing(false);
+      try {
+        const buffer = await file.arrayBuffer();
+        await openPaper(buffer, file.name);
+      } catch {
+        setBootError('读取本地 PDF 失败，请重试');
       }
-    }
-  };
+    },
+    [openPaper],
+  );
 
-  // 全局 S 键切换框选模式（输入框聚焦时忽略）
+  const handleSelectSample = useCallback(
+    (sample: SamplePaperMeta) => {
+      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage);
+    },
+    [openPaper],
+  );
+
+  const handleReset = useCallback(() => {
+    openRequestRef.current += 1;
+    setBootingName(null);
+    setBootError(null);
+    setInitialPage(undefined);
+    setHoverTrigger(null);
+    setFallbackPreview(null);
+    setLightboxAsset(null);
+    activePeekIdRef.current = null;
+    nativePreviewCacheRef.current.clear();
+    useReaderStore.getState().resetPaper();
+  }, []);
+
+  const handlePinAsset = useCallback(
+    (asset: PaperAsset) => {
+      const store = useReaderStore.getState();
+      if (store.pinnedItems.some((item) => item.id === asset.key)) {
+        flashPinnedCard(asset.key);
+        showToast('已在对照钉板中');
+        return;
+      }
+      store.pinAsset(asset);
+      showToast(`已钉住 ${asset.label}`);
+    },
+    [flashPinnedCard, showToast],
+  );
+
+  const handlePinReference = useCallback(
+    (reference: ReferenceEntry) => {
+      const store = useReaderStore.getState();
+      if (store.pinnedItems.some((item) => item.id === reference.key)) {
+        flashPinnedCard(reference.key);
+        showToast(`文献 [${reference.index}] 已在钉板中`);
+        return;
+      }
+      store.pinReference(reference);
+      showToast(`已钉住文献 [${reference.index}]`);
+    },
+    [flashPinnedCard, showToast],
+  );
+
+  const handleJump = useCallback(
+    (
+      pageNumber: number,
+      targetRect?: NormalizedRect,
+      sourceRect?: NormalizedRect,
+    ) => {
+      const store = useReaderStore.getState();
+      store.setJumpAnchor({
+        fromPage: store.currentPage,
+        fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
+        highlightRect: sourceRect,
+        label: `回到第 ${store.currentPage} 页刚才读的位置`,
+      });
+      setHoverTrigger(null);
+      viewerRef.current?.scrollToPosition(pageNumber, targetRect, true);
+    },
+    [],
+  );
+
+  const handlePeek = useCallback((citation: InlineCitation) => {
+    activePeekIdRef.current = citation.id;
+    const store = useReaderStore.getState();
+    store.recordPeek();
+
+    const asset = findAssetForCitation(citation, store.assetsMap);
+    const reference = findReferenceForCitation(citation, store.referencesMap);
+    const targetPage =
+      asset?.pageNumber ?? reference?.pageNumber ?? citation.nativeDest?.pageNumber;
+
+    if (targetPage && targetPage !== store.currentPage) {
+      store.recordSavedFlip(targetPage);
+    }
+
+    if (asset || reference || !citation.nativeDest || !store.pdfDoc) {
+      setFallbackPreview(null);
+      return;
+    }
+
+    const destPage = citation.nativeDest.pageNumber;
+    const destY = citation.nativeDest.targetY;
+    const cacheKey = `${destPage}:${destY !== undefined ? destY.toFixed(3) : 'top'}`;
+    const cached = nativePreviewCacheRef.current.get(cacheKey);
+    if (cached) {
+      setFallbackPreview({ citationId: citation.id, ...cached });
+      return;
+    }
+
+    setFallbackPreview(null);
+    const doc = store.pdfDoc;
+    void captureDestinationPreview(doc, destPage, destY)
+      .then((preview) => {
+        const entry = {
+          imageUrl: preview.imageUrl,
+          pageNumber: destPage,
+          cropRect: preview.cropRect,
+        };
+        nativePreviewCacheRef.current.set(cacheKey, entry);
+        if (activePeekIdRef.current === citation.id) {
+          setFallbackPreview({ citationId: citation.id, ...entry });
+        }
+      })
+      .catch(() => {
+        // 兜底截屏失败时回落到文字提示，不影响主流程
+      });
+  }, []);
+
+  const handleCitationHover = useCallback(
+    (citation: InlineCitation, anchorEl: HTMLElement) => {
+      setHoverTrigger({ citation, anchorEl });
+    },
+    [],
+  );
+
+  const handleCitationLeave = useCallback(() => {
+    setHoverTrigger(null);
+  }, []);
+
+  const handleCitationClick = useCallback(
+    (citation: InlineCitation) => {
+      const store = useReaderStore.getState();
+      const asset = findAssetForCitation(citation, store.assetsMap);
+      if (asset) {
+        handlePinAsset(asset);
+        return;
+      }
+      const reference = findReferenceForCitation(citation, store.referencesMap);
+      if (reference) {
+        handlePinReference(reference);
+        return;
+      }
+      if (citation.nativeDest) {
+        handleJump(citation.nativeDest.pageNumber, undefined, citation.rect);
+      }
+    },
+    [handleJump, handlePinAsset, handlePinReference],
+  );
+
+  const handleExpandCrop = useCallback(
+    async (id: string, direction: 'up' | 'down') => {
+      const store = useReaderStore.getState();
+      const item = store.pinnedItems.find((entry) => entry.id === id);
+      if (!item || !item.cropRect || !store.pdfDoc) return;
+
+      const delta = 0.06;
+      const { x, y, width, height } = item.cropRect;
+      const nextY = direction === 'up' ? Math.max(0, y - delta) : y;
+      const addedUp = y - nextY;
+      const nextHeight =
+        direction === 'up'
+          ? Math.min(1 - nextY, height + addedUp)
+          : Math.min(1 - y, height + delta);
+
+      const nextRect: NormalizedRect = {
+        x,
+        y: nextY,
+        width,
+        height: nextHeight,
+      };
+
+      try {
+        const imageUrl = await recropPageRegion(store.pdfDoc, item.pageNumber, nextRect);
+        useReaderStore.getState().updatePinnedCrop(id, nextRect, imageUrl);
+        showToast(direction === 'up' ? '已向上扩展裁切范围' : '已向下扩展裁切范围');
+      } catch {
+        showToast('扩充裁切失败，请重试');
+      }
+    },
+    [showToast],
+  );
+
+  const handleResetCrop = useCallback(
+    async (id: string) => {
+      const store = useReaderStore.getState();
+      const item = store.pinnedItems.find((entry) => entry.id === id);
+      if (!item || !item.originalCropRect) return;
+
+      if (item.originalImageUrl) {
+        store.resetPinnedCrop(id);
+        showToast('已还原初始裁切范围');
+        return;
+      }
+
+      if (!store.pdfDoc) return;
+      try {
+        const imageUrl = await recropPageRegion(
+          store.pdfDoc,
+          item.pageNumber,
+          item.originalCropRect,
+        );
+        useReaderStore.getState().resetPinnedCrop(id, imageUrl);
+        showToast('已还原初始裁切范围');
+      } catch {
+        showToast('还原裁切失败，请重试');
+      }
+    },
+    [showToast],
+  );
+
+  const handleOpenLightboxFromPin = useCallback((item: PinnedItem) => {
+    if (!item.imageUrl) return;
+    setLightboxAsset({
+      key: item.id,
+      kind: item.kind === 'snip' || item.kind === 'reference' ? 'figure' : item.kind,
+      label: item.title,
+      caption: item.subtitle ?? '',
+      pageNumber: item.pageNumber,
+      cropRect: item.cropRect ?? { x: 0, y: 0, width: 1, height: 1 },
+      imageUrl: item.imageUrl,
+    });
+  }, []);
+
+  // 全局快捷键：S 开关框选、[ 开关资产墙、Esc 收起浮窗/灯箱/框选
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== 's' || event.metaKey || event.ctrlKey || event.altKey) {
+      if (event.key === 'Escape') {
+        setLightboxAsset(null);
+        setHoverTrigger(null);
+        if (useReaderStore.getState().snipMode) {
+          useReaderStore.getState().setSnipMode(false);
+        }
         return;
       }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (
         target &&
@@ -102,264 +413,78 @@ export default function App() {
       ) {
         return;
       }
-      if (!useReaderStore.getState().pdfDoc) return;
-      event.preventDefault();
       const state = useReaderStore.getState();
-      state.setSnipMode(!state.snipMode);
+      if (!state.pdfDoc) return;
+
+      if (event.key === 's' || event.key === 'S') {
+        event.preventDefault();
+        state.setSnipMode(!state.snipMode);
+      } else if (event.key === '[') {
+        event.preventDefault();
+        state.setDrawerOpen(!state.drawerOpen);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  useEffect(
-    () => () => {
-      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    },
-    [],
+  const assetsList = useMemo(
+    () =>
+      Object.values(assetsMap).sort(
+        (a, b) => a.pageNumber - b.pageNumber || a.cropRect.y - b.cropRect.y,
+      ),
+    [assetsMap],
   );
 
-  const cancelHoverClose = () => {
-    if (hoverTimerRef.current) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  };
+  const referencesList = useMemo(
+    () => Object.values(referencesMap).sort((a, b) => a.index - b.index),
+    [referencesMap],
+  );
 
-  const closeHoverSoon = () => {
-    cancelHoverClose();
-    hoverTimerRef.current = window.setTimeout(() => {
-      setHover(null);
-      hoverTimerRef.current = null;
-    }, 250);
-  };
-
-  const handleFile = async (file: File | undefined) => {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      setBootError('请选择 PDF 文件');
-      return;
-    }
-    const buffer = await file.arrayBuffer();
-    await openPaper(buffer, file.name);
-  };
-
-  const resolveCitationPage = (citation: InlineCitation): number | undefined => {
-    const store = useReaderStore.getState();
-    const asset = citation.targetKeys.map((key) => store.assetsMap[key]).find(Boolean);
-    const reference = citation.targetKeys
-      .map((key) => store.referencesMap[key])
-      .find(Boolean);
-    return asset?.pageNumber ?? reference?.pageNumber ?? citation.nativeDest?.pageNumber;
-  };
-
-  const handleHover = (citation: InlineCitation, anchor: HTMLElement) => {
-    cancelHoverClose();
-    setHover({ citation, anchor });
-    const targetPage = resolveCitationPage(citation);
-    if (targetPage && targetPage !== currentPage) {
-      useReaderStore.getState().recordSavedFlip(targetPage);
-    }
-    if (citation.nativeDest && citation.nativeDest.pageNumber !== currentPage) {
-      useReaderStore.getState().recordPeek();
-    }
-  };
-
-  const jumpTo = (pageNumber: number, rect?: InlineCitation['rect']) => {
-    const store = useReaderStore.getState();
-    store.setJumpAnchor({
-      fromPage: store.currentPage,
-      fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
-      highlightRect: rect,
-      label: `回到第 ${store.currentPage} 页刚才读的位置`,
-    });
-    viewerRef.current?.scrollToPosition(pageNumber, rect, true);
-  };
+  const pinnedIds = useMemo(() => pinnedItems.map((item) => item.id), [pinnedItems]);
 
   if (!pdfDoc) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6">
-        <div className="text-center">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-paper-goldborder bg-paper-goldbg px-3 py-1 text-xs text-paper-goldtext">
-            RefPin · 浮页
-            <span className="text-paper-muted">sands in shoes</span>
+    if (bootingName) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-paper-bg px-6">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-paper-goldborder bg-paper-goldbg text-paper-gold">
+            <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight text-paper-ink">
-            读论文，再也不用为看图来回翻页。
-          </h1>
-          <p className="mt-3 text-sm text-paper-muted">
-            鼠标停在 Fig. 2 或 [14] 上，图表与文献立刻浮在眼前。
-          </p>
+          <p className="text-sm font-medium text-paper-ink">正在打开 {bootingName}</p>
         </div>
+      );
+    }
 
-        <label
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragActive(true);
-          }}
-          onDragLeave={(event) => {
-            event.preventDefault();
-            setDragActive(false);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragActive(false);
-            void handleFile(event.dataTransfer.files?.[0]);
-          }}
-          className={
-            dragActive
-              ? 'flex w-full max-w-xl cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed border-amber-500 bg-amber-50 px-8 py-10 shadow-paper transition'
-              : 'flex w-full max-w-xl cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed border-paper-border bg-white px-8 py-10 shadow-paper transition hover:border-amber-400'
-          }
-        >
-          <Upload className="h-5 w-5 text-paper-muted" />
-          <span className="text-sm text-paper-ink">点击选择或拖入本地 PDF</span>
-          <span className="text-xs text-paper-muted">
-            100% 浏览器本地解析 · 论文不上传任何服务器
-          </span>
-          <input
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={(event) => void handleFile(event.target.files?.[0])}
-          />
-        </label>
-
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          {SAMPLES.map((sample) => (
-            <button
-              key={sample.id}
-              type="button"
-              onClick={() => void openPaper(sample.url, `${sample.title}.pdf`)}
-              className="flex items-center gap-3 rounded-xl border border-paper-border bg-white px-4 py-3 text-left shadow-paper transition hover:-translate-y-0.5 hover:border-amber-300"
-            >
-              <FileText className="h-4 w-4 text-amber-600" />
-              <span>
-                <span className="block text-sm text-paper-ink">{sample.title}</span>
-                <span className="block text-xs text-paper-muted">{sample.badge}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {bootError && <p className="text-sm text-red-600">{bootError}</p>}
+    return (
+      <div className="min-h-full bg-paper-bg">
+        <LandingView
+          samples={SAMPLES}
+          onOpenFile={(file) => void handleOpenFile(file)}
+          onSelectSample={handleSelectSample}
+          error={bootError || parseError}
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-paper-border bg-white/85 px-4 backdrop-blur">
-        <span className="text-sm font-semibold tracking-tight text-paper-ink">RefPin</span>
-        <span className="max-w-[240px] truncate text-xs text-paper-muted">{fileName}</span>
-
-        <span className="ml-2 flex items-center gap-1 rounded-lg border border-paper-border px-1 py-0.5">
-          <input
-            className="w-10 bg-transparent text-center text-xs outline-none"
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              const value = Number((event.target as HTMLInputElement).value);
-              if (Number.isFinite(value) && value >= 1 && value <= numPages) {
-                viewerRef.current?.scrollToPosition(value);
-              }
-            }}
-            aria-label="跳转页码"
-            defaultValue={currentPage}
-            key={currentPage}
-          />
-          <span className="text-xs text-paper-muted">/ {numPages}</span>
-        </span>
-
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            className="rounded-md p-1 text-paper-muted hover:bg-paper-bg"
-            onClick={() => useReaderStore.getState().setScale(scale - 0.15)}
-            aria-label="缩小"
-          >
-            <ZoomOut className="h-4 w-4" />
-          </button>
-          <span className="w-12 text-center font-mono text-xs text-paper-muted">
-            {Math.round(scale * 100)}%
-          </span>
-          <button
-            type="button"
-            className="rounded-md p-1 text-paper-muted hover:bg-paper-bg"
-            onClick={() => useReaderStore.getState().setScale(scale + 0.15)}
-            aria-label="放大"
-          >
-            <ZoomIn className="h-4 w-4" />
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => useReaderStore.getState().setSnipMode(!snipMode)}
-          className={
-            snipMode
-              ? 'flex items-center gap-1 rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs text-white'
-              : 'flex items-center gap-1 rounded-lg border border-paper-border px-2.5 py-1.5 text-xs text-paper-ink hover:bg-paper-bg'
-          }
-        >
-          <Scissors className="h-3.5 w-3.5" />
-          框选钉住
-        </button>
-
-        <div className="ml-auto flex items-center gap-3">
-          <span className="hidden text-xs text-paper-muted md:inline">
-            引用 {citationCount} · 图表 {Object.keys(assetsMap).length} · 文献{' '}
-            {Object.keys(referencesMap).length}
-          </span>
-          <span className="rounded-full border border-paper-goldborder bg-paper-goldbg px-3 py-1 text-xs font-medium text-paper-goldtext">
-            已免去翻页 {stats.savedFlips} 次 · 少滚 {stats.savedScrollPx.toLocaleString()} px
-          </span>
-          <button
-            type="button"
-            onClick={() => useReaderStore.getState().resetPaper()}
-            className="text-xs text-paper-muted hover:text-paper-ink"
-          >
-            换一篇
-          </button>
-        </div>
-
-        {isParsing && (
-          <div className="absolute inset-x-0 bottom-0 h-[2px] bg-amber-100">
-            <div
-              className="h-full bg-amber-500 transition-all duration-300"
-              style={{ width: `${parseProgress}%` }}
-            />
-          </div>
-        )}
-      </header>
-
-      {jumpAnchor && (
-        <div className="flex justify-center border-b border-paper-border bg-paper-bg py-1.5">
-          <button
-            type="button"
-            onClick={() => {
-              viewerRef.current?.scrollToPosition(
-                jumpAnchor.fromPage,
-                jumpAnchor.fromScrollTop,
-                true,
-                jumpAnchor.highlightRect,
-              );
-              useReaderStore.getState().clearJumpAnchor();
-            }}
-            className="flex items-center gap-1.5 rounded-full border border-paper-border bg-white px-3 py-1 text-xs text-paper-ink shadow-sm hover:border-amber-300"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {jumpAnchor.label}
-            <span
-              className="ml-1 text-paper-muted hover:text-paper-ink"
-              onClick={(event) => {
-                event.stopPropagation();
-                useReaderStore.getState().clearJumpAnchor();
-              }}
-            >
-              ×
-            </span>
-          </button>
-        </div>
-      )}
+    <div className="flex h-full flex-col bg-paper-bg">
+      <TopBar
+        fileName={fileName}
+        numPages={numPages}
+        currentPage={currentPage}
+        scale={scale}
+        snipMode={snipMode}
+        isParsing={isParsing}
+        parseProgress={parseProgress}
+        assetCount={assetsList.length}
+        onJumpPage={(page) => viewerRef.current?.scrollToPosition(page)}
+        onZoom={(nextScale) => useReaderStore.getState().setScale(nextScale)}
+        onToggleSnip={() => useReaderStore.getState().setSnipMode(!snipMode)}
+        onToggleDrawer={() => useReaderStore.getState().setDrawerOpen(!drawerOpen)}
+        onReset={handleReset}
+        onOpenFile={(file) => void handleOpenFile(file)}
+      />
 
       {(parseError || bootError) && (
         <div className="border-b border-red-100 bg-red-50 px-4 py-1.5 text-xs text-red-600">
@@ -367,201 +492,95 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <main className="relative min-w-0 flex-1">
+      <div
+        ref={workspaceRef}
+        className={clsx(
+          'relative flex min-h-0 flex-1 overflow-hidden',
+          dockPosition === 'top' || dockPosition === 'bottom' ? 'flex-col' : 'flex-row',
+        )}
+      >
+        <AssetDrawer
+          open={drawerOpen}
+          assets={assetsList}
+          references={referencesList}
+          pinnedIds={pinnedIds}
+          isParsing={isParsing}
+          parseProgress={parseProgress}
+          onClose={() => useReaderStore.getState().setDrawerOpen(false)}
+          onPinAsset={handlePinAsset}
+          onPinReference={handlePinReference}
+          onLocate={(pageNumber, asset) => handleJump(pageNumber, asset?.cropRect)}
+        />
+
+        <main className="relative min-h-0 min-w-0 flex-1">
+          <ReturnBanner
+            anchor={jumpAnchor}
+            onReturn={(anchor) => {
+              viewerRef.current?.scrollToPosition(
+                anchor.fromPage,
+                anchor.fromScrollTop,
+                true,
+                anchor.highlightRect,
+              );
+              useReaderStore.getState().clearJumpAnchor();
+            }}
+            onDismiss={() => useReaderStore.getState().clearJumpAnchor()}
+          />
+
           <PdfViewer
             ref={viewerRef}
             pdfDoc={pdfDoc}
             scale={scale}
             citationsByPage={citationsByPage}
             snipMode={snipMode}
-            initialPage={SAMPLES.find((sample) => fileName.startsWith(sample.title))?.demoStartPage}
+            initialPage={initialPage}
             onPageChange={(page) => useReaderStore.getState().setCurrentPage(page)}
-            onCitationHover={handleHover}
-            onCitationLeave={closeHoverSoon}
-            onCitationClick={(citation) => {
-              const asset = citation.targetKeys
-                .map((key) => assetsMap[key])
-                .find(Boolean);
-              const reference = citation.targetKeys
-                .map((key) => referencesMap[key])
-                .find(Boolean);
-              const page = asset?.pageNumber ?? reference?.pageNumber ?? citation.nativeDest?.pageNumber;
-              if (page) jumpTo(page, asset?.cropRect);
-            }}
+            onCitationHover={handleCitationHover}
+            onCitationLeave={handleCitationLeave}
+            onCitationClick={handleCitationClick}
           />
         </main>
 
-        <aside className="w-[220px] shrink-0 overflow-y-auto border-l border-paper-border bg-white/70 p-3">
-          <div className="mb-2 text-xs font-medium text-paper-ink">
-            对照钉板 ({pinnedItems.length})
-          </div>
-          {pinnedItems.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-paper-muted">
-              悬停正文金色引用，点浮窗里的「钉住」，或按 S 框选任意区域。
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {pinnedItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-lg border border-paper-border bg-white p-2 shadow-sm"
-                >
-                  <div className="mb-1 flex items-center justify-between gap-1">
-                    <span className="truncate text-[11px] font-medium text-paper-ink">
-                      {item.title}
-                    </span>
-                    <button
-                      type="button"
-                      className="text-[11px] text-paper-muted hover:text-red-500"
-                      onClick={() => useReaderStore.getState().unpinItem(item.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {item.imageUrl && (
-                    <img
-                      src={item.imageUrl}
-                      alt={item.title}
-                      className="max-h-[120px] w-full rounded object-contain"
-                    />
-                  )}
-                  <div className="mt-1 text-[10px] text-paper-muted">
-                    P.{item.pageNumber}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </aside>
-      </div>
-
-      {hover && (
-        <DebugPeek
-          hover={hover}
-          onJump={jumpTo}
-          onKeepAlive={cancelHoverClose}
-          onCloseSoon={closeHoverSoon}
+        <PinDock
+          items={pinnedItems}
+          highlightedId={highlightedPinId}
+          position={dockPosition}
+          width={dockWidth}
+          height={dockHeight}
+          workspaceRef={workspaceRef}
+          onPositionChange={(pos) => useReaderStore.getState().setDockPosition(pos)}
+          onWidthChange={(w) => useReaderStore.getState().setDockWidth(w)}
+          onHeightChange={(h) => useReaderStore.getState().setDockHeight(h)}
+          onUnpin={(id) => useReaderStore.getState().unpinItem(id)}
+          onToggleCollapse={(id) => useReaderStore.getState().togglePinCollapse(id)}
+          onJump={(pageNumber, cropRect) => handleJump(pageNumber, cropRect)}
+          onExpandCrop={(id, direction) => void handleExpandCrop(id, direction)}
+          onResetCrop={(id) => void handleResetCrop(id)}
+          onOpenLightbox={handleOpenLightboxFromPin}
+          onRename={(id, title) => useReaderStore.getState().renamePinnedItem(id, title)}
+          onClear={() => useReaderStore.getState().clearPinnedItems()}
         />
-      )}
-    </div>
-  );
-}
-
-function DebugPeek({
-  hover,
-  onJump,
-  onKeepAlive,
-  onCloseSoon,
-}: {
-  hover: { citation: InlineCitation; anchor: HTMLElement };
-  onJump: (page: number, rect?: InlineCitation['rect']) => void;
-  onKeepAlive: () => void;
-  onCloseSoon: () => void;
-}) {
-  const assetsMap = useReaderStore((state) => state.assetsMap);
-  const referencesMap = useReaderStore((state) => state.referencesMap);
-
-  const asset = hover.citation.targetKeys
-    .map((key) => assetsMap[key])
-    .find(Boolean);
-  const reference = hover.citation.targetKeys
-    .map((key) => referencesMap[key])
-    .find(Boolean);
-
-  const rect = hover.anchor.getBoundingClientRect();
-  const cardWidth = 320;
-  const left = clamp(rect.left - 12, 16, window.innerWidth - cardWidth - 16);
-  const below = rect.top < window.innerHeight - 320;
-  const top = below ? rect.bottom + 10 : Math.max(16, rect.top - 300);
-
-  return (
-    <div
-      className="animate-fade-in-up fixed z-50 w-[320px] rounded-xl border border-paper-border bg-white p-3 shadow-float"
-      style={{ left, top }}
-      onMouseEnter={onKeepAlive}
-      onMouseLeave={onCloseSoon}
-    >
-      <div className="mb-2 flex items-center justify-between">
-        <span className="rounded bg-paper-goldbg px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-paper-goldtext">
-          {hover.citation.kind} · P.{hover.citation.pageNumber}
-        </span>
-        <span className="text-[10px] text-paper-muted">{hover.citation.rawText}</span>
       </div>
 
-      {asset && (
-        <>
-          {asset.imageUrl && (
-            <img
-              src={asset.imageUrl}
-              alt={asset.label}
-              className="max-h-[180px] w-full rounded object-contain ring-1 ring-paper-border"
-            />
-          )}
-          <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-paper-muted">
-            {asset.caption}
-          </p>
-        </>
-      )}
+      <HoverPeekCard
+        trigger={hoverTrigger}
+        assetsMap={assetsMap}
+        referencesMap={referencesMap}
+        onPinAsset={handlePinAsset}
+        onPinReference={handlePinReference}
+        onJump={handleJump}
+        onOpenLightbox={setLightboxAsset}
+        onPeek={handlePeek}
+        fallbackPreview={fallbackPreview}
+      />
 
-      {!asset && reference && (
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-paper-ink">{reference.title}</p>
-          <p className="text-[11px] text-paper-muted">
-            {[reference.authors, reference.year].filter(Boolean).join(' · ')}
-          </p>
-          <p className="line-clamp-3 text-[11px] leading-relaxed text-paper-muted">
-            {reference.rawText}
-          </p>
+      <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
+
+      {toast && (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-white shadow-float">
+          {toast}
         </div>
       )}
-
-      {!asset && !reference && (
-        <p className="text-[11px] leading-relaxed text-paper-muted">
-          未自动定位到该引用的图表/文献
-          {hover.citation.nativeDest
-            ? `，PDF 原生链接指向第 ${hover.citation.nativeDest.pageNumber} 页`
-            : '，可前往原页或使用「框选钉住」'}
-        </p>
-      )}
-
-      <div className="mt-2 flex items-center gap-2">
-        {asset && (
-          <button
-            type="button"
-            onClick={() => useReaderStore.getState().pinAsset(asset)}
-            className="flex items-center gap-1 rounded-lg bg-amber-600 px-2 py-1 text-[11px] text-white hover:bg-amber-700"
-          >
-            <Pin className="h-3 w-3" />
-            钉到右侧
-          </button>
-        )}
-        {reference && (
-          <button
-            type="button"
-            onClick={() => useReaderStore.getState().pinReference(reference)}
-            className="flex items-center gap-1 rounded-lg bg-amber-600 px-2 py-1 text-[11px] text-white hover:bg-amber-700"
-          >
-            <Pin className="h-3 w-3" />
-            钉住文献
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() =>
-            onJump(
-              asset?.pageNumber ??
-                reference?.pageNumber ??
-                hover.citation.nativeDest?.pageNumber ??
-                hover.citation.pageNumber,
-              asset?.cropRect,
-            )
-          }
-          className="ml-auto rounded-lg border border-paper-border px-2 py-1 text-[11px] text-paper-ink hover:bg-paper-bg"
-        >
-          跳去原页
-        </button>
-      </div>
     </div>
   );
 }

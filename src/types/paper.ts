@@ -48,7 +48,10 @@ export interface ReferenceEntry {
   pageNumber: number;
 }
 
-/** 右侧对照钉板中的一项 */
+/** 钉板停靠位置 */
+export type DockPosition = 'right' | 'left' | 'top' | 'bottom';
+
+/** 对照钉板中的一项 */
 export interface PinnedItem {
   id: string;
   kind: CitationKind | 'snip';
@@ -57,6 +60,10 @@ export interface PinnedItem {
   pageNumber: number;
   imageUrl?: string;
   cropRect?: NormalizedRect;
+  /** 首次钉住时的初始裁切区域，用于上扩/下扩后一键还原 */
+  originalCropRect?: NormalizedRect;
+  /** 首次钉住时的初始裁切图，用于瞬时还原 */
+  originalImageUrl?: string;
   reference?: ReferenceEntry;
   collapsed?: boolean;
   createdAt: number;

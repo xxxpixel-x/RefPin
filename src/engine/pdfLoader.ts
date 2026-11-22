@@ -13,15 +13,26 @@ const COLUMN_GAP = 0.018;
 /** 双栏页里真正跨越中缝的最小间距（CJK 双栏中缝实测约 0.013） */
 const MIDLINE_GAP = 0.012;
 
+function getPublicAssetUrl(subpath: string): string {
+  if (
+    typeof chrome !== 'undefined' &&
+    typeof chrome.runtime !== 'undefined' &&
+    typeof chrome.runtime.getURL === 'function'
+  ) {
+    return chrome.runtime.getURL(subpath);
+  }
+  return `/${subpath}`;
+}
+
 export async function loadPdfDocument(
   source: string | ArrayBuffer,
 ): Promise<PDFDocumentProxy> {
   const task = pdfjsLib.getDocument({
     ...(typeof source === 'string' ? { url: source } : { data: source }),
-    // 中文论文的 CMap 与标准字体全部走本地 public 目录，保证断网可用
-    cMapUrl: '/cmaps/',
+    // 中文论文的 CMap 与标准字体全部走本地静态目录，保证断网与扩展环境均可离线运行
+    cMapUrl: getPublicAssetUrl('cmaps/'),
     cMapPacked: true,
-    standardFontDataUrl: '/standard_fonts/',
+    standardFontDataUrl: getPublicAssetUrl('standard_fonts/'),
   });
   return task.promise;
 }

@@ -25,10 +25,19 @@ interface HoverPeekCardProps {
   referencesMap: Record<string, ReferenceEntry>;
   onPinAsset: (asset: PaperAsset) => void;
   onPinReference: (reference: ReferenceEntry) => void;
-  onJump: (pageNumber: number, rect?: InlineCitation['rect']) => void;
+  onJump: (
+    pageNumber: number,
+    targetRect?: InlineCitation['rect'],
+    sourceRect?: InlineCitation['rect'],
+  ) => void;
   onOpenLightbox: (asset: PaperAsset) => void;
   onPeek: (citation: InlineCitation) => void;
-  fallbackPreview?: { imageUrl: string; pageNumber: number } | null;
+  fallbackPreview?: {
+    citationId?: string;
+    imageUrl: string;
+    pageNumber: number;
+    cropRect?: InlineCitation['rect'];
+  } | null;
 }
 
 const KIND_LABEL: Record<InlineCitation['kind'], string> = {
@@ -91,14 +100,22 @@ export function HoverPeekCard({
 
   const asset = useMemo(() => {
     if (!citation) return undefined;
-    return citation.targetKeys
-      .map((key) => assetsMap[key])
-      .find((item): item is PaperAsset => Boolean(item));
+    for (const key of citation.targetKeys) {
+      if (assetsMap[key]) return assetsMap[key];
+      const baseKey = key.replace(/[a-z]$/, '');
+      if (baseKey !== key && assetsMap[baseKey]) return assetsMap[baseKey];
+    }
+    return undefined;
   }, [citation, assetsMap]);
 
   const activeReference = references[Math.min(activeRefIndex, references.length - 1)];
 
-  const previewImage = asset?.imageUrl ?? fallbackPreview?.imageUrl ?? null;
+  const matchedFallback =
+    fallbackPreview && (!fallbackPreview.citationId || fallbackPreview.citationId === citation?.id)
+      ? fallbackPreview
+      : null;
+
+  const previewImage = asset?.imageUrl ?? matchedFallback?.imageUrl ?? null;
 
   const recalcPosition = useCallback(() => {
     if (!activeTrigger || !cardRef.current) return;
@@ -116,7 +133,7 @@ export function HoverPeekCard({
 
   useEffect(() => {
     recalcPosition();
-  }, [recalcPosition, activeRefIndex, asset, activeReference]);
+  }, [recalcPosition, activeRefIndex, asset, activeReference, fallbackPreview]);
 
   useEffect(() => {
     if (!activeTrigger) return;
@@ -176,7 +193,8 @@ export function HoverPeekCard({
                 activeReference?.pageNumber ??
                 citation.nativeDest?.pageNumber ??
                 citation.pageNumber,
-              asset?.cropRect,
+              asset?.cropRect ?? fallbackPreview?.cropRect,
+              citation.rect,
             );
           }}
           className="ml-auto rounded-md p-1 text-paper-muted transition hover:bg-white hover:text-paper-ink"
@@ -251,6 +269,33 @@ export function HoverPeekCard({
                 </a>
               </div>
             </>
+          ) : previewImage ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeNow();
+                  onJump(
+                    fallbackPreview?.pageNumber ??
+                      citation.nativeDest?.pageNumber ??
+                      citation.pageNumber,
+                    fallbackPreview?.cropRect,
+                    citation.rect,
+                  );
+                }}
+                className="group block w-full overflow-hidden rounded-lg border border-paper-border bg-paper-bg"
+              >
+                <img
+                  src={previewImage}
+                  alt={citation.rawText}
+                  onLoad={recalcPosition}
+                  className="max-h-[300px] w-full object-contain transition group-hover:scale-[1.01]"
+                />
+                <span className="flex items-center justify-center gap-1 border-t border-paper-border bg-white py-1 text-[10px] text-paper-muted transition group-hover:text-paper-ink">
+                  <CornerDownRight className="h-3 w-3" /> 点击前往目标位置
+                </span>
+              </button>
+            </>
           ) : (
             <FallbackMessage citation={citation} />
           )}
@@ -303,7 +348,8 @@ export function HoverPeekCard({
                 closeNow();
                 onJump(
                   asset?.pageNumber ?? citation.nativeDest?.pageNumber ?? citation.pageNumber,
-                  asset?.cropRect,
+                  asset?.cropRect ?? fallbackPreview?.cropRect,
+                  citation.rect,
                 );
               }}
               className="ml-auto rounded-lg border border-paper-border px-2.5 py-1.5 text-[11px] text-paper-ink transition hover:bg-paper-bg"

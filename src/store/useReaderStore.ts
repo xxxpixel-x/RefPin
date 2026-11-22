@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type {
+  DockPosition,
   InlineCitation,
   JumpAnchor,
   NormalizedRect,
@@ -41,6 +42,9 @@ interface ReaderState {
   snipMode: boolean;
   jumpAnchor: JumpAnchor;
   stats: ReadingStats;
+  dockPosition: DockPosition;
+  dockWidth: number;
+  dockHeight: number;
 
   /* ---------- actions ---------- */
   setPdfDocument: (doc: PDFDocumentProxy, fileName: string, source: string | ArrayBuffer) => void;
@@ -63,6 +67,7 @@ interface ReaderState {
   }) => void;
   unpinItem: (id: string) => void;
   updatePinnedCrop: (id: string, cropRect: NormalizedRect, imageUrl: string) => void;
+  resetPinnedCrop: (id: string, fallbackImageUrl?: string) => void;
   togglePinCollapse: (id: string) => void;
   clearPinnedItems: () => void;
   renamePinnedItem: (id: string, title: string) => void;
@@ -76,9 +81,56 @@ interface ReaderState {
 
   setDrawerOpen: (open: boolean) => void;
   setSnipMode: (on: boolean) => void;
+  setDockPosition: (position: DockPosition) => void;
+  setDockWidth: (width: number) => void;
+  setDockHeight: (height: number) => void;
 
   resetPaper: () => void;
 }
+
+const DOCK_STORAGE_KEY = 'refpin.dock.layout.v1';
+
+function loadSavedDockLayout(): {
+  dockPosition: DockPosition;
+  dockWidth: number;
+  dockHeight: number;
+} {
+  const defaults = { dockPosition: 'right' as DockPosition, dockWidth: 388, dockHeight: 264 };
+  if (typeof window === 'undefined') return defaults;
+  try {
+    const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<typeof defaults>;
+    const pos = parsed.dockPosition;
+    const validPos: DockPosition =
+      pos === 'left' || pos === 'right' || pos === 'top' || pos === 'bottom' ? pos : 'right';
+    const dockWidth =
+      typeof parsed.dockWidth === 'number' && Number.isFinite(parsed.dockWidth)
+        ? Math.max(220, Math.round(parsed.dockWidth))
+        : defaults.dockWidth;
+    const dockHeight =
+      typeof parsed.dockHeight === 'number' && Number.isFinite(parsed.dockHeight)
+        ? Math.max(148, Math.round(parsed.dockHeight))
+        : defaults.dockHeight;
+    return { dockPosition: validPos, dockWidth, dockHeight };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveDockLayout(dockPosition: DockPosition, dockWidth: number, dockHeight: number) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      DOCK_STORAGE_KEY,
+      JSON.stringify({ dockPosition, dockWidth, dockHeight }),
+    );
+  } catch {
+    // 隐私模式或配额受限时静默忽略
+  }
+}
+
+const savedDock = loadSavedDockLayout();
 
 const initialStats: ReadingStats = {
   savedFlips: 0,
@@ -87,7 +139,6 @@ const initialStats: ReadingStats = {
   pinCount: 0,
 };
 
-/** 每“跳一页”折算的滚动距离，用于右上角“少滚 N px” */
 const PX_PER_PAGE = 1100;
 
 export const useReaderStore = create<ReaderState>((set, get) => ({
@@ -111,6 +162,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   snipMode: false,
   jumpAnchor: null,
   stats: initialStats,
+  dockPosition: savedDock.dockPosition,
+  dockWidth: savedDock.dockWidth,
+  dockHeight: savedDock.dockHeight,
 
   setPdfDocument: (doc, fileName, source) =>
     set({
@@ -140,6 +194,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       pageNumber: asset.pageNumber,
       imageUrl: asset.imageUrl,
       cropRect: asset.cropRect,
+      originalCropRect: asset.cropRect,
+      originalImageUrl: asset.imageUrl,
       createdAt: Date.now(),
     };
     set((state) => ({
@@ -175,6 +231,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       pageNumber,
       imageUrl,
       cropRect,
+      originalCropRect: cropRect,
+      originalImageUrl: imageUrl,
       createdAt: Date.now(),
     };
     set((state) => ({
@@ -189,7 +247,15 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   updatePinnedCrop: (id, cropRect, imageUrl) =>
     set((state) => ({
       pinnedItems: state.pinnedItems.map((item) =>
-        item.id === id ? { ...item, cropRect, imageUrl } : item,
+        item.id === id
+          ? {
+              ...item,
+              originalCropRect: item.originalCropRect ?? item.cropRect,
+              originalImageUrl: item.originalImageUrl ?? item.imageUrl,
+              cropRect,
+              imageUrl,
+            }
+          : item,
       ),
       assetsMap: state.assetsMap[id]
         ? {
@@ -198,6 +264,31 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
           }
         : state.assetsMap,
     })),
+
+  resetPinnedCrop: (id, fallbackImageUrl) =>
+    set((state) => {
+      const target = state.pinnedItems.find((item) => item.id === id);
+      if (!target || !target.originalCropRect) return state;
+      const restoredRect = target.originalCropRect;
+      const restoredImage = target.originalImageUrl ?? fallbackImageUrl ?? target.imageUrl;
+      return {
+        pinnedItems: state.pinnedItems.map((item) =>
+          item.id === id
+            ? { ...item, cropRect: restoredRect, imageUrl: restoredImage }
+            : item,
+        ),
+        assetsMap: state.assetsMap[id]
+          ? {
+              ...state.assetsMap,
+              [id]: {
+                ...state.assetsMap[id],
+                cropRect: restoredRect,
+                imageUrl: restoredImage,
+              },
+            }
+          : state.assetsMap,
+      };
+    }),
 
   togglePinCollapse: (id) =>
     set((state) => ({
@@ -248,6 +339,23 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   setDrawerOpen: (open) => set({ drawerOpen: open }),
   setSnipMode: (on) => set({ snipMode: on }),
+  setDockPosition: (dockPosition) => {
+    const { dockWidth, dockHeight } = get();
+    saveDockLayout(dockPosition, dockWidth, dockHeight);
+    set({ dockPosition });
+  },
+  setDockWidth: (width) => {
+    const clamped = Math.max(220, Math.round(width));
+    const { dockPosition, dockHeight } = get();
+    saveDockLayout(dockPosition, clamped, dockHeight);
+    set({ dockWidth: clamped });
+  },
+  setDockHeight: (height) => {
+    const clamped = Math.max(148, Math.round(height));
+    const { dockPosition, dockWidth } = get();
+    saveDockLayout(dockPosition, dockWidth, clamped);
+    set({ dockHeight: clamped });
+  },
 
   resetPaper: () => {
     const { pdfDoc } = get();

@@ -7,7 +7,6 @@ import {
   Scissors,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { ReadingStats } from '../../types/paper';
 
 interface TopBarProps {
   fileName: string;
@@ -18,8 +17,6 @@ interface TopBarProps {
   isParsing: boolean;
   parseProgress: number;
   assetCount: number;
-  referenceCount: number;
-  stats: ReadingStats;
   onJumpPage: (page: number) => void;
   onZoom: (nextScale: number) => void;
   onToggleSnip: () => void;
@@ -37,8 +34,6 @@ export function TopBar({
   isParsing,
   parseProgress,
   assetCount,
-  referenceCount,
-  stats,
   onJumpPage,
   onZoom,
   onToggleSnip,
@@ -127,34 +122,6 @@ export function TopBar({
       </button>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="group relative hidden shrink-0 sm:block">
-          <span className="flex items-center gap-1.5 rounded-full border border-paper-goldborder bg-paper-goldbg px-3 py-1 text-[11px] font-medium text-paper-goldtext transition group-hover:border-amber-400">
-            已免去翻页
-            <span className="font-mono text-xs font-semibold text-paper-goldtext">
-              {stats.savedFlips}
-            </span>
-            次 · 少滚
-            <span className="font-mono text-xs font-semibold text-paper-goldtext">
-              {stats.savedScrollPx.toLocaleString()}
-            </span>
-            px
-          </span>
-          <div className="pointer-events-none absolute right-0 top-full z-40 mt-2 w-44 translate-y-1 rounded-lg border border-paper-border bg-white p-2.5 text-[11px] text-paper-muted opacity-0 shadow-float transition group-hover:translate-y-0 group-hover:opacity-100">
-            <div className="flex justify-between">
-              <span>悬停速览</span>
-              <span className="font-mono text-paper-ink">{stats.peekCount} 次</span>
-            </div>
-            <div className="mt-1 flex justify-between">
-              <span>钉住对照</span>
-              <span className="font-mono text-paper-ink">{stats.pinCount} 项</span>
-            </div>
-            <div className="mt-1 flex justify-between">
-              <span>文献</span>
-              <span className="font-mono text-paper-ink">{referenceCount} 条</span>
-            </div>
-          </div>
-        </div>
-
         <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-paper-border px-2 py-1.5 text-xs text-paper-ink transition hover:bg-paper-bg">
           <FileUp className="h-3.5 w-3.5" />
           <span className="hidden xl:inline">换一篇</span>

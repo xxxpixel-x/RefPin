@@ -88,7 +88,7 @@ export function AssetDrawer({
   return (
     <aside
       className={clsx(
-        'absolute inset-y-0 left-0 z-20 flex w-[280px] flex-col border-r border-paper-border bg-white/95 shadow-float backdrop-blur transition-transform duration-200',
+        'absolute inset-y-0 left-0 z-30 flex w-[280px] flex-col border-r border-paper-border bg-white/95 shadow-float backdrop-blur transition-transform duration-200',
         open ? 'translate-x-0' : '-translate-x-full',
       )}
       aria-hidden={!open}
@@ -217,7 +217,7 @@ export function AssetDrawer({
                       type="button"
                       onClick={() => onPinAsset(asset)}
                       className="rounded p-1 text-paper-muted transition hover:bg-paper-goldbg hover:text-paper-gold"
-                      title="钉到右侧"
+                      title="钉到对照钉板"
                     >
                       <Pin className="h-3 w-3" />
                     </button>
