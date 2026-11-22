@@ -21,8 +21,10 @@ export interface PdfViewerHandle {
     rectOrScrollTop?: NormalizedRect | number,
     flashHighlight?: boolean,
     flashRect?: NormalizedRect,
+    scrollLeft?: number,
   ) => void;
   getScrollTop: () => number;
+  getScrollLeft: () => number;
 }
 
 interface Props {
@@ -111,7 +113,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   }, [snipMode]);
 
   const scrollToPosition = useCallback<PdfViewerHandle['scrollToPosition']>(
-    (pageNumber, rectOrScrollTop, flashHighlight, flashRect) => {
+    (pageNumber, rectOrScrollTop, flashHighlight, flashRect, scrollLeft) => {
       const container = scrollRef.current;
       if (!container) return;
       const pageElement = container.querySelector<HTMLElement>(
@@ -120,12 +122,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       if (!pageElement) return;
 
       const containerRect = container.getBoundingClientRect();
-      const pageOffset =
-        pageElement.getBoundingClientRect().top -
-        containerRect.top +
-        container.scrollTop;
+      const pageBounds = pageElement.getBoundingClientRect();
+      const pageOffset = pageBounds.top - containerRect.top + container.scrollTop;
 
       let top = pageOffset - 16;
+      let left = scrollLeft ?? container.scrollLeft;
       let rect: NormalizedRect | null = null;
 
       if (typeof rectOrScrollTop === 'number') {
@@ -133,9 +134,15 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       } else if (rectOrScrollTop) {
         rect = rectOrScrollTop;
         top = pageOffset + rectOrScrollTop.y * pageElement.offsetHeight - 96;
+        // At high zoom the citation may also be outside the horizontal viewport.
+        const x = pageBounds.left - containerRect.left + rect.x * pageBounds.width;
+        const width = rect.width * pageBounds.width;
+        if (x < 0 || x + width > container.clientWidth) {
+          left += x - Math.max(16, (container.clientWidth - width) / 2);
+        }
       }
 
-      container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      container.scrollTo({ top: Math.max(0, top), left: Math.max(0, left), behavior: 'smooth' });
 
       if (flashHighlight) {
         if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
@@ -154,6 +161,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     () => ({
       scrollToPosition,
       getScrollTop: () => scrollRef.current?.scrollTop ?? 0,
+      getScrollLeft: () => scrollRef.current?.scrollLeft ?? 0,
     }),
     [scrollToPosition],
   );
@@ -222,7 +230,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
           正在打开论文…
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-7 px-6 py-8">
+        <div className="flex w-max min-w-full flex-col items-center gap-7 px-6 py-8">
           {dims.map((dim, index) => (
             <PdfPageCanvas
               key={index + 1}

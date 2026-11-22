@@ -9,7 +9,8 @@ import {
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { PaperAsset, ReferenceEntry } from '../../types/paper';
+import type { CitationBacklink, NormalizedRect, PaperAsset, ReferenceEntry } from '../../types/paper';
+import { BacklinkStrip } from '../BacklinkStrip';
 
 type DrawerTab = 'all' | 'figure' | 'table' | 'reference';
 
@@ -17,6 +18,8 @@ interface AssetDrawerProps {
   open: boolean;
   assets: PaperAsset[];
   references: ReferenceEntry[];
+  backlinksMap: Record<string, CitationBacklink[]>;
+  onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
   pinnedIds: string[];
   isParsing: boolean;
   parseProgress: number;
@@ -37,6 +40,8 @@ export function AssetDrawer({
   open,
   assets,
   references,
+  backlinksMap,
+  onJumpToBacklink,
   pinnedIds,
   isParsing,
   parseProgress,
@@ -47,6 +52,11 @@ export function AssetDrawer({
 }: AssetDrawerProps) {
   const [tab, setTab] = useState<DrawerTab>('all');
   const [query, setQuery] = useState('');
+
+  const jumpToCitation = (pageNumber: number, rect: NormalizedRect) => {
+    onClose();
+    onJumpToBacklink(pageNumber, rect);
+  };
 
   const filteredAssets = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -180,7 +190,7 @@ export function AssetDrawer({
               return (
                 <div
                   key={asset.key}
-                  className="group flex items-center gap-2 rounded-lg border border-paper-border bg-white p-1.5 transition hover:border-amber-300"
+                  className="group flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-paper-border bg-white p-1.5 transition hover:border-paper-goldborder"
                 >
                   <button
                     type="button"
@@ -230,6 +240,7 @@ export function AssetDrawer({
                       <LocateFixed className="h-3 w-3" />
                     </button>
                   </div>
+                  <BacklinkStrip backlinks={backlinksMap[asset.key]} onJumpToBacklink={jumpToCitation} />
                 </div>
               );
             })}
@@ -248,7 +259,7 @@ export function AssetDrawer({
               return (
                 <div
                   key={reference.key}
-                  className="group flex items-start gap-2 rounded-lg border border-transparent px-1.5 py-1.5 transition hover:border-paper-border hover:bg-white"
+                  className="group flex flex-wrap items-start gap-x-2 gap-y-1.5 rounded-lg border border-transparent px-1.5 py-1.5 transition hover:border-paper-border hover:bg-white"
                 >
                   <span className="mt-0.5 w-8 shrink-0 font-mono text-[10px] text-paper-muted">
                     [{reference.index}]
@@ -275,6 +286,7 @@ export function AssetDrawer({
                   >
                     <Pin className="h-3 w-3" />
                   </button>
+                  <BacklinkStrip backlinks={backlinksMap[reference.key]} onJumpToBacklink={jumpToCitation} />
                 </div>
               );
             })}

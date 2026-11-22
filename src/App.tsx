@@ -9,7 +9,8 @@ import { PinDock } from './components/dock/PinDock';
 import { LightboxModal } from './components/dock/LightboxModal';
 import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
-import { loadPdfDocument } from './engine/pdfLoader';
+import { loadReaderPdf } from './engine/pdfLoader';
+import { findAssetForCitation } from './engine/backlinks';
 import { parsePaper } from './engine/parsePaper';
 import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
 import { useReaderStore } from './store/useReaderStore';
@@ -28,18 +29,6 @@ interface FallbackPreviewState {
   imageUrl: string;
   pageNumber: number;
   cropRect: NormalizedRect;
-}
-
-function findAssetForCitation(
-  citation: InlineCitation,
-  assetsMap: Record<string, PaperAsset>,
-): PaperAsset | undefined {
-  for (const key of citation.targetKeys) {
-    if (assetsMap[key]) return assetsMap[key];
-    const baseKey = key.replace(/[a-z]$/, '');
-    if (baseKey !== key && assetsMap[baseKey]) return assetsMap[baseKey];
-  }
-  return undefined;
 }
 
 function findReferenceForCitation(
@@ -61,9 +50,11 @@ export default function App() {
   const isParsing = useReaderStore((state) => state.isParsing);
   const parseProgress = useReaderStore((state) => state.parseProgress);
   const parseError = useReaderStore((state) => state.parseError);
+  const isImageOnly = useReaderStore((state) => state.isImageOnly);
   const assetsMap = useReaderStore((state) => state.assetsMap);
   const referencesMap = useReaderStore((state) => state.referencesMap);
   const citationsByPage = useReaderStore((state) => state.citationsByPage);
+  const backlinksMap = useReaderStore((state) => state.backlinksMap);
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
   const drawerOpen = useReaderStore((state) => state.drawerOpen);
   const snipMode = useReaderStore((state) => state.snipMode);
@@ -74,7 +65,7 @@ export default function App() {
 
   const viewerRef = useRef<PdfViewerHandle>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const openRequestRef = useRef(0);
+  const openControllerRef = useRef<AbortController | null>(null);
   const activePeekIdRef = useRef<string | null>(null);
   const nativePreviewCacheRef = useRef(
     new Map<string, { imageUrl: string; pageNumber: number; cropRect: NormalizedRect }>(),
@@ -105,6 +96,8 @@ export default function App() {
 
   useEffect(
     () => () => {
+      openControllerRef.current?.abort();
+      useReaderStore.getState().resetPaper();
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
     },
@@ -112,8 +105,11 @@ export default function App() {
   );
 
   const openPaper = useCallback(
-    async (source: string | ArrayBuffer, name: string, startPage?: number) => {
-      const requestId = ++openRequestRef.current;
+    async (input: string | File, name: string, startPage?: number) => {
+      openControllerRef.current?.abort();
+      const controller = new AbortController();
+      openControllerRef.current = controller;
+      const { signal } = controller;
       setBootError(null);
       setBootingName(name);
       setInitialPage(startPage);
@@ -126,30 +122,32 @@ export default function App() {
       useReaderStore.getState().resetPaper();
 
       try {
-        const doc = await loadPdfDocument(source);
-        if (requestId !== openRequestRef.current) {
+        const url = typeof input === 'string' ? input : null;
+        const source = typeof input === 'string' ? input : await input.arrayBuffer();
+        const { doc, paperHash } = await loadReaderPdf(source, name, signal);
+        if (signal.aborted) {
           void doc.destroy().catch(() => {});
           return;
         }
         setBootingName(null);
-        useReaderStore.getState().setPdfDocument(doc, name, source);
+        useReaderStore.getState().setPdfDocument(doc, name, paperHash, url);
         useReaderStore.getState().setParsing(true);
 
         const result = await parsePaper(doc, (percent) => {
-          if (requestId === openRequestRef.current) {
-            useReaderStore.getState().setParseProgress(percent);
-          }
-        });
-        if (requestId !== openRequestRef.current) return;
+          if (!signal.aborted) useReaderStore.getState().setParseProgress(percent);
+        }, signal);
+        if (signal.aborted) return;
         useReaderStore.getState().setParseResult(result);
       } catch (error) {
-        if (requestId !== openRequestRef.current) return;
+        if (signal.aborted) return;
         setBootingName(null);
-        const message = error instanceof Error ? error.message : '论文打开失败，请确认 PDF 文件有效';
+        const message = error instanceof Error && error.name === 'PasswordException'
+          ? '这份 PDF 需要密码。请在本地 PDF 阅读器中解锁，保存一份无密码的副本后重新打开。'
+          : error instanceof Error ? error.message : '论文打开失败，请确认 PDF 文件有效';
         useReaderStore.getState().setParseError(message);
         setBootError(message);
       } finally {
-        if (requestId === openRequestRef.current) {
+        if (!signal.aborted) {
           useReaderStore.getState().setParsing(false);
         }
       }
@@ -158,17 +156,12 @@ export default function App() {
   );
 
   const handleOpenFile = useCallback(
-    async (file: File) => {
+    (file: File) => {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
         setBootError('请选择 .pdf 格式的论文文件');
         return;
       }
-      try {
-        const buffer = await file.arrayBuffer();
-        await openPaper(buffer, file.name);
-      } catch {
-        setBootError('读取本地 PDF 失败，请重试');
-      }
+      void openPaper(file, file.name);
     },
     [openPaper],
   );
@@ -181,7 +174,8 @@ export default function App() {
   );
 
   const handleReset = useCallback(() => {
-    openRequestRef.current += 1;
+    openControllerRef.current?.abort();
+    openControllerRef.current = null;
     setBootingName(null);
     setBootError(null);
     setInitialPage(undefined);
@@ -231,6 +225,7 @@ export default function App() {
       store.setJumpAnchor({
         fromPage: store.currentPage,
         fromScrollTop: viewerRef.current?.getScrollTop() ?? 0,
+        fromScrollLeft: viewerRef.current?.getScrollLeft() ?? 0,
         highlightRect: sourceRect,
         label: `回到第 ${store.currentPage} 页刚才读的位置`,
       });
@@ -272,6 +267,7 @@ export default function App() {
     const doc = store.pdfDoc;
     void captureDestinationPreview(doc, destPage, destY)
       .then((preview) => {
+        if (useReaderStore.getState().pdfDoc !== doc) return;
         const entry = {
           imageUrl: preview.imageUrl,
           pageNumber: destPage,
@@ -342,10 +338,11 @@ export default function App() {
 
       try {
         const imageUrl = await recropPageRegion(store.pdfDoc, item.pageNumber, nextRect);
+        if (useReaderStore.getState().pdfDoc !== store.pdfDoc) return;
         useReaderStore.getState().updatePinnedCrop(id, nextRect, imageUrl);
         showToast(direction === 'up' ? '已向上扩展裁切范围' : '已向下扩展裁切范围');
       } catch {
-        showToast('扩充裁切失败，请重试');
+        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast('扩充裁切失败，请重试');
       }
     },
     [showToast],
@@ -370,10 +367,11 @@ export default function App() {
           item.pageNumber,
           item.originalCropRect,
         );
+        if (useReaderStore.getState().pdfDoc !== store.pdfDoc) return;
         useReaderStore.getState().resetPinnedCrop(id, imageUrl);
         showToast('已还原初始裁切范围');
       } catch {
-        showToast('还原裁切失败，请重试');
+        if (useReaderStore.getState().pdfDoc === store.pdfDoc) showToast('还原裁切失败，请重试');
       }
     },
     [showToast],
@@ -487,8 +485,14 @@ export default function App() {
       />
 
       {(parseError || bootError) && (
-        <div className="border-b border-red-100 bg-red-50 px-4 py-1.5 text-xs text-red-600">
+        <div role="alert" className="border-b border-paper-goldborder bg-paper-goldbg px-4 py-1.5 text-xs text-paper-ink">
           {parseError || bootError}
+        </div>
+      )}
+
+      {isImageOnly && (
+        <div role="status" className="border-b border-paper-border bg-white px-4 py-2 text-xs text-paper-muted">
+          未检测到文本层，扫描版 PDF 无法自动识别引用。按 <kbd className="font-mono text-paper-ink">S</kbd> 可框选并钉住任意区域。
         </div>
       )}
 
@@ -503,6 +507,8 @@ export default function App() {
           open={drawerOpen}
           assets={assetsList}
           references={referencesList}
+          backlinksMap={backlinksMap}
+          onJumpToBacklink={handleJump}
           pinnedIds={pinnedIds}
           isParsing={isParsing}
           parseProgress={parseProgress}
@@ -521,6 +527,7 @@ export default function App() {
                 anchor.fromScrollTop,
                 true,
                 anchor.highlightRect,
+                anchor.fromScrollLeft,
               );
               useReaderStore.getState().clearJumpAnchor();
             }}
@@ -543,6 +550,8 @@ export default function App() {
 
         <PinDock
           items={pinnedItems}
+          backlinksMap={backlinksMap}
+          onJumpToBacklink={handleJump}
           highlightedId={highlightedPinId}
           position={dockPosition}
           width={dockWidth}

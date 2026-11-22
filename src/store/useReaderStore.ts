@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { buildBacklinksMap } from '../engine/backlinks';
+import type { ParsePaperResult } from '../engine/parsePaper';
 import type {
+  CitationBacklink,
   DockPosition,
   InlineCitation,
   JumpAnchor,
@@ -11,16 +14,13 @@ import type {
   ReferenceEntry,
 } from '../types/paper';
 
-export interface ParseResultPayload {
-  assetsMap: Record<string, PaperAsset>;
-  referencesMap: Record<string, ReferenceEntry>;
-  citationsByPage: Record<number, InlineCitation[]>;
-}
+export type ParseResultPayload = Omit<ParsePaperResult, 'isImageOnly'> & { isImageOnly?: boolean };
 
 interface ReaderState {
   /* ---------- 文档 ---------- */
   fileName: string;
-  pdfSource: string | ArrayBuffer | null;
+  pdfSource: string | null;
+  paperHash: string | null;
   pdfDoc: PDFDocumentProxy | null;
   numPages: number;
   currentPage: number;
@@ -30,11 +30,13 @@ interface ReaderState {
   isParsing: boolean;
   parseProgress: number;
   parseError: string | null;
+  isImageOnly: boolean;
 
   /* ---------- 解析产物 ---------- */
   assetsMap: Record<string, PaperAsset>;
   referencesMap: Record<string, ReferenceEntry>;
   citationsByPage: Record<number, InlineCitation[]>;
+  backlinksMap: Record<string, CitationBacklink[]>;
 
   /* ---------- UI 状态 ---------- */
   pinnedItems: PinnedItem[];
@@ -47,7 +49,7 @@ interface ReaderState {
   dockHeight: number;
 
   /* ---------- actions ---------- */
-  setPdfDocument: (doc: PDFDocumentProxy, fileName: string, source: string | ArrayBuffer) => void;
+  setPdfDocument: (doc: PDFDocumentProxy, fileName: string, paperHash: string, url: string | null) => void;
   setNumPages: (n: number) => void;
   setCurrentPage: (p: number) => void;
   setScale: (s: number) => void;
@@ -144,6 +146,7 @@ const PX_PER_PAGE = 1100;
 export const useReaderStore = create<ReaderState>((set, get) => ({
   fileName: '',
   pdfSource: null,
+  paperHash: null,
   pdfDoc: null,
   numPages: 0,
   currentPage: 1,
@@ -152,10 +155,12 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   isParsing: false,
   parseProgress: 0,
   parseError: null,
+  isImageOnly: false,
 
   assetsMap: {},
   referencesMap: {},
   citationsByPage: {},
+  backlinksMap: {},
 
   pinnedItems: [],
   drawerOpen: false,
@@ -166,11 +171,12 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   dockWidth: savedDock.dockWidth,
   dockHeight: savedDock.dockHeight,
 
-  setPdfDocument: (doc, fileName, source) =>
+  setPdfDocument: (doc, fileName, paperHash, url) =>
     set({
       pdfDoc: doc,
       fileName,
-      pdfSource: source,
+      paperHash,
+      pdfSource: url,
       numPages: doc.numPages,
       currentPage: 1,
       parseError: null,
@@ -181,7 +187,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   setParsing: (parsing) => set({ isParsing: parsing }),
   setParseProgress: (percent) => set({ parseProgress: Math.min(100, Math.max(0, percent)) }),
   setParseError: (message) => set({ parseError: message }),
-  setParseResult: (payload) => set({ ...payload }),
+  setParseResult: (payload) => set({
+    ...payload,
+    isImageOnly: payload.isImageOnly ?? false,
+    backlinksMap: buildBacklinksMap(payload.citationsByPage),
+  }),
 
   pinAsset: (asset) => {
     const { pinnedItems } = get();
@@ -369,15 +379,18 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({
       fileName: '',
       pdfSource: null,
+      paperHash: null,
       pdfDoc: null,
       numPages: 0,
       currentPage: 1,
       isParsing: false,
       parseProgress: 0,
       parseError: null,
+      isImageOnly: false,
       assetsMap: {},
       referencesMap: {},
       citationsByPage: {},
+      backlinksMap: {},
       pinnedItems: [],
       snipMode: false,
       jumpAnchor: null,

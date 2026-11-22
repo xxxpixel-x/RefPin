@@ -16,7 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { DockPosition, PinnedItem } from '../../types/paper';
+import type { CitationBacklink, DockPosition, NormalizedRect, PinnedItem } from '../../types/paper';
+import { BacklinkStrip } from '../BacklinkStrip';
 
 export function hasCropChanged(item: PinnedItem): boolean {
   if (!item.originalCropRect || !item.cropRect) return false;
@@ -31,6 +32,8 @@ export function hasCropChanged(item: PinnedItem): boolean {
 
 interface PinnedCardProps {
   item: PinnedItem;
+  backlinks?: CitationBacklink[];
+  onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
   highlighted?: boolean;
   dockPosition?: DockPosition;
   dockWidth?: number;
@@ -52,6 +55,8 @@ interface PinnedCardProps {
 
 export function PinnedCard({
   item,
+  backlinks,
+  onJumpToBacklink,
   highlighted,
   dockPosition = 'right',
   dockWidth = 388,
@@ -426,6 +431,14 @@ export function PinnedCard({
             >
               {item.subtitle}
             </p>
+          )}
+          {!!backlinks?.length && (
+            <div className="mt-1.5">
+              <BacklinkStrip backlinks={backlinks} onJumpToBacklink={(pageNumber, rect) => {
+                onRequestCloseZoom?.();
+                onJumpToBacklink(pageNumber, rect);
+              }} />
+            </div>
           )}
         </div>
       )}

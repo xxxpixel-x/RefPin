@@ -26,6 +26,14 @@ export interface InlineCitation {
   nativeDest?: { pageNumber: number; targetY?: number };
 }
 
+/** 从图表或文献卡片跳回正文中的一次引用 */
+export interface CitationBacklink {
+  citationId: string;
+  pageNumber: number;
+  rect: NormalizedRect;
+  rawText: string;
+}
+
 /** 论文中的一张图 / 一个表 / 一条公式 */
 export interface PaperAsset {
   key: string;
@@ -73,6 +81,7 @@ export interface PinnedItem {
 export type JumpAnchor = {
   fromPage: number;
   fromScrollTop: number;
+  fromScrollLeft?: number;
   highlightRect?: NormalizedRect;
   label: string;
 } | null;

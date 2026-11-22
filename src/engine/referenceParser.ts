@@ -30,7 +30,7 @@ interface PendingEntry {
  */
 function splitSentenceBoundaries(body: string): string[] {
   const parts: string[] = [];
-  const boundaryRe = /\.\s+/g;
+  const boundaryRe = /\.\s+|[。．]\s*/g;
   let start = 0;
   let hit: RegExpExecArray | null;
 
@@ -66,11 +66,11 @@ function parseFields(raw: string): Pick<ReferenceEntry, 'title' | 'authors' | 'y
   let authors: string | undefined;
 
   if (title) {
-    authors = body.split(/[“"']/)[0]?.replace(/[.,;]\s*$/, '').trim();
+    authors = body.split(/[“"']/)[0]?.replace(/[.,;，。．；]\s*$/, '').trim();
   } else {
     const segments = splitSentenceBoundaries(body);
-    authors = segments[0]?.replace(/[.,;]\s*$/, '').trim();
-    title = segments[1]?.replace(/[.,;]\s*$/, '').trim();
+    authors = segments[0]?.replace(/[.,;，。．；]\s*$/, '').trim();
+    title = segments[1]?.replace(/[.,;，。．；]\s*$/, '').trim();
   }
 
   if (authors && authors.length > 160) authors = `${authors.slice(0, 157)}...`;

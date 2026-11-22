@@ -72,7 +72,7 @@ export function LandingView({
         />
 
         {error && (
-          <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-center text-xs text-red-600">
+          <p role="alert" className="mt-3 rounded-lg border border-paper-goldborder bg-paper-goldbg px-3 py-2 text-center text-xs text-paper-ink">
             {error}
           </p>
         )}

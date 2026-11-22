@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { CitationKind, InlineCitation, NormalizedRect } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
+import { parseCaptionLabel } from './captionLabel';
 import {
   clamp,
   isInsideRefRange,
@@ -21,7 +22,6 @@ const TABLE_RE = /(?:\bTab(?:le)?s?\.?\s*|表\s*)(\d+(?:[.\-–]\d+)?[a-zA-Z]?)/
 const EQUATION_RE = /(?:\bEq(?:uation)?s?\.?\s*|公式\s*|式\s*)\(?\s*(\d+(?:\.\d+)?)\s*\)?/gi;
 const REFERENCE_RE = /\[(\d+(?:\s*[-–,，]\s*\d+)*)\]/g;
 
-const CAPTION_START_RE = /^(?:figure|fig\.?|table|tab\.?|图|表)\s*\d/i;
 const REFERENCES_HEADING_RE = /^(?:references|bibliography|参考文献|references and notes)\s*$/i;
 
 function rectArea(rect: NormalizedRect): number {
@@ -147,7 +147,8 @@ function expandReferenceKeys(content: string): string[] {
 function collectMatches(line: TextLine): RawMatch[] {
   const matches: RawMatch[] = [];
   const text = line.text;
-  const isCaption = CAPTION_START_RE.test(text.trim());
+  const trimmed = text.trim();
+  const isCaption = parseCaptionLabel(trimmed) !== null;
 
   const run = (
     re: RegExp,
@@ -158,7 +159,12 @@ function collectMatches(line: TextLine): RawMatch[] {
     let hit: RegExpExecArray | null = re.exec(text);
     while (hit) {
       const start = hit.index;
-      const end = start + hit[0].length;
+      const rawText = hit[0].trimEnd();
+      const end = start + rawText.length;
+      if (isCaption && start === text.indexOf(trimmed) && rawText !== trimmed) {
+        hit = re.exec(text);
+        continue;
+      }
       const targetKeys = toKeys(hit[1], hit[0]);
       // 年份 [2024] 等超出文献编号范围的内容不生成死链接热区
       if (targetKeys.length === 0) {
@@ -169,7 +175,7 @@ function collectMatches(line: TextLine): RawMatch[] {
       if (rect) {
         matches.push({
           kind,
-          rawText: hit[0].trim(),
+          rawText,
           targetKeys,
           rect,
         });
@@ -178,11 +184,9 @@ function collectMatches(line: TextLine): RawMatch[] {
     }
   };
 
-  if (!isCaption) {
-    run(FIGURE_RE, 'figure', (num) => [`fig-${normalizeNumber(num)}`]);
-    run(TABLE_RE, 'table', (num) => [`tab-${normalizeNumber(num)}`]);
-    run(EQUATION_RE, 'equation', (num) => [`eq-${normalizeNumber(num)}`]);
-  }
+  run(FIGURE_RE, 'figure', (num) => [`fig-${normalizeNumber(num)}`]);
+  run(TABLE_RE, 'table', (num) => [`tab-${normalizeNumber(num)}`]);
+  run(EQUATION_RE, 'equation', (num) => [`eq-${normalizeNumber(num)}`]);
   run(REFERENCE_RE, 'reference', (content) => expandReferenceKeys(content));
 
   return matches.sort((a, b) => a.rect.x - b.rect.x);
@@ -192,10 +196,12 @@ function collectMatches(line: TextLine): RawMatch[] {
 function detectFromText(
   linesByPage: LinesByPage,
   refRange: RefRange | undefined,
+  signal?: AbortSignal,
 ): Record<number, InlineCitation[]> {
   const result: Record<number, InlineCitation[]> = {};
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
+    signal?.throwIfAborted();
     const pageNumber = Number(pageKey);
 
     const citations: InlineCitation[] = [];
@@ -205,6 +211,10 @@ function detectFromText(
         continue;
       }
       for (const match of collectMatches(line)) {
+        // Some PDFs paint the same text twice at the same position.
+        if (citations.some((item) =>
+          item.rawText === match.rawText && rectIoU(item.rect, match.rect) > 0.6,
+        )) continue;
         citations.push({
           id: '',
           kind: match.kind,
@@ -319,11 +329,13 @@ async function detectFromAnnotations(
   doc: PDFDocumentProxy,
   linesByPage: LinesByPage,
   refRange: RefRange | undefined,
+  signal?: AbortSignal,
 ): Promise<Record<number, InlineCitation[]>> {
   const result: Record<number, InlineCitation[]> = {};
   const destCache = new Map<string, NativeTarget | null>();
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
+    signal?.throwIfAborted();
     const pageNumber = Number(pageKey);
     // 只排除真正落在参考文献正文里的行，起始页上方的图表和附录页照常识别
     const usableLines = lines.filter(
@@ -334,10 +346,12 @@ async function detectFromAnnotations(
     const native: InlineCitation[] = [];
     try {
       const page = await doc.getPage(pageNumber);
+      signal?.throwIfAborted();
       const viewport = page.getViewport({ scale: 1 });
       const annotations = await page.getAnnotations();
 
       for (const annot of annotations) {
+        signal?.throwIfAborted();
         if (annot.subtype !== 'Link') continue;
         const dest = (annot as { dest?: unknown }).dest;
         if (!dest) continue;
@@ -350,6 +364,7 @@ async function detectFromAnnotations(
           width: Math.abs(viewRect[2] - viewRect[0]) / viewport.width,
           height: Math.abs(viewRect[3] - viewRect[1]) / viewport.height,
         };
+        if (isInsideRefRange(pageNumber, targetRect.y + targetRect.height / 2, refRange)) continue;
 
         const overlapping = usableLines.filter((line) =>
           linkHitsLine(line.rect, targetRect),
@@ -366,12 +381,15 @@ async function detectFromAnnotations(
         let target = destCache.get(cacheKey);
         if (target === undefined) {
           target = await resolveDestination(doc, dest).catch(() => null);
+          signal?.throwIfAborted();
           destCache.set(cacheKey, target);
         }
         if (!target) continue;
 
         if (hits.length > 0) {
-          for (const hit of hits) {
+          // A tolerance-only neighbor should not inherit another citation's destination.
+          const exact = hits.filter((hit) => overlapArea(hit.rect, targetRect) > 0);
+          for (const hit of exact.length ? exact : hits) {
             native.push({
               id: '',
               kind: hit.kind,
@@ -407,6 +425,7 @@ async function detectFromAnnotations(
       // 单页注释解析失败不影响整篇
     }
 
+    signal?.throwIfAborted();
     result[pageNumber] = native;
   }
 
@@ -415,6 +434,7 @@ async function detectFromAnnotations(
 
 export interface DetectCitationOptions {
   refRange?: RefRange;
+  signal?: AbortSignal;
 }
 
 /**
@@ -428,8 +448,11 @@ export async function detectCitations(
   linesByPage: LinesByPage,
   options: DetectCitationOptions = {},
 ): Promise<Record<number, InlineCitation[]>> {
-  const textLayer = detectFromText(linesByPage, options.refRange);
-  const nativeLayer = await detectFromAnnotations(doc, linesByPage, options.refRange);
+  const { refRange, signal } = options;
+  signal?.throwIfAborted();
+  const textLayer = detectFromText(linesByPage, refRange, signal);
+  const nativeLayer = await detectFromAnnotations(doc, linesByPage, refRange, signal);
+  signal?.throwIfAborted();
 
   const merged: Record<number, InlineCitation[]> = {};
   const allPages = new Set<number>([
@@ -438,14 +461,14 @@ export async function detectCitations(
   ]);
 
   for (const pageNumber of allPages) {
+    signal?.throwIfAborted();
     const citations = [...(textLayer[pageNumber] ?? [])];
 
     for (const native of nativeLayer[pageNumber] ?? []) {
-      const existing = citations.find(
-        (item) =>
-          rectIoU(item.rect, native.rect) > 0.4 ||
-          rectDistance(item.rect, native.rect) < 0.02,
-      );
+      const existing = citations.find((item) => rectIoU(item.rect, native.rect) > 0.4)
+        ?? citations.find((item) =>
+          item.rawText === native.rawText && rectDistance(item.rect, native.rect) < 0.02,
+        );
       if (existing) {
         if (native.nativeDest) existing.nativeDest = native.nativeDest;
       } else {

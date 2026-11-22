@@ -85,7 +85,8 @@ export function PdfPageCanvas({
       }
     };
 
-    void render();
+    // Switching papers can destroy the worker while getPage is still pending.
+    void render().catch(() => {});
 
     return () => {
       cancelled = true;
@@ -137,8 +138,8 @@ export function PdfPageCanvas({
           style={{
             left: `${flash.rect.x * 100}%`,
             top: `${flash.rect.y * 100}%`,
-            width: `${Math.max(flash.rect.width, 0.02) * 100}%`,
-            height: `${Math.max(flash.rect.height, 0.012) * 100}%`,
+            width: `${flash.rect.width * 100}%`,
+            height: `${flash.rect.height * 100}%`,
           }}
         />
       )}

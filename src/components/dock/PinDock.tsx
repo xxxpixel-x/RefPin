@@ -18,11 +18,13 @@ import {
   Pin,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { DockPosition, PinnedItem } from '../../types/paper';
+import type { CitationBacklink, DockPosition, NormalizedRect, PinnedItem } from '../../types/paper';
 import { PinnedCard } from './PinnedCard';
 
 interface PinDockProps {
   items: PinnedItem[];
+  backlinksMap: Record<string, CitationBacklink[]>;
+  onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
   highlightedId?: string | null;
   position: DockPosition;
   width: number;
@@ -95,6 +97,8 @@ function computeNearestEdge(clientX: number, clientY: number, rect: DOMRect): Do
 
 export function PinDock({
   items,
+  backlinksMap,
+  onJumpToBacklink,
   highlightedId,
   position,
   width,
@@ -710,6 +714,8 @@ export function PinDock({
               <PinnedCard
                 key={item.id}
                 item={item}
+                backlinks={backlinksMap[item.id]}
+                onJumpToBacklink={onJumpToBacklink}
                 highlighted={highlightedId === item.id}
                 dockPosition={position}
                 dockWidth={clampedWidth}
@@ -755,6 +761,8 @@ export function PinDock({
           >
             <PinnedCard
               item={zoomedItem}
+              backlinks={backlinksMap[zoomedItem.id]}
+              onJumpToBacklink={onJumpToBacklink}
               dockPosition={position}
               dockWidth={clampedWidth}
               dockHeight={clampedHeight}

@@ -15,6 +15,7 @@ import { PinDock } from '../components/dock/PinDock';
 import { LightboxModal } from '../components/dock/LightboxModal';
 import { AssetDrawer } from '../components/drawer/AssetDrawer';
 import { SAMPLES } from '../config/samples';
+import { buildBacklinksMap } from '../engine/backlinks';
 import type {
   DockPosition,
   InlineCitation,
@@ -23,6 +24,8 @@ import type {
   PinnedItem,
   ReferenceEntry,
 } from '../types/paper';
+
+const backlinksMap = buildBacklinksMap(MOCK_CITATIONS);
 
 /** B 线独立预览壳：不依赖 A 的 pdf.js，纯 Mock 数据跑通全部 UI */
 export function BPreview() {
@@ -199,6 +202,8 @@ export function BPreview() {
           open={drawerOpen}
           assets={MOCK_ASSETS}
           references={MOCK_REFERENCES}
+          backlinksMap={backlinksMap}
+          onJumpToBacklink={jumpTo}
           pinnedIds={pinnedIds}
           isParsing={false}
           parseProgress={100}
@@ -279,6 +284,8 @@ export function BPreview() {
 
         <PinDock
           items={pinnedItems}
+          backlinksMap={backlinksMap}
+          onJumpToBacklink={jumpTo}
           position={dockPosition}
           width={dockWidth}
           height={dockHeight}

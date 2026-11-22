@@ -78,6 +78,7 @@ export function FreeSnipOverlay({ pdfDoc, pageNumber, width, height }: Props) {
         height: current.height / height,
       };
       const imageUrl = await recropPageRegion(pdfDoc, pageNumber, cropRect);
+      if (useReaderStore.getState().pdfDoc !== pdfDoc) return;
       pinSnip({ pageNumber, cropRect, imageUrl });
       setSnipMode(false);
     } catch {

@@ -8,6 +8,7 @@ import {
   Search,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { findAssetForCitation } from '../../engine/backlinks';
 import type {
   InlineCitation,
   PaperAsset,
@@ -98,15 +99,10 @@ export function HoverPeekCard({
       .filter((item): item is ReferenceEntry => Boolean(item));
   }, [citation, referencesMap]);
 
-  const asset = useMemo(() => {
-    if (!citation) return undefined;
-    for (const key of citation.targetKeys) {
-      if (assetsMap[key]) return assetsMap[key];
-      const baseKey = key.replace(/[a-z]$/, '');
-      if (baseKey !== key && assetsMap[baseKey]) return assetsMap[baseKey];
-    }
-    return undefined;
-  }, [citation, assetsMap]);
+  const asset = useMemo(
+    () => citation ? findAssetForCitation(citation, assetsMap) : undefined,
+    [citation, assetsMap],
+  );
 
   const activeReference = references[Math.min(activeRefIndex, references.length - 1)];
 

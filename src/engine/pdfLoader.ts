@@ -24,17 +24,66 @@ function getPublicAssetUrl(subpath: string): string {
   return `/${subpath}`;
 }
 
+type PdfSource = ArrayBuffer | Uint8Array | string;
+
+/** Hash the visible bytes of the input before pdf.js transfers them to its worker. */
+export async function computePdfFingerprint(source: PdfSource, _fileName?: string): Promise<string> {
+  let bytes: Uint8Array;
+  if (typeof source === 'string') {
+    bytes = new TextEncoder().encode(`url:${source}`);
+  } else {
+    bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
+    const size = bytes.byteLength;
+    if (size > 2 * 1024 * 1024) {
+      const chunk = 512 * 1024;
+      const middle = Math.floor((size - chunk) / 2);
+      const sample = new Uint8Array(8 + 3 * chunk);
+      new DataView(sample.buffer).setBigUint64(0, BigInt(size));
+      sample.set(bytes.subarray(0, chunk), 8);
+      sample.set(bytes.subarray(middle, middle + chunk), 8 + chunk);
+      sample.set(bytes.subarray(size - chunk), 8 + 2 * chunk);
+      bytes = sample;
+    }
+  }
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function loadReaderPdf(source: PdfSource, fileName: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const paperHash = await computePdfFingerprint(source, fileName);
+  const doc = await loadPdfDocument(source, signal);
+  return { doc, paperHash };
+}
+
 export async function loadPdfDocument(
-  source: string | ArrayBuffer,
+  source: PdfSource,
+  signal?: AbortSignal,
 ): Promise<PDFDocumentProxy> {
+  signal?.throwIfAborted();
   const task = pdfjsLib.getDocument({
-    ...(typeof source === 'string' ? { url: source } : { data: source }),
+    ...(typeof source === 'string' ? { url: source } : {
+      data: source instanceof Uint8Array ? source : new Uint8Array(source),
+    }),
     // 中文论文的 CMap 与标准字体全部走本地静态目录，保证断网与扩展环境均可离线运行
     cMapUrl: getPublicAssetUrl('cmaps/'),
     cMapPacked: true,
     standardFontDataUrl: getPublicAssetUrl('standard_fonts/'),
   });
-  return task.promise;
+  let onAbort: (() => void) | undefined;
+  try {
+    if (!signal) return await task.promise;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    return await Promise.race([task.promise, aborted]);
+  } catch (error) {
+    await task.destroy().catch(() => {});
+    throw error;
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 interface RawBox {
@@ -133,7 +182,8 @@ function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
         height: box.height,
       };
       text += ch;
-      chars.push({ ch, rect });
+      // RegExp indices use UTF-16 offsets, even when a glyph is a surrogate pair.
+      for (let i = 0; i < ch.length; i += 1) chars.push({ ch: ch[i], rect });
     });
   });
 

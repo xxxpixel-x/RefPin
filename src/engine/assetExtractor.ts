@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { NormalizedRect, PaperAsset } from '../types/paper';
 import type { LinesByPage, RefRange, TextLine } from './types';
+import { parseCaptionLabel } from './captionLabel';
 import { clamp, clampRect, isInsideRefRange, isTwoColumnPage } from './utils';
 
 /** 离屏渲染倍率：2.0 保证钉板与灯箱里的图足够清晰 */
@@ -40,20 +41,33 @@ function cacheFor(doc: PDFDocumentProxy): Map<number, PageBitmap> {
 async function getPageBitmap(
   doc: PDFDocumentProxy,
   pageNumber: number,
+  scale = RENDER_SCALE,
+  signal?: AbortSignal,
 ): Promise<PageBitmap> {
-  const cache = cacheFor(doc);
-  const cached = cache.get(pageNumber);
+  signal?.throwIfAborted();
+  // Keep one-off high-resolution exports out of the reader's bitmap cache.
+  const cache = scale === RENDER_SCALE ? cacheFor(doc) : undefined;
+  const cached = cache?.get(pageNumber);
   if (cached) return cached;
 
   const page = await doc.getPage(pageNumber);
-  const viewport = page.getViewport({ scale: RENDER_SCALE });
+  signal?.throwIfAborted();
+  const viewport = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('无法创建离屏 Canvas 上下文');
 
-  await page.render({ canvasContext: ctx, viewport }).promise;
+  const renderTask = page.render({ canvasContext: ctx, viewport });
+  const cancel = () => renderTask.cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    await renderTask.promise;
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
+  signal?.throwIfAborted();
   const bitmap: PageBitmap = {
     canvas,
     image: ctx.getImageData(0, 0, canvas.width, canvas.height),
@@ -61,8 +75,8 @@ async function getPageBitmap(
     height: canvas.height,
   };
 
-  cache.set(pageNumber, bitmap);
-  if (cache.size > MAX_CACHED_PAGES) {
+  cache?.set(pageNumber, bitmap);
+  if (cache && cache.size > MAX_CACHED_PAGES) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
@@ -183,6 +197,12 @@ function cropToDataUrl(
   const ctx = out.getContext('2d');
   if (!ctx) return '';
   ctx.drawImage(bitmap.canvas, pxX, pxY, pxW, pxH, 0, 0, out.width, out.height);
+  try {
+    const url = out.toDataURL('image/webp', 0.9);
+    if (url.startsWith('data:image/webp') || url.startsWith('data:image/png')) return url;
+  } catch {
+    // Older canvas encoders can reject WebP instead of returning PNG.
+  }
   return out.toDataURL('image/png');
 }
 
@@ -199,44 +219,8 @@ interface CaptionInfo {
   right: number;
 }
 
-const CAPTION_RE =
-  /^(Figure|Fig\.?|Table|Tab\.?|图|表)\s*(\d+(?:[.\-–]\d+)?[a-zA-Z]?)(.*)$/i;
-const VERB_AFTER_NUMBER_RE =
-  /^(shows?|illustrates?|presents?|depicts?|summarizes?|reports?|lists?|gives?|is|are|were|was)\b/i;
-
 function normalizeNumber(raw: string): string {
   return raw.trim().toLowerCase().replace(/[–—]/g, '-');
-}
-
-function parseCaptionLine(line: TextLine): {
-  kind: 'figure' | 'table';
-  number: string;
-  label: string;
-} | null {
-  const text = line.text.trim();
-  const match = text.match(CAPTION_RE);
-  if (!match) return null;
-
-  const prefix = match[1];
-  const number = match[2];
-  const rest = match[3] ?? '';
-
-  const isFigure = /^(?:图|fig)/i.test(prefix);
-  // 正文里 "Figure 2 shows ..." 不是 caption，避免把段落当标题
-  const restTrim = rest.trim();
-  if (VERB_AFTER_NUMBER_RE.test(restTrim) && !/^[:：.．]/.test(restTrim)) {
-    return null;
-  }
-  // 英文 caption 必须有分隔符或明显的描述文本
-  if (/^(?:figure|fig\.?|table|tab\.?)/i.test(prefix)) {
-    if (!/^[:：.．]/.test(restTrim) && restTrim.length < 8) return null;
-  }
-
-  return {
-    kind: isFigure ? 'figure' : 'table',
-    number,
-    label: isFigure ? `Figure ${number}` : `Table ${number}`,
-  };
 }
 
 function sameColumn(a: TextLine, b: TextLine): boolean {
@@ -283,11 +267,13 @@ function columnRange(line: TextLine, isTwoCol: boolean): [number, number] {
 function collectCaptions(
   linesByPage: LinesByPage,
   refRange?: RefRange,
+  signal?: AbortSignal,
 ): CaptionInfo[] {
   const captions: CaptionInfo[] = [];
   const seen = new Set<string>();
 
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
+    signal?.throwIfAborted();
     const pageNumber = Number(pageKey);
     const isTwoCol = isTwoColumnPage(lines);
     const ordered = [...lines].sort(
@@ -300,7 +286,7 @@ function collectCaptions(
       if (isInsideRefRange(pageNumber, line.rect.y + line.rect.height / 2, refRange)) {
         continue;
       }
-      const parsed = parseCaptionLine(line);
+      const parsed = parseCaptionLabel(line.text);
       if (!parsed) continue;
       if (captionLineSet.has(line)) continue;
 
@@ -322,7 +308,7 @@ function collectCaptions(
           gap > 0.016 ||
           Math.abs(next.rect.x - line.rect.x) > 0.03 ||
           !sameColumn(prev, next) ||
-          parseCaptionLine(next)
+          parseCaptionLabel(next.text)
         ) {
           break;
         }
@@ -358,6 +344,7 @@ function collectCaptions(
 
 export interface ExtractAssetsOptions {
   refRange?: RefRange;
+  signal?: AbortSignal;
   onProgress?: (percent: number) => void;
 }
 
@@ -367,7 +354,9 @@ export async function extractAssets(
   options: ExtractAssetsOptions = {},
 ): Promise<Record<string, PaperAsset>> {
   const assets: Record<string, PaperAsset> = {};
-  const captions = collectCaptions(linesByPage, options.refRange);
+  const { signal } = options;
+  signal?.throwIfAborted();
+  const captions = collectCaptions(linesByPage, options.refRange, signal);
 
   // 公式行的候选（(1) / （3）独立成行，且位于所属栏位的右侧）
   const equationCandidates: Array<{
@@ -376,6 +365,7 @@ export async function extractAssets(
     band: [number, number];
   }> = [];
   for (const [pageKey, lines] of Object.entries(linesByPage)) {
+    signal?.throwIfAborted();
     const pageNumber = Number(pageKey);
     const pageIsTwoCol = isTwoColumnPage(lines);
     for (const line of lines) {
@@ -409,9 +399,11 @@ export async function extractAssets(
   };
 
   for (const caption of captions) {
+    signal?.throwIfAborted();
     try {
       const pageNumber = caption.lines[0].pageNumber;
-      const bitmap = await getPageBitmap(doc, pageNumber);
+      const bitmap = await getPageBitmap(doc, pageNumber, RENDER_SCALE, signal);
+      signal?.throwIfAborted();
 
       const captionLines = new Set(caption.lines);
       const pageLines = linesByPage[pageNumber] ?? [];
@@ -555,12 +547,14 @@ export async function extractAssets(
         imageUrl: cropToDataUrl(bitmap, left, top, width, height),
       };
     } catch {
+      signal?.throwIfAborted();
       // 单张图失败不影响整篇
     }
     report();
   }
 
   for (const candidate of equationCandidates) {
+    signal?.throwIfAborted();
     const key = `eq-${normalizeNumber(candidate.number)}`;
     if (assets[key]) {
       report();
@@ -568,7 +562,8 @@ export async function extractAssets(
     }
     try {
       const pageNumber = candidate.line.pageNumber;
-      const bitmap = await getPageBitmap(doc, pageNumber);
+      const bitmap = await getPageBitmap(doc, pageNumber, RENDER_SCALE, signal);
+      signal?.throwIfAborted();
       const [colLeft, colRight] = candidate.band;
 
       const y0 = Math.max(0, candidate.line.rect.y - 0.03);
@@ -610,11 +605,12 @@ export async function extractAssets(
         imageUrl: cropToDataUrl(bitmap, left, top, width, height),
       };
     } catch {
-      // ignore
+      signal?.throwIfAborted();
     }
     report();
   }
 
+  signal?.throwIfAborted();
   return assets;
 }
 
@@ -644,8 +640,9 @@ export async function recropPageRegion(
   doc: PDFDocumentProxy,
   pageNumber: number,
   rect: NormalizedRect,
+  scale = RENDER_SCALE,
 ): Promise<string> {
-  const bitmap = await getPageBitmap(doc, pageNumber);
+  const bitmap = await getPageBitmap(doc, pageNumber, scale);
   const safe = clampRect(rect);
   return cropToDataUrl(
     bitmap,
