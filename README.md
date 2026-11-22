@@ -39,7 +39,17 @@ On Chromium 114–115, open RefPin from the browser’s side panel. Opening it p
 
 ## Quick start
 
-### Local web reader
+### Option A · Install the Chrome / Edge extension (no coding required)
+
+Works on **Windows, macOS, and Linux** (Chrome 114+, Edge 114+, Brave, Arc, Vivaldi):
+
+1. Download **`RefPin-Extension-v*.zip`** from [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest) and extract it to a permanent folder.
+2. Double-click **`INSTALL-GUIDE.html`** inside for the interactive 3-step visual guide (works offline, no security prompts on Windows/macOS/Linux), **or**:
+   - Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
+   - Drag the **`RefPin-Extension/`** folder directly onto the Extensions page (or click **Load unpacked** and select it).
+3. Pin the RefPin icon to your toolbar and open any paper. For local `file://` PDFs, enable **Allow access to file URLs** in the extension’s details (or drop a PDF straight into the side panel).
+
+### Option B · Run the local web reader from source
 
 Use Node.js 20 or later. From the project directory, run:
 
@@ -53,16 +63,12 @@ Open the local address printed by Vite. Drop a PDF or choose **Attention Is All 
 ```sh
 npm test
 npm run build
+npm run pack:ext
 ```
 
-The production web build is in `dist/`. Serve it from localhost or an HTTPS origin.
-
-### Chrome or Edge extension
-
-1. After installing dependencies, run `npm run build:ext`.
-2. Open `chrome://extensions` or `edge://extensions` and enable **Developer mode**.
-3. Choose **Load unpacked** and select the generated **`dist-ext/`** directory.
-4. Open a paper and click the RefPin toolbar icon. For local `file://` PDFs, enable **Allow access to file URLs** in the extension’s details. You can also drop a PDF directly into the panel.
+- `npm run build` outputs the production web reader to `dist/`.
+- `npm run build:ext` builds the unpacked extension to `dist-ext/`.
+- `npm run pack:ext` builds and packages both `release/RefPin-Extension-v*.zip` (end-user cross-platform bundle) and `release/RefPin-Store-Package-v*.zip` (Chrome Web Store / Edge Add-ons bundle).
 
 ## Keyboard shortcuts
 

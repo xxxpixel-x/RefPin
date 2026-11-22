@@ -39,7 +39,17 @@ Chromium 114–115 可从浏览器的侧边栏手动打开浮页。通过右键�
 
 ## 快速开始
 
-### 本地网页阅读器
+### 方式一 · 直接下载预编译插件（零代码、无需安装 Node.js）
+
+适用于 **Windows、macOS、Linux**（Chrome 114+、Edge 114+、Brave、Arc、Vivaldi）：
+
+1. 前往 [**GitHub Releases**](https://github.com/xxxpixel-x/RefPin/releases/latest) 下载 **`RefPin-Extension-v*.zip`**，并完整解压到一个不会误删的文件夹。
+2. 双击压缩包里的 **`INSTALL-GUIDE.html`** 查看 3 步交互式图文向导（离线打开、不触发系统安全拦截，支持一键复制扩展页地址），**或直接按以下步骤安装**：
+   - 打开 `chrome://extensions`（或 `edge://extensions`），开启**开发者模式**。
+   - 直接把 **`RefPin-Extension`** 文件夹拖进浏览器扩展页窗口（或点击**加载已解压的扩展程序**选中它）。
+3. 将 RefPin 图标固定到工具栏即可伴读任意论文。阅读电脑上的 `file://` 本地 PDF 时，请在扩展详情页开启**允许访问文件网址**（也可直接把 PDF 拖进侧边栏）。
+
+### 方式二 · 从源码运行网页阅读器或自行构建
 
 使用 Node.js 20 或更高版本，在项目目录运行：
 
@@ -53,16 +63,12 @@ npm run dev
 ```sh
 npm test
 npm run build
+npm run pack:ext
 ```
 
-网页构建产物位于 `dist/`，可用本地 HTTP 服务或 HTTPS 站点提供访问。
-
-### 安装 Chrome / Edge 扩展
-
-1. 安装依赖后运行 `npm run build:ext`。
-2. 打开 `chrome://extensions` 或 `edge://extensions`，开启**开发者模式**。
-3. 点击**加载已解压的扩展程序**，选择构建生成的 **`dist-ext/`** 目录。
-4. 打开论文，点击工具栏上的 RefPin 图标。阅读 `file://` 本地 PDF 时，请在扩展详情页开启**允许访问文件网址**。也可以直接把 PDF 拖进侧栏。
+- `npm run build`：构建网页版至 `dist/`。
+- `npm run build:ext`：构建未打包扩展至 `dist-ext/`。
+- `npm run pack:ext`：一键生成 `release/RefPin-Extension-v*.zip`（Win/macOS/Linux 免编译分发包）与 `release/RefPin-Store-Package-v*.zip`（Chrome / Edge 商店提审包）。
 
 ## 快捷键
 
