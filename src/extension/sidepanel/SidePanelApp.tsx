@@ -437,6 +437,13 @@ export function SidePanelApp() {
 
         setAssets([]);
         setReferences([]);
+        if (/^https?:/i.test(targetPdf) && !onPdfTrPage && !forceDomScan) {
+          // Merely switching the active tab must not download a remote paper.
+          destroyCurrentPdf();
+          setSourceMode('idle');
+          setIsLoading(false);
+          return;
+        }
         await fetchAndParsePdfUrl(targetPdf, fallbackTitle, requestId);
         return;
       }
@@ -464,23 +471,6 @@ export function SidePanelApp() {
 
       const effectivePdfUrl = domPayload?.pdfUrl || urlInfo.pdfUrl || null;
       setLinkedPdfUrl(effectivePdfUrl);
-
-      // 若是学术摘要页（如 arXiv /abs/ 或 OpenReview /forum），或 DOM 没抽到图表但页面声明了 PDF 地址 -> 直接在侧边栏解析 PDF
-      if (
-        (urlInfo.kind === 'academic-abstract' ||
-          (domPayload &&
-            domPayload.isAcademicPage &&
-            domPayload.assets.length === 0 &&
-            domPayload.references.length === 0)) &&
-        effectivePdfUrl
-      ) {
-        await fetchAndParsePdfUrl(
-          effectivePdfUrl,
-          domPayload?.title || fallbackTitle,
-          requestId,
-        );
-        return;
-      }
 
       if (
         domPayload &&
@@ -1286,7 +1276,7 @@ export function SidePanelApp() {
           <p className="min-w-0 flex-1 truncate text-[11px] text-paper-muted" title={docTitle}>
             {docTitle}
           </p>
-          {sourceMode === 'dom' && linkedPdfUrl && !isLoading && (
+          {(sourceMode === 'dom' || sourceMode === 'idle') && linkedPdfUrl && !isLoading && (
             <button
               type="button"
               onClick={() => {

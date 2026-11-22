@@ -1,4 +1,4 @@
-# RefPin
+# RefPin · v0.3.0
 
 **Keep the figure beside the paragraph that cites it.** RefPin is a local-first academic PDF reader and a Chrome companion side panel. Hover over a citation for a preview, or pin several figures while you follow the argument.
 
@@ -26,11 +26,18 @@ A paragraph mentions Fig. 2, compares it with Table 1, and applies Eq. (3). By t
 | Hover Peek and glossary | Preview a figure, table, equation, or reference without turning the page. Hover over a defined acronym such as MHA to see its expansion, the defining sentence, and its source page. |
 | Four-way pin dock | Compare several figures at once. Drag the dock to any edge. Current-page **Auto-Sync** suggests cross-page assets cited on that page. Free-snip any region, extend its crop up or down, or reset the original crop in one click. |
 | Citation backlinks | A card lists detected mentions in the text. Select a page chip to jump to the exact occurrence, including multiple mentions on the same page. |
+| Study notes | Choose **Export Notes** in the dock. Copy Markdown or download an Obsidian ZIP with `notes.md` and 2.5× crops. Both formats preserve pin order, citation pages, BibTeX and glossary entries. |
+| Reference metadata | Copy BibTeX offline. Enable enrichment to see the venue, citation count, abstract and open-access PDF when available from OpenAlex or Crossref. |
+| Command palette | Enter `f2`, `alg1`, `[14]` or `:8` to find a figure, algorithm, reference or page. Search outline headings, glossary terms and reader actions in the same field. |
+| Reading navigation | Follow the outline, search text, retrace jumps and step through lines with the reading ruler. Choose a light, sepia or dark theme. |
+| Online papers | Paste an arXiv ID, OpenReview link or public PDF URL on the home screen, or share a reader link such as `?arxiv=1706.03762`. |
 | Selectable text and clean copy | Select text directly on the PDF. Clean Copy repairs line breaks and split words. Translate a selection on demand with an OpenAI-compatible API or a local Ollama model. |
 | Local reading archive | Recent papers remembers your page, zoom, scroll position, and pins in IndexedDB. Crops are stored as coordinates and regenerated when the paper reopens. |
 | Long-document rendering | A shared `IntersectionObserver` tracks nearby pages. Off-screen pages release their canvas buffers and text layers while retaining their place in the layout. |
 
 **The Chrome MV3 companion** works alongside the paper on arXiv, OpenReview, ACL Anthology, IEEE, Nature, Springer, PubMed/PMC, and local PDFs. On article pages it reads the available HTML. For a PDF, the panel can extract assets or capture a region of the visible tab. Optional translation offers original, translation-only, and bilingual views. **EN / 中文** switches the panel, the on-page controls, and the bilingual PDF reader together. The browser provides the language for the toolbar title and native context menus.
+
+On supported paper pages, select **Read in RefPin** to activate the companion. The arrow opens bilingual PDF reading when a PDF is available. Dismiss the badge for the tab with ×, or Shift-click × to mute the site.
 
 ## Cross-platform support
 
@@ -79,10 +86,17 @@ npm run pack:ext
 - `npm run build:ext` builds the unpacked extension to `dist-ext/`.
 - `npm run pack:ext` builds and packages both `release/RefPin-Extension-v*.zip` (end-user cross-platform bundle) and `release/RefPin-Store-Package-v*.zip` (Chrome Web Store / Edge Add-ons bundle).
 
+For GitHub Pages, select **GitHub Actions** under **Settings → Pages → Source**. A push to `main` builds and deploys `dist/`. The bundled samples, fonts and offline cache resolve under the deployment path.
+
 ## Keyboard shortcuts
 
 | Key | Where | Action |
 | --- | --- | --- |
+| `Ctrl/Cmd+F` | Web reader | Find text in the paper. |
+| `Ctrl/Cmd+K` | Web reader | Open or close the command palette. |
+| `↑/↓`, `Enter`, `Shift+Enter` | Command palette | Select a result, execute it, or pin an asset or reference in place. |
+| `Alt+←/→` | Web reader | Move backward or forward through jump history. |
+| `R`, `Alt+↑/↓` | Web reader | Toggle the reading ruler or move it up or down a line. |
 | `S` | Web reader | Toggle free-snip mode. Drag and release to pin the selection. |
 | `[` | Web reader | Open or close the paper assets drawer. |
 | `Enter` | Web reader page field | Jump to the entered page. |
@@ -93,6 +107,8 @@ npm run pack:ext
 ## Privacy and local-first architecture
 
 The core reader works **100% offline** when served locally. PDF.js, its worker, fonts, character maps, and sample PDFs ship with the project. Parsing, previews, glossary extraction, backlinks, and local archiving all run in the browser. RefPin has no upload server or analytics. Opening an online paper retrieves it from its publisher.
+
+Note export and offline BibTeX generation run on your device. Reference enrichment is off by default. Enabling it sends the DOI or title (citation text when the title is missing) to OpenAlex and Crossref and caches up to 200 matches locally. Opening a remote paper uses the extension for supported academic hosts, up to 40 MiB, or a direct browser fetch. If the publisher blocks access, download and drop the file or explicitly retry with your own proxy. On a self-hosted HTTPS reader, use the extension’s context menu to allow academic PDF downloads in that tab.
 
 The web archive keeps up to 30 reading records and caches up to five local PDFs of 15 MiB or less each. Larger or evicted files can be reselected to restore their pins and position. Clearing browser site data clears the archive.
 
@@ -125,8 +141,8 @@ RefPin/
 
 - [x] **Phase 0 · Foundations & reliability.** Vitest regression suite, GitHub Actions CI, WebP cropping, `AbortSignal` cancellation, pre-transfer PDF fingerprinting, encrypted/scanned PDF handling, and cross-platform Release packaging.
 - [x] **Phase 1 · Context-preserving companion.** Bidirectional citation backlinks, selectable `TextLayer` + Clean Copy + opt-in translation, off-screen canvas/textLayer memory release, IndexedDB local archive & Recent Papers, current-page Auto-Sync, full-paper acronym/symbol glossary, Author-Year & superscript citations, and global **EN / 简体中文** web + extension UI.
-- [ ] **Phase 2 · Daily-driver reader.** `Algorithm` / `Theorem` / `Section` detection, PDF Outline & `Ctrl+F` search, multi-step jump history (`Alt+←/→`) & reading ruler, Dark / Sepia eye-care themes, and PWA `file_handlers`.
-- [ ] **Phase 3 · Research workflow & ecosystem.** One-click Markdown / Obsidian `.zip` study note export, opt-in OpenAlex / Crossref citation enrichment & BibTeX, `Ctrl+K` command palette, and Chrome Web Store / Microsoft Edge Add-ons publishing.
+- [x] **Phase 2 · Daily-driver reader.** `Algorithm` / `Theorem` / `Section` detection, PDF Outline & `Ctrl+F` search, multi-step jump history (`Alt+←/→`) & reading ruler, Dark / Sepia eye-care themes, and PWA `file_handlers`.
+- [x] **Phase 3 · Research workflow and extension integration.** Markdown and Obsidian study packs, opt-in reference enrichment and BibTeX, the command palette, academic badges, direct arXiv opening, GitHub Pages deployment workflow, and Chrome / Edge submission packages.
 
 ## Contributing
 

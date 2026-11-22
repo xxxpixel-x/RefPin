@@ -25,6 +25,7 @@ interface TopBarProps {
   assetCount: number;
   onJumpPage: (page: number) => void;
   onSearch?: () => void;
+  onPalette?: () => void;
   onZoom: (nextScale: number) => void;
   onToggleSnip: () => void;
   onToggleDrawer: () => void;
@@ -43,6 +44,7 @@ export function TopBar({
   assetCount,
   onJumpPage,
   onSearch,
+  onPalette,
   onZoom,
   onToggleSnip,
   onToggleDrawer,
@@ -130,6 +132,10 @@ export function TopBar({
         <span className="hidden sm:inline">{t('snip.tool')}</span>
       </button>
 
+      {onPalette && <button type="button" title={t('palette.title')} aria-label={t('palette.title')} onClick={onPalette}
+        className="shrink-0 rounded-md border border-paper-border px-1.5 py-1 font-mono text-[10px] text-paper-muted hover:bg-paper-bg">
+        {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'}
+      </button>}
       {onSearch && <>
         <button type="button" title={t('search.find')} aria-label={t('search.find')} onClick={onSearch}
           className="rounded-md p-1.5 text-paper-muted hover:bg-paper-bg"><Search size={15} /></button>

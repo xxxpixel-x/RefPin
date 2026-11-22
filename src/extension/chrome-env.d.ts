@@ -93,6 +93,7 @@ declare namespace chrome {
       windowId: number,
       options?: { format?: 'jpeg' | 'png'; quality?: number },
     ): Promise<string>;
+    const onRemoved: { addListener(callback: (tabId: number) => void): void };
     const onActivated: {
       addListener(
         callback: (activeInfo: { tabId: number; windowId: number }) => void,
@@ -132,6 +133,7 @@ declare namespace chrome {
       id: string;
       title: string;
       contexts: ContextType[];
+      documentUrlPatterns?: string[];
     }
     interface OnClickData {
       menuItemId: string | number;

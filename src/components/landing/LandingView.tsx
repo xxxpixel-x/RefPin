@@ -1,3 +1,4 @@
+import { RemotePaperInput } from './RemotePaperInput';
 import { ThemeSwitcher } from '../layout/ThemeSwitcher';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { getLocale, t } from '../../i18n/core';
@@ -7,6 +8,8 @@ import clsx from 'clsx';
 import type { PaperArchive, SamplePaperMeta } from '../../types/paper';
 
 interface LandingViewProps {
+  initialArxiv?: string;
+  onConsumeLink?: () => void;
   samples: SamplePaperMeta[];
   onOpenFile: (file: File) => void;
   onSelectSample: (sample: SamplePaperMeta) => void;
@@ -26,6 +29,8 @@ function relativeTime(timestamp: number) {
 }
 
 export function LandingView({
+  initialArxiv,
+  onConsumeLink,
   samples,
   onOpenFile,
   onSelectSample,
@@ -96,6 +101,7 @@ export function LandingView({
           }}
         />
 
+        <RemotePaperInput initialArxiv={initialArxiv} onConsumeLink={onConsumeLink} onOpenFile={onOpenFile} />
         {error && (
           <p role="alert" className="mt-3 rounded-lg border border-paper-goldborder bg-paper-goldbg px-3 py-2 text-center text-xs text-paper-ink">
             {error}

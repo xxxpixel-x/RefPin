@@ -21,7 +21,8 @@ function getPublicAssetUrl(subpath: string): string {
   ) {
     return chrome.runtime.getURL(subpath);
   }
-  return `/${subpath}`;
+  const path = import.meta.env.BASE_URL + subpath;
+  return typeof document === 'undefined' ? path : new URL(path, document.baseURI).href;
 }
 
 type PdfSource = ArrayBuffer | Uint8Array | string;
@@ -49,9 +50,9 @@ export async function computePdfFingerprint(source: PdfSource, _fileName?: strin
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function loadReaderPdf(source: PdfSource, fileName: string, signal?: AbortSignal) {
+export async function loadReaderPdf(source: PdfSource, fileName: string, signal?: AbortSignal, fingerprintSource = source) {
   signal?.throwIfAborted();
-  const paperHash = await computePdfFingerprint(source, fileName);
+  const paperHash = await computePdfFingerprint(fingerprintSource, fileName);
   const doc = await loadPdfDocument(source, signal);
   return { doc, paperHash };
 }

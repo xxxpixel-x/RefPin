@@ -1,3 +1,4 @@
+import { ReferenceDetails } from '../peek/ReferenceDetails';
 import { usePreviewColor } from '../peek/usePreviewColor';
 import { pinTitle } from '../../i18n/pinTitle';
 import { t } from '../../i18n/core';
@@ -9,9 +10,7 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpToLine,
-  Check,
   ChevronDown,
-  Copy,
   ExternalLink,
   Maximize2,
   RotateCcw,
@@ -83,7 +82,6 @@ export function PinnedCard({
   const [editing, setEditing] = useState(false);
   const displayTitle = pinTitle(item);
   const [draft, setDraft] = useState(displayTitle);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => setDraft(displayTitle), [displayTitle]);
   useEffect(() => {
@@ -91,20 +89,11 @@ export function PinnedCard({
       cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [highlighted, isZoomedOverlay]);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1600);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
 
   const reference = item.reference;
   const isSnip = item.kind === 'snip';
   const isHorizontalDock = !isZoomedOverlay && (dockPosition === 'top' || dockPosition === 'bottom');
   const cropModified = hasCropChanged(item);
-
-  const bibtex = reference
-    ? `@inproceedings{${reference.key},\n  title={${reference.title ?? ''}},\n  author={${reference.authors ?? ''}},\n  year={${reference.year ?? ''}}\n}`
-    : '';
 
   const imageMaxHeight = isZoomedOverlay
     ? 'min(58vh, 520px)'
@@ -348,7 +337,7 @@ export function PinnedCard({
             <div
               className={clsx(
                 'rounded-lg bg-paper-bg px-2.5 py-2',
-                isHorizontalDock && 'flex min-h-0 flex-1 flex-col overflow-hidden',
+                isHorizontalDock && 'flex min-h-0 flex-1 flex-col overflow-y-auto',
               )}
             >
               <p
@@ -389,22 +378,8 @@ export function PinnedCard({
               >
                 {reference.rawText}
               </p>
+              <ReferenceDetails key={reference.key} reference={reference} />
               <div className="mt-auto flex items-center gap-1.5 pt-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(bibtex || reference.rawText);
-                      setCopied(true);
-                    } catch {
-                      setCopied(false);
-                    }
-                  }}
-                  className="flex items-center gap-1 rounded-md border border-paper-border bg-paper-card px-1.5 py-1 text-[9px] text-paper-ink transition hover:bg-paper-goldbg"
-                >
-                  {copied ? <Check className="h-2.5 w-2.5" /> : <Copy className="h-2.5 w-2.5" />}
-                  {copied ? t('common.copied') : t('reference.copyBibtex')}
-                </button>
                 <a
                   href={`https://scholar.google.com/scholar?q=${encodeURIComponent(
                     reference.title || reference.rawText,

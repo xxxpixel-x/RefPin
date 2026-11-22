@@ -1,4 +1,5 @@
 import { t } from '../i18n/core';
+import { parsePaperLocation } from '../services/arxivFetch';
 export interface ResolvedPaperUrl {
   pdfUrl?: string;
   kind: 'pdf' | 'academic-html' | 'academic-abstract' | 'other';
@@ -101,52 +102,23 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
 
   // 1) 直接 PDF 页面（含 arXiv/pdf、OpenReview/pdf、ACM/IEEE/Springer PDF、通用 .pdf、本地 file:// .pdf）
   if (isDirectPdfUrl(rawUrl)) {
-    let pdfUrl = url.href;
-    let suggestedTitle: string | undefined;
-    if (host === 'arxiv.org' || host === 'export.arxiv.org') {
-      const m = path.match(/^\/pdf\/([^/?#]+?)(?:\.pdf)?\/?$/i);
-      if (m) {
-        pdfUrl = `https://${host}/pdf/${m[1]}.pdf`;
-        suggestedTitle = `arXiv-${m[1]}.pdf`;
-      }
-    }
+    const paper = parsePaperLocation(url.href);
     return {
-      pdfUrl,
+      pdfUrl: paper?.pdfUrl || url.href,
       kind: 'pdf',
       siteLabel: url.protocol === 'file:' ? t('site.localPdf') : knownLabel || host.replace(/^www\./, ''),
-      suggestedTitle,
+      suggestedTitle: paper?.displayName,
     };
   }
 
-  // 2) arXiv HTML / ar5iv 全文页（优先 DOM 原生挂靠，同时携带对应 PDF 地址作为备选）
-  if ((host === 'arxiv.org' || host === 'export.arxiv.org') && /^\/html\/([^/?#]+)/i.test(path)) {
-    const id = path.match(/^\/html\/([^/?#]+)/i)?.[1];
-    return {
-      pdfUrl: id ? `https://${host}/pdf/${id}.pdf` : undefined,
-      kind: 'academic-html',
-      siteLabel: 'arXiv HTML',
-      suggestedTitle: id ? `arXiv-${id}` : undefined,
-    };
-  }
-  if ((host === 'ar5iv.labs.arxiv.org' || host === 'ar5iv.org') && /^\/html\/([^/?#]+)/i.test(path)) {
-    const id = path.match(/^\/html\/([^/?#]+)/i)?.[1];
-    return {
-      pdfUrl: id ? `https://arxiv.org/pdf/${id}.pdf` : undefined,
-      kind: 'academic-html',
-      siteLabel: 'ar5iv HTML',
-      suggestedTitle: id ? `arXiv-${id}` : undefined,
-    };
-  }
-
-  // 3) 论文摘要页（无全文 HTML，自动提供关联 PDF 供侧边栏深度解析）
-  if ((host === 'arxiv.org' || host === 'export.arxiv.org') && /^\/abs\/([^/?#]+)/i.test(path)) {
-    const id = path.match(/^\/abs\/([^/?#]+)/i)?.[1];
-    return {
-      pdfUrl: id ? `https://${host}/pdf/${id}.pdf` : undefined,
-      kind: 'academic-abstract',
-      siteLabel: t('site.arxivAbstract'),
-      suggestedTitle: id ? `arXiv-${id}.pdf` : undefined,
-    };
+  if (['arxiv.org', 'export.arxiv.org', 'ar5iv.labs.arxiv.org', 'ar5iv.org'].includes(host)) {
+    const hit = /^\/(abs|html)\/(.+?)\/?$/i.exec(path);
+    const paper = hit && parsePaperLocation('https://arxiv.org/abs/' + hit[2]);
+    if (paper?.pdfUrl && hit) {
+      const html = hit[1] === 'html';
+      return { kind: html ? 'academic-html' : 'academic-abstract', pdfUrl: paper.pdfUrl,
+        suggestedTitle: paper.displayName, siteLabel: html ? (host.includes('ar5iv') ? 'ar5iv HTML' : 'arXiv HTML') : t('site.arxivAbstract') };
+    }
   }
   if (host === 'openreview.net' && path === '/forum' && url.searchParams.get('id')) {
     const id = url.searchParams.get('id')!;
@@ -168,7 +140,7 @@ export function inspectTabUrl(rawUrl: string): ResolvedPaperUrl {
   }
 
   // 4) 其他主流学术网站 HTML 全文页
-  if (knownLabel) {
+  if (knownLabel && path !== '/') {
     return {
       kind: 'academic-html',
       siteLabel: knownLabel,

@@ -1,3 +1,4 @@
+import { ReferenceDetails } from './ReferenceDetails';
 import { usePreviewColor } from './usePreviewColor';
 import { t } from '../../i18n/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -150,6 +151,10 @@ export function HoverPeekCard({
 
   useEffect(() => {
     recalcPosition();
+    if (!cardRef.current) return;
+    const observer = new ResizeObserver(recalcPosition);
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
   }, [recalcPosition, activeRefIndex, asset, activeReference, fallbackPreview]);
 
   useEffect(() => {
@@ -189,7 +194,7 @@ export function HoverPeekCard({
       onFocus={keepOpen}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose(); }}
       style={{ left: position.left, top: position.top, width: CARD_WIDTH }}
-      className="animate-fade-in-up fixed z-50 overflow-hidden rounded-xl border border-paper-border bg-paper-card shadow-float"
+      className="animate-fade-in-up fixed z-50 max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-paper-border bg-paper-card shadow-float"
     >
       {definition && (
         <>
@@ -287,6 +292,7 @@ export function HoverPeekCard({
               <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-paper-muted">
                 {activeReference.rawText}
               </p>
+              <ReferenceDetails key={activeReference.key} reference={activeReference} />
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"

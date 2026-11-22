@@ -8,6 +8,7 @@
   "actionTitle": {
     "message": "Toggle RefPin Companion Side Panel"
   },
+  "menuAllowReader": { "message": "Allow academic PDF downloads in this RefPin reader tab" },
   "menuOpenPanel": {
     "message": "Open RefPin Companion Side Panel"
   },

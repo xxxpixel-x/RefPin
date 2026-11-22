@@ -15,6 +15,10 @@ import type {
   TranslateDisplayMode,
 } from './protocol';
 
+import { mountAcademicBadge } from './academicBadge';
+import { installWebBridge } from './pdfBridge';
+import { inspectTabUrl } from './urlRules';
+
 const STYLE_ID = 'refpin-page-inline-style';
 const UI_HOST_ID = 'refpin-shadow-ui-host';
 
@@ -1117,16 +1121,30 @@ function runExtraction(force = false): ParsedDomPaper {
   parsedPaper = extractDomPaper(force);
   if (parsedPaper.payload.isAcademicPage || force) {
     isActivated = true;
+    hideAcademicBadge();
     annotateInPageCitations(parsedPaper);
     parsedPaper.payload.citationCount = citationCount;
   }
   return parsedPaper;
 }
 
-// 学术 HTML 页面自动无感激活；普通网站零开销休眠
-if (isLikelyAcademicHtmlPage()) {
-  runExtraction(false);
+let hideAcademicBadge = () => {};
+let paperAddress = '';
+function updatePaperBadge() {
+  const address = location.origin + location.pathname + location.search;
+  if (paperAddress === address) return;
+  paperAddress = address;
+  hideAcademicBadge();
+  isActivated = false;
+  parsedPaper = null;
+  hideAcademicBadge = mountAcademicBadge(() => runExtraction(true));
+  // Metadata-only publishers retain their existing local citation previews.
+  if (inspectTabUrl(location.href).kind === 'other' && isLikelyAcademicHtmlPage()) runExtraction();
 }
+updatePaperBadge();
+(window as Window & { navigation?: EventTarget }).navigation?.addEventListener('currententrychange', updatePaperBadge);
+window.addEventListener('popstate', updatePaperBadge);
+installWebBridge();
 
 function showDockZoomPreview(
   item: CompanionPinItem,

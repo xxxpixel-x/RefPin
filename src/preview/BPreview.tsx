@@ -1,3 +1,4 @@
+import { reorderPins } from '../store/useReaderStore';
 import { formatMessage, message, useI18n, type DisplayMessage } from '../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -354,6 +355,7 @@ export function BPreview() {
               items.map((item) => (item.id === id ? { ...item, title } : item)),
             )
           }
+          onMove={(id, delta) => setPinnedItems(items => reorderPins(items, id, delta))}
           onClear={() => setPinnedItems([])}
         />
       </div>

@@ -12,6 +12,8 @@ import {
 import { createPortal } from 'react-dom';
 import {
   Eraser,
+  Download,
+  Loader2,
   ArrowUpRight,
   ChevronDown,
   GripVertical,
@@ -51,6 +53,9 @@ interface PinDockProps {
   onResetCrop?: (id: string) => void;
   onOpenLightbox: (item: PinnedItem) => void;
   onRename: (id: string, title: string) => void;
+  onMove: (id: string, direction: -1 | 1) => void;
+  onExport?: (mode: 'copy' | 'zip') => void;
+  exporting?: boolean;
   onClear: () => void;
 }
 
@@ -125,6 +130,7 @@ export function PinDock({
   onResetCrop,
   onOpenLightbox,
   onRename,
+  onMove: move, onExport, exporting,
   onClear,
 }: PinDockProps) {
   const enabled = useReaderStore(state => state.autoSyncEnabled);
@@ -133,7 +139,16 @@ export function PinDock({
   const synced = useMemo(() => enabled ? currentPageAssets(currentPage, citations, assetsMap, items) : [],
     [enabled, currentPage, citations, assetsMap, items]);
   const showSynced = enabled && !syncCollapsed;
-  const [order, setOrder] = useState<string[]>([]);
+  const [exportMenu, setExportMenu] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!exportMenu) return;
+    const outside = (event: PointerEvent) => { if (!exportRef.current?.contains(event.target as Node)) setExportMenu(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setExportMenu(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [exportMenu]);
   const [isResizing, setIsResizing] = useState(false);
   const [dragDropPreview, setDragDropPreview] = useState<{
     target: DockPosition;
@@ -194,14 +209,6 @@ export function PinDock({
 
   useEffect(() => () => clearZoomTimers(), [clearZoomTimers]);
 
-  useEffect(() => {
-    setOrder((previous) => {
-      const ids = items.map((item) => item.id);
-      const kept = previous.filter((id) => ids.includes(id));
-      const added = ids.filter((id) => !kept.includes(id));
-      return [...added, ...kept];
-    });
-  }, [items]);
 
   // 当前放大的卡片被移除或折叠时立即收起
   useEffect(() => {
@@ -356,24 +363,6 @@ export function PinDock({
     return Math.min(maxH, Math.max(MIN_DOCK_HEIGHT, height));
   }, [height, viewportTick, workspaceRef]);
 
-  const orderedItems = useMemo(
-    () =>
-      order
-        .map((id) => items.find((item) => item.id === id))
-        .filter((item): item is PinnedItem => Boolean(item)),
-    [order, items],
-  );
-
-  const move = useCallback((id: string, direction: -1 | 1) => {
-    setOrder((previous) => {
-      const index = previous.indexOf(id);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= previous.length) return previous;
-      const next = [...previous];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }, []);
 
   const handleCardHoverStart = useCallback(
     (id: string, el: HTMLElement) => {
@@ -544,7 +533,7 @@ export function PinDock({
   }, [position, zoomOverlay, zoomedItem]);
 
   const allHorizontalCollapsed =
-    isHorizontal && !showSynced && orderedItems.length > 0 && orderedItems.every((item) => Boolean(item.collapsed));
+    isHorizontal && !showSynced && items.length > 0 && items.every((item) => Boolean(item.collapsed));
 
   const dockStyle: CSSProperties = isHorizontal
     ? allHorizontalCollapsed
@@ -646,6 +635,20 @@ export function PinDock({
           </span>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            {onExport && <div ref={exportRef} className="relative">
+              <button type="button" title={t('notes.export')} aria-label={t('notes.export')} aria-expanded={exportMenu}
+                disabled={exporting} onClick={() => setExportMenu(!exportMenu)}
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-paper-ink hover:bg-paper-card">
+                {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                {(isHorizontal || clampedWidth >= 360) && t('notes.export')}
+              </button>
+              {exportMenu && <div className={clsx('absolute z-30 w-max rounded-lg border border-paper-border bg-paper-card p-1 shadow-float',
+                position === 'bottom' ? 'bottom-full mb-1' : 'top-full mt-1', position === 'left' ? 'left-0' : 'right-0')}>
+                {(['copy', 'zip'] as const).map(mode => <button key={mode} type="button"
+                  className="block w-full rounded px-3 py-2 text-left text-xs text-paper-ink hover:bg-paper-bg"
+                  onClick={() => { setExportMenu(false); onExport(mode); }}>{t(mode === 'copy' ? 'notes.copy' : 'notes.zip')}</button>)}
+              </div>}
+            </div>}
             <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
               {POSITION_OPTIONS.map(({ key, hint, Icon }) => {
                 const active = position === key;
@@ -752,7 +755,7 @@ export function PinDock({
               : 'space-y-2.5 overflow-y-auto overflow-x-hidden',
           )}
         >
-          {orderedItems.length === 0 ? (
+          {items.length === 0 ? (
             <div
               className={clsx(
                 'flex h-full w-full items-center justify-center px-6 text-center',
@@ -770,7 +773,7 @@ export function PinDock({
               </div>
             </div>
           ) : (
-            orderedItems.map((item) => (
+            items.map((item) => (
               <PinnedCard
                 key={item.id}
                 item={item}

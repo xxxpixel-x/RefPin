@@ -50,6 +50,8 @@ interface ReaderState {
 
   /* ---------- UI 状态 ---------- */
   pinnedItems: PinnedItem[];
+  scholarLookupEnabled: boolean;
+  setScholarLookupEnabled: (enabled: boolean) => void;
   autoSyncEnabled: boolean;
   setAutoSyncEnabled: (enabled: boolean) => void;
   drawerOpen: boolean;
@@ -189,6 +191,15 @@ const initialStats: ReadingStats = {
   pinCount: 0,
 };
 
+export function reorderPins(items: PinnedItem[], id: string, delta: number) {
+  const index = items.findIndex(item => item.id === id);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return items;
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
 const PX_PER_PAGE = 1100;
 
 export const useReaderStore = create<ReaderState>((set, get) => ({
@@ -214,6 +225,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   backlinksMap: {},
 
   pinnedItems: [],
+  scholarLookupEnabled: preference('refpin.scholar.v1') === 'true',
+  setScholarLookupEnabled: enabled => {
+    savePreference('refpin.scholar.v1', String(enabled));
+    set({ scholarLookupEnabled: enabled });
+  },
   autoSyncEnabled: loadAutoSync(),
   setAutoSyncEnabled: enabled => {
     try { window.localStorage.setItem(AUTO_SYNC_KEY, String(enabled)); } catch { /* Session-only storage. */ }
@@ -390,17 +406,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       ),
     })),
 
-  movePinnedItem: (id, direction) =>
-    set((state) => {
-      const index = state.pinnedItems.findIndex((item) => item.id === id);
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (index < 0 || target < 0 || target >= state.pinnedItems.length) {
-        return state;
-      }
-      const next = [...state.pinnedItems];
-      [next[index], next[target]] = [next[target], next[index]];
-      return { ...state, pinnedItems: next };
-    }),
+  movePinnedItem: (id, direction) => set(state => ({
+    pinnedItems: reorderPins(state.pinnedItems, id, direction === 'up' ? -1 : 1),
+  })),
 
   recordSavedFlip: (targetPage) => {
     const { currentPage } = get();

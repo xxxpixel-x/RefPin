@@ -100,6 +100,8 @@ export type ExtensionMessage =
       item: CompanionPinItem;
       openSidePanel?: boolean;
     }
+  | { type: 'REFPIN_READER_PING' | 'REFPIN_BADGE_STATE' | 'REFPIN_DISMISS_BADGE' | 'REFPIN_BADGE_PDF' }
+  | { type: 'REFPIN_FETCH_REMOTE_PDF'; url: string }
   | { type: 'REFPIN_OPEN_SIDEPANEL' }
   | { type: 'REFPIN_SIDEPANEL_PUSH_PIN'; tabUrl: string; item: CompanionPinItem }
   | {

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { LandingView } from './components/landing/LandingView';
+import { CommandPalette } from './components/layout/CommandPalette';
+import { buildStudyNotesMarkdown, exportStudyPackZip } from './services/noteExporter';
 import { TopBar } from './components/layout/TopBar';
 import { getCachedPageLines, searchPageLines } from './engine/pageLinesCache';
 import { SearchBar } from './components/layout/SearchBar';
@@ -81,6 +83,11 @@ export default function App() {
   const dockWidth = useReaderStore((state) => state.dockWidth);
   const dockHeight = useReaderStore((state) => state.dockHeight);
 
+  const [sharedArxiv, setSharedArxiv] = useState(() => new URLSearchParams(location.search).get('arxiv') || undefined);
+  const consumeLink = useCallback(() => setSharedArxiv(undefined), []);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportInProgress = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
@@ -173,6 +180,24 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
 
+  const handleExport = useCallback(async (mode: 'copy' | 'zip') => {
+    const notes = useReaderStore.getState();
+    if (!notes.pdfDoc || exportInProgress.current) return;
+    const signal = openControllerRef.current?.signal;
+    try {
+      if (mode === 'copy') {
+        await navigator.clipboard.writeText(buildStudyNotesMarkdown(notes));
+        showToast(message('notes.copied'));
+      } else {
+        exportInProgress.current = true;
+        setExporting(true);
+        const count = await exportStudyPackZip(notes, notes.pdfDoc, signal);
+        showToast(count ? message('notes.partial', { count }) : message('notes.saved'));
+      }
+    } catch { if (!signal?.aborted) showToast(message(mode === 'copy' ? 'notes.copyFailed' : 'notes.failed')); }
+    finally { exportInProgress.current = false; setExporting(false); }
+  }, [showToast]);
+
   const flashPinnedCard = useCallback((id: string) => {
     setHighlightedPinId(id);
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
@@ -192,6 +217,8 @@ export default function App() {
   const openPaper = useCallback(
     async (input: string | File | PaperArchive, name: string, startPage?: number, sampleId?: string) => {
       closeSearch();
+      setSharedArxiv(undefined);
+      setPaletteOpen(false);
       const previousSave = flushArchive();
       openControllerRef.current?.abort();
       const controller = new AbortController();
@@ -220,7 +247,9 @@ export default function App() {
         const cacheBlob = !fromCache && file instanceof Blob && file.size <= MAX_PDF_BYTES
           ? new Blob([file], { type: 'application/pdf' }) : null;
         const source = typeof file === 'string' ? file : await file.arrayBuffer();
-        const { doc, paperHash } = await loadReaderPdf(source, name, signal);
+        // Keep existing sample archives addressable when the hosting subpath changes.
+        const sampleKey = sampleId && typeof source === 'string' ? '/samples/' + source.split('/').pop() : source;
+        const { doc, paperHash } = await loadReaderPdf(source, name, signal, sampleKey);
         const archive = await loadPaperArchive(paperHash);
         if (signal.aborted) {
           void doc.destroy().catch(() => {});
@@ -557,7 +586,13 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useReaderStore.getState();
-      if (!state.pdfDoc || event.isComposing) return;
+      if (event.isComposing || bootingName) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen(value => !value);
+        return;
+      }
+      if (!state.pdfDoc || paletteOpen) return;
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         toggleSearch();
@@ -608,7 +643,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [toggleSearch, closeSearch, navigateHistory]);
+  }, [bootingName, paletteOpen, toggleSearch, closeSearch, navigateHistory]);
 
   const assetsList = useMemo(
     () =>
@@ -624,6 +659,10 @@ export default function App() {
   );
 
   const pinnedIds = useMemo(() => pinnedItems.map((item) => item.id), [pinnedItems]);
+
+  const palette = paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} onExport={handleExport}
+    onJump={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
+    onPinAsset={handlePinAsset} onPinReference={handlePinReference} onHome={handleReset} onSearch={() => setSearchOpen(true)} />;
 
   if (!pdfDoc) {
     if (bootingName) {
@@ -641,7 +680,9 @@ export default function App() {
       <div className="min-h-full bg-paper-bg">
         <LandingView
           samples={SAMPLES}
-          onOpenFile={(file) => void handleOpenFile(file)}
+          initialArxiv={sharedArxiv}
+          onConsumeLink={consumeLink}
+          onOpenFile={handleOpenFile}
           onSelectSample={handleSelectSample}
           recent={recent}
           onOpenRecent={entry => {
@@ -655,6 +696,7 @@ export default function App() {
           }}
           error={formatMessage(bootError || parseError)}
         />
+        {palette}
       </div>
     );
   }
@@ -670,6 +712,7 @@ export default function App() {
         isParsing={isParsing}
         parseProgress={parseProgress}
         assetCount={assetsList.length}
+        onPalette={() => setPaletteOpen(true)}
         onSearch={toggleSearch}
         onJumpPage={handleJump}
         onZoom={(nextScale) => useReaderStore.getState().setScale(nextScale)}
@@ -765,6 +808,9 @@ export default function App() {
           onResetCrop={(id) => void handleResetCrop(id)}
           onOpenLightbox={handleOpenLightboxFromPin}
           onRename={(id, title) => useReaderStore.getState().renamePinnedItem(id, title)}
+          onMove={(id, delta) => useReaderStore.getState().movePinnedItem(id, delta === -1 ? 'up' : 'down')}
+          onExport={handleExport}
+          exporting={exporting}
           onClear={() => useReaderStore.getState().clearPinnedItems()}
         />
       </div>
@@ -783,9 +829,10 @@ export default function App() {
       />
 
       <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
+      {palette}
 
       {toast && (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-paper-card shadow-float">
+        <div role="status" className="pointer-events-none fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-paper-ink px-4 py-2 text-[11px] text-paper-card shadow-float">
           {formatMessage(toast)}
         </div>
       )}

@@ -6,6 +6,10 @@ import {
 } from './protocol';
 import { translateTexts } from './translator';
 
+import { dismissedKey, grantKey, handleBridge } from './pdfBridge';
+import { inspectTabUrl } from './urlRules';
+
+const MENU_ALLOW_READER = 'refpin-allow-reader';
 const MENU_OPEN_PANEL = 'refpin-open-sidepanel';
 const MENU_START_SNIP = 'refpin-start-snip';
 
@@ -16,6 +20,12 @@ void chrome.sidePanel
 
 function setupContextMenus(): void {
   chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_ALLOW_READER,
+      title: chrome.i18n.getMessage('menuAllowReader'),
+      contexts: ['page'],
+      documentUrlPatterns: ['https://*/*'],
+    });
     chrome.contextMenus.create({
       id: MENU_OPEN_PANEL,
       title: chrome.i18n.getMessage('menuOpenPanel') || 'Open RefPin Companion Side Panel',
@@ -41,6 +51,10 @@ setupContextMenus();
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (tab?.windowId === undefined) return;
 
+  if (info.menuItemId === MENU_ALLOW_READER && tab.id !== undefined && tab.url?.startsWith('https://')) {
+    void chrome.storage.session.set({ [grantKey(tab.id)]: new URL(tab.url).origin });
+    return;
+  }
   if (info.menuItemId === MENU_OPEN_PANEL) {
     void chrome.sidePanel.open?.({ windowId: tab.windowId }).catch(() => {});
     return;
@@ -56,11 +70,39 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
+chrome.tabs.onRemoved.addListener(id => {
+  void chrome.storage.session.remove([dismissedKey(id), grantKey(id)]).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
   if (sender.id && sender.id !== chrome.runtime.id) return;
   const request = rawMessage as Partial<ExtensionMessage> | null;
   if (!request || typeof request.type !== 'string') return;
 
+  const tabId = sender.tab?.id;
+  if (request.type === 'REFPIN_READER_PING' || request.type === 'REFPIN_FETCH_REMOTE_PDF') {
+    const url = request.type === 'REFPIN_FETCH_REMOTE_PDF' ? request.url : undefined;
+    if (request.type === 'REFPIN_FETCH_REMOTE_PDF' && typeof url !== 'string') return;
+    void handleBridge(sender, url).then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (tabId !== undefined && (request.type === 'REFPIN_BADGE_STATE' || request.type === 'REFPIN_DISMISS_BADGE')) {
+    const key = dismissedKey(tabId);
+    const result = request.type === 'REFPIN_BADGE_STATE' ? chrome.storage.session.get(key).then(row => !!row[key]) :
+      chrome.storage.session.set({ [key]: true }).then(() => true);
+    void result.then(dismissed => sendResponse({ dismissed })).catch(() => sendResponse({ dismissed: false }));
+    return true;
+  }
+  if (request.type === 'REFPIN_BADGE_PDF' && sender.tab?.url) {
+    const paper = inspectTabUrl(sender.tab.url);
+    if (paper.pdfUrl && paper.kind.startsWith('academic-')) {
+      const target = new URL(chrome.runtime.getURL('pdf-translate.html'));
+      target.searchParams.set('url', paper.pdfUrl);
+      target.searchParams.set('mode', 'bilingual');
+      void chrome.tabs.create({ url: target.href });
+    }
+    return;
+  }
   if (request.type === 'REFPIN_OPEN_SIDEPANEL') {
     const windowId = sender.tab?.windowId;
     if (windowId !== undefined) {

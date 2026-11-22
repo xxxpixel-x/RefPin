@@ -8,6 +8,7 @@
   "actionTitle": {
     "message": "打开 / 收起 RefPin 浮页伴读侧边栏"
   },
+  "menuAllowReader": { "message": "允许此标签页中的 RefPin 阅读器下载学术 PDF" },
   "menuOpenPanel": {
     "message": "打开 RefPin 浮页伴读侧边栏"
   },
