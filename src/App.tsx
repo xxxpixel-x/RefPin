@@ -5,6 +5,7 @@ import { LandingView } from './components/landing/LandingView';
 import { TopBar } from './components/layout/TopBar';
 import { ReturnBanner } from './components/layout/ReturnBanner';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
+import { SelectionToolbar } from './components/peek/SelectionToolbar';
 import { PinDock } from './components/dock/PinDock';
 import { LightboxModal } from './components/dock/LightboxModal';
 import { AssetDrawer } from './components/drawer/AssetDrawer';
@@ -14,11 +15,16 @@ import { findAssetForCitation } from './engine/backlinks';
 import { parsePaper } from './engine/parsePaper';
 import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
 import { useReaderStore } from './store/useReaderStore';
-import { SAMPLES } from './config/samples';
+import { SAMPLES, getSampleById } from './config/samples';
+import {
+  deletePaperArchive, listRecentPapers, loadPaperArchive, loadPdfBlob,
+  MAX_PDF_BYTES, savePaperArchive, savePdfBlob,
+} from './storage/paperDb';
 import type {
   InlineCitation,
   NormalizedRect,
   PaperAsset,
+  PaperArchive,
   PinnedItem,
   ReferenceEntry,
   SamplePaperMeta,
@@ -64,6 +70,11 @@ export default function App() {
   const dockHeight = useReaderStore((state) => state.dockHeight);
 
   const viewerRef = useRef<PdfViewerHandle>(null);
+  const readerRef = useRef<HTMLElement>(null);
+  const archiveSession = useRef<{ scrollTop: number; sampleId?: string; openedAt: number }>({
+    scrollTop: 0, openedAt: 0,
+  });
+  const saveTimerRef = useRef<number>();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const openControllerRef = useRef<AbortController | null>(null);
   const activePeekIdRef = useRef<string | null>(null);
@@ -76,11 +87,58 @@ export default function App() {
   const [bootingName, setBootingName] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [initialPage, setInitialPage] = useState<number | undefined>(undefined);
+  const [initialScrollTop, setInitialScrollTop] = useState<number>();
+  const [recent, setRecent] = useState<PaperArchive[]>([]);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
   const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  const flushArchive = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    const state = useReaderStore.getState();
+    if (!state.paperHash || !state.pdfDoc) return;
+    const { sampleId, scrollTop, openedAt } = archiveSession.current;
+    return savePaperArchive({
+      paperHash: state.paperHash, fileName: state.fileName, sampleId,
+      numPages: state.numPages, lastPage: state.currentPage, lastScrollTop: scrollTop,
+      scale: state.scale, lastOpenedAt: openedAt, pinnedItems: state.pinnedItems,
+    });
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(flushArchive, 600);
+  }, [flushArchive]);
+
+  const handleScrollTop = useCallback((top: number) => {
+    archiveSession.current.scrollTop = top;
+    scheduleSave();
+  }, [scheduleSave]);
+
+  useEffect(() => {
+    const unsubscribe = useReaderStore.subscribe((next, previous) => {
+      if (next.pdfDoc && (next.currentPage !== previous.currentPage || next.scale !== previous.scale ||
+          next.pinnedItems !== previous.pinnedItems)) scheduleSave();
+    });
+    const saveWhenHidden = () => { if (document.visibilityState === 'hidden') void flushArchive(); };
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    window.addEventListener('pagehide', flushArchive);
+    return () => {
+      unsubscribe();
+      void flushArchive();
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+      window.removeEventListener('pagehide', flushArchive);
+    };
+  }, [flushArchive, scheduleSave]);
+
+  useEffect(() => {
+    if (pdfDoc || bootingName) return;
+    let active = true;
+    void listRecentPapers().then(rows => { if (active) setRecent(rows); });
+    return () => { active = false; };
+  }, [pdfDoc, bootingName]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -105,7 +163,8 @@ export default function App() {
   );
 
   const openPaper = useCallback(
-    async (input: string | File, name: string, startPage?: number) => {
+    async (input: string | File | PaperArchive, name: string, startPage?: number, sampleId?: string) => {
+      const previousSave = flushArchive();
       openControllerRef.current?.abort();
       const controller = new AbortController();
       openControllerRef.current = controller;
@@ -122,16 +181,46 @@ export default function App() {
       useReaderStore.getState().resetPaper();
 
       try {
+        await previousSave;
+        signal.throwIfAborted();
         const url = typeof input === 'string' ? input : null;
-        const source = typeof input === 'string' ? input : await input.arrayBuffer();
+        const fromCache = typeof input !== 'string' && 'paperHash' in input;
+        const file = fromCache ? await loadPdfBlob(input.paperHash) : input;
+        signal.throwIfAborted();
+        if (!file) throw new Error('本地缓存已清理，请重新选择同一 PDF，钉板和进度会自动恢复。');
+        // Snapshot the local file before pdf.js takes ownership of the ArrayBuffer.
+        const cacheBlob = !fromCache && file instanceof Blob && file.size <= MAX_PDF_BYTES
+          ? new Blob([file], { type: 'application/pdf' }) : null;
+        const source = typeof file === 'string' ? file : await file.arrayBuffer();
         const { doc, paperHash } = await loadReaderPdf(source, name, signal);
+        const archive = await loadPaperArchive(paperHash);
         if (signal.aborted) {
           void doc.destroy().catch(() => {});
           return;
         }
+        archiveSession.current = {
+          sampleId: sampleId ?? archive?.sampleId, scrollTop: archive?.lastScrollTop ?? 0, openedAt: Date.now(),
+        };
+        setInitialPage(archive?.lastPage ?? startPage);
+        setInitialScrollTop(archive?.lastScrollTop);
+        useReaderStore.getState().setPdfDocument(doc, name, paperHash, url, archive);
         setBootingName(null);
-        useReaderStore.getState().setPdfDocument(doc, name, paperHash, url);
+        void flushArchive();
+        if (cacheBlob) void savePdfBlob(paperHash, cacheBlob, archiveSession.current.sampleId);
         useReaderStore.getState().setParsing(true);
+
+        const restorePreviews = async () => {
+          for (const item of useReaderStore.getState().pinnedItems) {
+            if (signal.aborted) return;
+            if (item.previewStatus !== 'restoring' || !item.cropRect) continue;
+            let imageUrl: string | undefined;
+            try {
+              imageUrl = await recropPageRegion(doc, item.pageNumber, item.cropRect, undefined, signal);
+            } catch { /* The pin and its jump target still work if this crop fails. */ }
+            if (!signal.aborted) useReaderStore.getState().restorePinnedPreview(item, imageUrl);
+          }
+        };
+        void restorePreviews();
 
         const result = await parsePaper(doc, (percent) => {
           if (!signal.aborted) useReaderStore.getState().setParseProgress(percent);
@@ -152,7 +241,7 @@ export default function App() {
         }
       }
     },
-    [],
+    [flushArchive],
   );
 
   const handleOpenFile = useCallback(
@@ -168,12 +257,13 @@ export default function App() {
 
   const handleSelectSample = useCallback(
     (sample: SamplePaperMeta) => {
-      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage);
+      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, sample.id);
     },
     [openPaper],
   );
 
   const handleReset = useCallback(() => {
+    void flushArchive();
     openControllerRef.current?.abort();
     openControllerRef.current = null;
     setBootingName(null);
@@ -185,7 +275,7 @@ export default function App() {
     activePeekIdRef.current = null;
     nativePreviewCacheRef.current.clear();
     useReaderStore.getState().resetPaper();
-  }, []);
+  }, [flushArchive]);
 
   const handlePinAsset = useCallback(
     (asset: PaperAsset) => {
@@ -459,6 +549,16 @@ export default function App() {
           samples={SAMPLES}
           onOpenFile={(file) => void handleOpenFile(file)}
           onSelectSample={handleSelectSample}
+          recent={recent}
+          onOpenRecent={entry => {
+            const sample = entry.sampleId && getSampleById(entry.sampleId);
+            if (sample) handleSelectSample(sample);
+            else void openPaper(entry, entry.fileName);
+          }}
+          onRemoveRecent={async hash => {
+            if (await deletePaperArchive(hash)) setRecent(rows => rows.filter(row => row.paperHash !== hash));
+            else setBootError('移除失败，请重试。');
+          }}
           error={bootError || parseError}
         />
       </div>
@@ -518,7 +618,7 @@ export default function App() {
           onLocate={(pageNumber, asset) => handleJump(pageNumber, asset?.cropRect)}
         />
 
-        <main className="relative min-h-0 min-w-0 flex-1">
+        <main ref={readerRef} className="relative min-h-0 min-w-0 flex-1">
           <ReturnBanner
             anchor={jumpAnchor}
             onReturn={(anchor) => {
@@ -541,11 +641,14 @@ export default function App() {
             citationsByPage={citationsByPage}
             snipMode={snipMode}
             initialPage={initialPage}
+            initialScrollTop={initialScrollTop}
+            onScrollTopChange={handleScrollTop}
             onPageChange={(page) => useReaderStore.getState().setCurrentPage(page)}
             onCitationHover={handleCitationHover}
             onCitationLeave={handleCitationLeave}
             onCitationClick={handleCitationClick}
           />
+          {!snipMode && <SelectionToolbar viewerRef={readerRef} />}
         </main>
 
         <PinDock

@@ -641,8 +641,10 @@ export async function recropPageRegion(
   pageNumber: number,
   rect: NormalizedRect,
   scale = RENDER_SCALE,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const bitmap = await getPageBitmap(doc, pageNumber, scale);
+  const bitmap = await getPageBitmap(doc, pageNumber, scale, signal);
+  signal?.throwIfAborted();
   const safe = clampRect(rect);
   return cropToDataUrl(
     bitmap,

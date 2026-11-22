@@ -72,9 +72,28 @@ export interface PinnedItem {
   originalCropRect?: NormalizedRect;
   /** 首次钉住时的初始裁切图，用于瞬时还原 */
   originalImageUrl?: string;
+  previewStatus?: 'restoring' | 'unavailable';
   reference?: ReferenceEntry;
   collapsed?: boolean;
   createdAt: number;
+}
+
+export type PersistedPinnedItem = Pick<PinnedItem,
+  'id' | 'kind' | 'title' | 'subtitle' | 'pageNumber' | 'cropRect' |
+  'originalCropRect' | 'collapsed' | 'reference' | 'createdAt'
+>;
+
+export interface PaperArchive {
+  paperHash: string;
+  fileName: string;
+  sampleId?: string;
+  numPages: number;
+  lastPage: number;
+  lastScrollTop: number;
+  scale: number;
+  lastOpenedAt: number;
+  hasCachedPdf: boolean;
+  pinnedItems: PersistedPinnedItem[];
 }
 
 /** 跳页前保存的“回来”锚点 */

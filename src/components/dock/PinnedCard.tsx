@@ -414,7 +414,8 @@ export function PinnedCard({
             </div>
           ) : (
             <p className="rounded-lg bg-paper-bg px-2.5 py-2 text-[10px] text-paper-muted">
-              {item.subtitle || '暂无预览图'}
+              {item.previewStatus === 'restoring' ? '正在恢复裁切预览…' :
+                item.previewStatus === 'unavailable' ? '预览恢复失败，可跳转至原页查看' : item.subtitle || '暂无预览图'}
             </p>
           )}
 

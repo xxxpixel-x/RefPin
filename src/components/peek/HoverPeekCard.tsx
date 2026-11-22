@@ -74,6 +74,23 @@ export function HoverPeekCard({
   peekRef.current = onPeek;
 
   useEffect(() => {
+    // Starting a selection must immediately clear even a delayed/floating peek.
+    const dismissForSelection = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-pdf-viewer]')) return;
+      window.clearTimeout(enterTimer.current);
+      window.clearTimeout(leaveTimer.current);
+      hoveringCard.current = false;
+      setActiveTrigger(null);
+    };
+    document.addEventListener('pointerdown', dismissForSelection, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismissForSelection, true);
+      window.clearTimeout(enterTimer.current);
+      window.clearTimeout(leaveTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
     window.clearTimeout(enterTimer.current);
     window.clearTimeout(leaveTimer.current);
     if (!trigger) {

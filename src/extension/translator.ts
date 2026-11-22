@@ -1,67 +1,9 @@
-import {
-  DEFAULT_TRANSLATE_CONFIG,
-  STORAGE_KEY_TRANSLATE_CONFIG,
-  type TranslateConfig,
-  type TranslateTargetLang,
-} from './protocol';
+import { createTranslator, DEFAULT_TRANSLATE_CONFIG, fetchWithTimeout, type TranslateTargetLang } from '../services/translator';
+import { STORAGE_KEY_TRANSLATE_CONFIG, type TranslateConfig } from './protocol';
 
-const translationCache = new Map<string, string>();
-const MAX_CACHE_ENTRIES = 1500;
+export { sanitizeSourceText } from '../services/translator';
 
 let cachedEdgeToken: { token: string; expiresAt: number } | null = null;
-
-export async function loadTranslateConfig(): Promise<TranslateConfig> {
-  try {
-    const data = await chrome.storage.local.get(STORAGE_KEY_TRANSLATE_CONFIG);
-    const saved = data[STORAGE_KEY_TRANSLATE_CONFIG] as Partial<TranslateConfig> | undefined;
-    if (!saved) return { ...DEFAULT_TRANSLATE_CONFIG };
-    return {
-      provider: saved.provider === 'openai' ? 'openai' : 'free',
-      targetLang: saved.targetLang === 'en' ? 'en' : 'zh-CN',
-      apiBaseUrl: saved.apiBaseUrl?.trim() || DEFAULT_TRANSLATE_CONFIG.apiBaseUrl,
-      apiKey: saved.apiKey?.trim() || '',
-      model: saved.model?.trim() || DEFAULT_TRANSLATE_CONFIG.model,
-    };
-  } catch {
-    return { ...DEFAULT_TRANSLATE_CONFIG };
-  }
-}
-
-export async function saveTranslateConfig(config: TranslateConfig): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY_TRANSLATE_CONFIG]: config });
-}
-
-function getCacheKey(text: string, config: TranslateConfig): string {
-  const modeTag =
-    config.provider === 'openai' && config.apiKey
-      ? `ai:${config.model}`
-      : 'free-v2';
-  return `${modeTag}|${config.targetLang}|${text}`;
-}
-
-function setCache(key: string, value: string): void {
-  if (translationCache.size >= MAX_CACHE_ENTRIES) {
-    const firstKey = translationCache.keys().next().value;
-    if (firstKey !== undefined) translationCache.delete(firstKey);
-  }
-  translationCache.set(key, value);
-}
-
-/**
- * 清洗 PDF 连字、私有区字体乱码字符与不可见控制符，避免送入翻译器后产出乱码。
- */
-export function sanitizeSourceText(raw: string): string {
-  return raw
-    .replace(/\uFB00/g, 'ff')
-    .replace(/\uFB01/g, 'fi')
-    .replace(/\uFB02/g, 'fl')
-    .replace(/\uFB03/g, 'ffi')
-    .replace(/\uFB04/g, 'ffl')
-    .replace(/\u2212/g, '-')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uE000-\uF8FF\uFFFD]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 function decodeHtmlEntities(input: string): string {
   return input
@@ -74,20 +16,6 @@ function decodeHtmlEntities(input: string): string {
       const n = Number(code);
       return Number.isFinite(n) && n > 0 && n < 0x10ffff ? String.fromCodePoint(n) : '';
     });
-}
-
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit = {},
-  timeoutMs = 7000,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 async function getEdgeAuthToken(): Promise<string> {
@@ -252,112 +180,12 @@ async function translateBatchFree(
   return results;
 }
 
-async function translateBatchOpenAI(
-  texts: string[],
-  config: TranslateConfig,
-): Promise<string[]> {
-  if (!config.apiKey) {
-    throw new Error('未填写 API Key');
-  }
-
-  const endpoint = `${config.apiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const targetName = config.targetLang === 'zh-CN' ? '简体中文' : 'English';
-
-  const response = await fetchWithTimeout(
-    endpoint,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model || 'gpt-4o-mini',
-        temperature: 0.1,
-        messages: [
-          {
-            role: 'system',
-            content:
-              `You are a precise academic paper translator. Translate each string in the JSON array into natural, scholarly ${targetName}. ` +
-              'Keep placeholders like [[M0]], citation numbers like [14], and labels like Fig. 2 unchanged. ' +
-              'Return ONLY a valid JSON array of strings with the exact same length and order.',
-          },
-          {
-            role: 'user',
-            content: JSON.stringify(texts),
-          },
-        ],
-      }),
-    },
-    25_000,
-  );
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`API HTTP ${response.status}${errText ? `: ${errText.slice(0, 120)}` : ''}`);
-  }
-
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const rawContent = data.choices?.[0]?.message?.content?.trim() || '';
-  const cleaned = rawContent
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-
-  const parsed = JSON.parse(cleaned) as unknown;
-  if (!Array.isArray(parsed) || parsed.length !== texts.length) {
-    throw new Error('模型返回格式不匹配');
-  }
-
-  return parsed.map((entry) => String(entry ?? '').trim());
-}
-
-export async function translateTexts(
-  texts: string[],
-  overrideConfig?: Partial<TranslateConfig>,
-): Promise<string[]> {
-  const saved = await loadTranslateConfig();
-  const config: TranslateConfig = {
-    ...saved,
-    ...overrideConfig,
-  };
-
-  const outputs = new Array<string>(texts.length).fill('');
-  const uncachedIndices: number[] = [];
-  const uncachedTexts: string[] = [];
-
-  texts.forEach((raw, idx) => {
-    const text = sanitizeSourceText(raw);
-    if (!text) {
-      outputs[idx] = '';
-      return;
-    }
-    const key = getCacheKey(text, config);
-    const cached = translationCache.get(key);
-    if (cached !== undefined) {
-      outputs[idx] = cached;
-    } else {
-      uncachedIndices.push(idx);
-      uncachedTexts.push(text);
-    }
-  });
-
-  if (uncachedTexts.length === 0) {
-    return outputs;
-  }
-
-  const useOpenAI = config.provider === 'openai' && Boolean(config.apiKey);
-  const translated = useOpenAI
-    ? await translateBatchOpenAI(uncachedTexts, config)
-    : await translateBatchFree(uncachedTexts, config.targetLang);
-
-  uncachedIndices.forEach((origIdx, pos) => {
-    const value = translated[pos] || uncachedTexts[pos];
-    outputs[origIdx] = value;
-    setCache(getCacheKey(uncachedTexts[pos], config), value);
-  });
-
-  return outputs;
-}
+export const { loadTranslateConfig, saveTranslateConfig, translateTexts } = createTranslator({
+  async read() {
+    const data = await chrome.storage.local.get(STORAGE_KEY_TRANSLATE_CONFIG);
+    return data[STORAGE_KEY_TRANSLATE_CONFIG] as Partial<TranslateConfig> | undefined;
+  },
+  async write(config) {
+    await chrome.storage.local.set({ [STORAGE_KEY_TRANSLATE_CONFIG]: config });
+  },
+}, DEFAULT_TRANSLATE_CONFIG, translateBatchFree);

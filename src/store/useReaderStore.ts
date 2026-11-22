@@ -9,6 +9,7 @@ import type {
   JumpAnchor,
   NormalizedRect,
   PaperAsset,
+  PaperArchive,
   PinnedItem,
   ReadingStats,
   ReferenceEntry,
@@ -49,7 +50,8 @@ interface ReaderState {
   dockHeight: number;
 
   /* ---------- actions ---------- */
-  setPdfDocument: (doc: PDFDocumentProxy, fileName: string, paperHash: string, url: string | null) => void;
+  setPdfDocument: (doc: PDFDocumentProxy, fileName: string, paperHash: string, url: string | null, archive?: PaperArchive) => void;
+  restorePinnedPreview: (item: PinnedItem, imageUrl?: string) => void;
   setNumPages: (n: number) => void;
   setCurrentPage: (p: number) => void;
   setScale: (s: number) => void;
@@ -171,16 +173,27 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   dockWidth: savedDock.dockWidth,
   dockHeight: savedDock.dockHeight,
 
-  setPdfDocument: (doc, fileName, paperHash, url) =>
+  setPdfDocument: (doc, fileName, paperHash, url, archive) =>
     set({
       pdfDoc: doc,
       fileName,
       paperHash,
       pdfSource: url,
       numPages: doc.numPages,
-      currentPage: 1,
+      currentPage: Math.min(doc.numPages, Math.max(1, archive?.lastPage ?? 1)),
+      scale: archive?.scale ?? get().scale,
+      pinnedItems: (archive?.pinnedItems ?? []).map(item => ({
+        ...item,
+        previewStatus: item.kind !== 'reference' && item.cropRect ? 'restoring' : undefined,
+      })),
       parseError: null,
     }),
+  restorePinnedPreview: (original, imageUrl) => set(state => ({
+    pinnedItems: state.pinnedItems.map(item =>
+      item.id === original.id && item.cropRect === original.cropRect && item.previewStatus === 'restoring'
+        ? { ...item, imageUrl, previewStatus: imageUrl ? undefined : 'unavailable' }
+        : item),
+  })),
   setNumPages: (n) => set({ numPages: n }),
   setCurrentPage: (p) => set({ currentPage: p }),
   setScale: (s) => set({ scale: Math.min(2.5, Math.max(0.6, Number(s.toFixed(2)))) }),
@@ -261,7 +274,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
           ? {
               ...item,
               originalCropRect: item.originalCropRect ?? item.cropRect,
-              originalImageUrl: item.originalImageUrl ?? item.imageUrl,
+              originalImageUrl: item.originalImageUrl ?? (item.originalCropRect ? undefined : item.imageUrl),
               cropRect,
               imageUrl,
             }
@@ -284,7 +297,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       return {
         pinnedItems: state.pinnedItems.map((item) =>
           item.id === id
-            ? { ...item, cropRect: restoredRect, imageUrl: restoredImage }
+            ? { ...item, cropRect: restoredRect, imageUrl: restoredImage, originalImageUrl: restoredImage }
             : item,
         ),
         assetsMap: state.assetsMap[id]

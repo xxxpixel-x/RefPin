@@ -1,3 +1,4 @@
+import type { TranslateConfig } from '../services/translator';
 import type { NormalizedRect } from '../types/paper';
 
 export type CompanionAssetKind = 'figure' | 'table' | 'equation';
@@ -61,25 +62,9 @@ export interface DomPaperPayload {
 export const STORAGE_KEY_PENDING_PIN = 'refpin_pending_pin';
 export const STORAGE_KEY_TRANSLATE_CONFIG = 'refpin_translate_config';
 
-export type TranslateProvider = 'free' | 'openai';
-export type TranslateTargetLang = 'zh-CN' | 'en';
+export { DEFAULT_TRANSLATE_CONFIG } from '../services/translator';
+export type { TranslateConfig, TranslateProvider, TranslateTargetLang } from '../services/translator';
 export type TranslateDisplayMode = 'off' | 'bilingual' | 'translated';
-
-export interface TranslateConfig {
-  provider: TranslateProvider;
-  targetLang: TranslateTargetLang;
-  apiBaseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
-export const DEFAULT_TRANSLATE_CONFIG: TranslateConfig = {
-  provider: 'free',
-  targetLang: 'zh-CN',
-  apiBaseUrl: 'https://api.openai.com/v1',
-  apiKey: '',
-  model: 'gpt-4o-mini',
-};
 
 export interface PageTranslateStatus {
   active: boolean;

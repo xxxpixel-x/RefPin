@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -10,6 +11,8 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { InlineCitation, NormalizedRect } from '../../types/paper';
 import { useReaderStore } from '../../store/useReaderStore';
 import { PdfPageCanvas, type FlashHighlight } from './PdfPageCanvas';
+
+const NO_CITATIONS: InlineCitation[] = [];
 
 export interface PdfViewerHandle {
   /**
@@ -34,6 +37,8 @@ interface Props {
   snipMode: boolean;
   /** 文档就绪后自动滚到的起始页（示例论文直达演示页） */
   initialPage?: number;
+  initialScrollTop?: number;
+  onScrollTopChange?: (top: number) => void;
   onCitationHover?: (citation: InlineCitation, anchor: HTMLElement) => void;
   onCitationLeave?: () => void;
   onCitationClick?: (citation: InlineCitation) => void;
@@ -47,6 +52,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     citationsByPage,
     snipMode,
     initialPage,
+    initialScrollTop,
+    onScrollTopChange,
     onCitationHover,
     onCitationLeave,
     onCitationClick,
@@ -56,14 +63,15 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
 ) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const flashTimerRef = useRef<number | null>(null);
-  const lastPageRef = useRef(1);
+  const lastPageRef = useRef(0);
   const didInitialScrollRef = useRef(false);
   const [dims, setDims] = useState<Array<{ width: number; height: number }> | null>(null);
   const [flash, setFlash] = useState<FlashHighlight | null>(null);
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     didInitialScrollRef.current = false;
-    lastPageRef.current = 1;
+    lastPageRef.current = 0;
   }, [pdfDoc, initialPage]);
 
   useEffect(() => {
@@ -92,6 +100,24 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       cancelled = true;
     };
   }, [pdfDoc]);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !dims?.length) return;
+    const observer = new IntersectionObserver(entries => {
+      setVisiblePages(previous => {
+        const next = new Set(previous);
+        for (const entry of entries) {
+          const page = Number((entry.target as HTMLElement).dataset.page);
+          if (entry.isIntersecting) next.add(page);
+          else next.delete(page);
+        }
+        return next;
+      });
+    }, { root, rootMargin: '900px 0px 900px 0px' });
+    root.querySelectorAll('[data-page]').forEach(page => observer.observe(page));
+    return () => observer.disconnect();
+  }, [dims]);
 
   useEffect(
     () => () => {
@@ -166,28 +192,21 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     [scrollToPosition],
   );
 
-  // 示例论文直达演示页（文档就绪后只执行一次）
-  useEffect(() => {
-    if (!dims || didInitialScrollRef.current) return;
-    didInitialScrollRef.current = true;
-    if (initialPage && initialPage > 1) {
-      window.requestAnimationFrame(() => scrollToPosition(initialPage));
-    }
-  }, [dims, initialPage, scrollToPosition]);
-
   const handleScroll = useCallback(() => {
     const container = scrollRef.current;
     if (!container || !onPageChange) return;
     const containerRect = container.getBoundingClientRect();
     const anchorY = containerRect.top + 96;
-    const pages = container.querySelectorAll<HTMLElement>('[data-page]');
-
-    let currentPage = 1;
-    pages.forEach((node) => {
-      if (node.getBoundingClientRect().top <= anchorY) {
-        currentPage = Number(node.dataset.page);
-      }
-    });
+    const pages = container.querySelector('[data-page-list]')?.children;
+    if (!pages?.length) return;
+    let low = 0;
+    let high = pages.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (pages[mid].getBoundingClientRect().top <= anchorY) low = mid + 1;
+      else high = mid;
+    }
+    const currentPage = Math.max(1, low);
 
     if (currentPage !== lastPageRef.current) {
       lastPageRef.current = currentPage;
@@ -195,8 +214,23 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     }
   }, [onPageChange]);
 
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !dims?.length || didInitialScrollRef.current) return;
+    didInitialScrollRef.current = true;
+    if (initialScrollTop !== undefined) {
+      root.scrollTop = initialScrollTop;
+    } else if (initialPage && initialPage > 1) {
+      const page = root.querySelector<HTMLElement>(`[data-page="${initialPage}"]`);
+      if (page) root.scrollTop += page.getBoundingClientRect().top - root.getBoundingClientRect().top - 16;
+    }
+    onScrollTopChange?.(root.scrollTop);
+    handleScroll();
+  }, [dims, initialPage, initialScrollTop, onScrollTopChange, handleScroll]);
+
   const frameRef = useRef<number | null>(null);
   const onScroll = () => {
+    if (didInitialScrollRef.current && scrollRef.current) onScrollTopChange?.(scrollRef.current.scrollTop);
     if (frameRef.current !== null) return;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = null;
@@ -214,6 +248,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   return (
     <div
       ref={scrollRef}
+      data-pdf-viewer
       onScroll={onScroll}
       className="relative h-full w-full overflow-auto bg-paper-bg"
     >
@@ -230,17 +265,18 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
           正在打开论文…
         </div>
       ) : (
-        <div className="flex w-max min-w-full flex-col items-center gap-7 px-6 py-8">
+        <div data-page-list className="flex w-max min-w-full flex-col items-center gap-7 px-6 py-8">
           {dims.map((dim, index) => (
             <PdfPageCanvas
               key={index + 1}
               pdfDoc={pdfDoc}
               pageNumber={index + 1}
+              isVisible={visiblePages.has(index + 1)}
               scale={scale}
               pageWidth={dim.width * scale}
               pageHeight={dim.height * scale}
-              citations={citationsByPage[index + 1] ?? []}
-              flash={flash}
+              citations={citationsByPage[index + 1] ?? NO_CITATIONS}
+              flash={flash?.pageNumber === index + 1 ? flash : null}
               snipMode={snipMode}
               onCitationHover={onCitationHover}
               onCitationLeave={onCitationLeave}
