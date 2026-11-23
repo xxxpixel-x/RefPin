@@ -1,9 +1,10 @@
 import { IS_EXTENSION_PAGE } from '../../config/runtime';
-import { describeError, formatMessage, message, t, type DisplayMessage } from '../../i18n';
+import { describeError, formatMessage, LocalizedError, message, t, type DisplayMessage } from '../../i18n';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, Languages, Settings } from 'lucide-react';
 import { cleanPdfSelectedText } from '../../utils/textCleanup';
+import { useExtensionTranslateSettings } from '../../services/useExtensionTranslateSettings';
 import {
   DEFAULT_TRANSLATE_CONFIG,
   grantFreeTranslateConsent,
@@ -155,8 +156,9 @@ interface SelectionActionsProps {
 }
 
 function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionActionsProps) {
-  const [config, setConfig] = useState<TranslateConfig>(DEFAULT_TRANSLATE_CONFIG);
-  const [ready, setReady] = useState(false);
+  const [loadedConfig, setConfig] = useState<TranslateConfig | null>(null);
+  const config = loadedConfig ?? DEFAULT_TRANSLATE_CONFIG;
+  const extensionSettings = useExtensionTranslateSettings(loadedConfig);
   const [busy, setBusy] = useState(false);
   const [askConsent, setAskConsent] = useState(false);
   const [translation, setTranslation] = useState('');
@@ -169,7 +171,6 @@ function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionA
     void selectionTranslator.loadTranslateConfig().then(saved => {
       if (!active) return;
       setConfig(IS_EXTENSION_PAGE && !saved.apiKey ? { ...saved, provider: 'free' as const } : saved);
-      setReady(true);
     });
     const unsubscribe = selectionTranslator.subscribeConfig(next => {
       setConfig(next);
@@ -195,7 +196,7 @@ function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionA
       onOpenSettings();
       return;
     }
-    if (!consented && needsFreeTranslateConsent(config)) {
+    if (!consented && extensionSettings?.usesFreeChannel !== false && needsFreeTranslateConsent(config)) {
       setAskConsent(true);
       return;
     }
@@ -203,9 +204,13 @@ function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionA
     restoreSelection();
     setBusy(true);
     try {
-      const [value] = await selectionTranslator.translateTexts([text], config);
+      const [value] = await selectionTranslator.translateTexts([text], IS_EXTENSION_PAGE ? config : undefined);
       setTranslation(value);
     } catch (error) {
+      if (error instanceof LocalizedError && error.uiMessage.key === 'translate.freeConsentRequired') {
+        setAskConsent(true);
+        return;
+      }
       setNotice(error instanceof TypeError ? message('translate.unreachable') :
         describeError(error, message('translate.retry')));
     } finally { setBusy(false); }
@@ -216,7 +221,7 @@ function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionA
       <button type="button" className={actionClass} onClick={() => void copy(text, 'source')}>
         {copied === 'source' ? <Check size={14} /> : <Copy size={14} />}{copied === 'source' ? t('common.copied') : t('copy.clean')}
       </button>
-      <button type="button" className={actionClass} disabled={!ready || busy} onClick={() => void translate()}>
+      <button type="button" className={actionClass} disabled={!loadedConfig || busy} onClick={() => void translate()}>
         <Languages size={15} />{busy ? t('translate.busy') : t('translate.selection')}
       </button>
       <button type="button" className={actionClass + ' ml-auto'} aria-label={t('translate.settings')} title={t('translate.settings')}
@@ -235,7 +240,7 @@ function SelectionActions({ text, restoreSelection, onOpenSettings }: SelectionA
       </div>
     </div>}
     {translation && <div className="w-80 max-w-full border-t border-paper-border px-3 py-2">
-      <p lang={config.targetLang} className="whitespace-pre-wrap break-words leading-relaxed">{translation}</p>
+      <p lang={extensionSettings?.summary.targetLang ?? config.targetLang} className="whitespace-pre-wrap break-words leading-relaxed">{translation}</p>
       <button className={actionClass + ' mt-1 text-paper-muted'} onClick={() => void copy(translation, 'translation')}>
         {copied === 'translation' ? <Check size={12} /> : <Copy size={12} />}{t('translate.copy')}
       </button>

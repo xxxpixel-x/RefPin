@@ -72,7 +72,7 @@ export { STORAGE_KEY_TRANSLATE_CONFIG } from '../services/translator';
 
 export { DEFAULT_TRANSLATE_CONFIG } from '../services/translator';
 export type { TranslateConfig, TranslateDisplayMode, TranslateProvider, TranslateTargetLang } from '../services/translator';
-import type { TranslateDisplayMode, TranslateTargetLang } from '../services/translator';
+import type { TranslateDisplayMode } from '../services/translator';
 
 export interface PageTranslateStatus {
   active: boolean;
@@ -109,11 +109,14 @@ export type ExtensionMessage =
       type: 'REFPIN_TRANSLATE_BATCH';
       texts: string[];
       config?: Partial<TranslateConfig>;
+      connectionTest?: boolean;
     }
+  | { type: 'REFPIN_WEB_TRANSLATE_CONFIG' }
   | {
       type: 'REFPIN_WEB_TRANSLATE';
       texts: string[];
-      targetLang: TranslateTargetLang;
+      connectionTest?: boolean;
+      allowFreeChannel: boolean;
     }
   | {
       type: 'REFPIN_PAGE_TRANSLATE_START';

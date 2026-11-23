@@ -1,13 +1,17 @@
 import { openFullReader } from './fullReader';
-import { describeError, message } from '../i18n/core';
+import { message } from '../i18n/core';
 import {
   STORAGE_KEY_PENDING_PIN,
   type ExtensionMessage,
   type PendingPinRecord,
 } from './protocol';
-import { translateTexts } from './translator';
+import { loadTranslateConfig, testConnection, translateTexts } from './translator';
+import {
+  DEFAULT_TRANSLATE_CONFIG, MAX_BRIDGE_TEXT_LENGTH, MAX_BRIDGE_TEXTS, summarizeTranslateConfig, translationFailure,
+  usesFreeTranslateChannel,
+} from '../services/translator';
 
-import { dismissedKey, grantKey, handleBridge, trustedReader } from './pdfBridge';
+import { canGrantReader, canSpendSavedApiKey, dismissedKey, grantKey, handleBridge, trustedReader } from './pdfBridge';
 import { inspectTabUrl } from './urlRules';
 
 const MENU_FULL_READER = 'refpin-open-full-reader';
@@ -31,7 +35,7 @@ function setupContextMenus(): void {
       id: MENU_ALLOW_READER,
       title: chrome.i18n.getMessage('menuAllowReader'),
       contexts: ['page'],
-      documentUrlPatterns: ['https://*/*'],
+      documentUrlPatterns: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'],
     });
     chrome.contextMenus.create({
       id: MENU_OPEN_PANEL,
@@ -63,8 +67,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
   if (tab?.windowId === undefined) return;
 
-  if (info.menuItemId === MENU_ALLOW_READER && tab.id !== undefined && tab.url?.startsWith('https://')) {
-    void chrome.storage.session.set({ [grantKey(tab.id)]: new URL(tab.url).origin });
+  if (info.menuItemId === MENU_ALLOW_READER && tab.id !== undefined && canGrantReader(tab.url)) {
+    void chrome.storage.session.set({ [grantKey(tab.id)]: new URL(tab.url!).origin });
     return;
   }
   if (info.menuItemId === MENU_OPEN_PANEL) {
@@ -187,32 +191,60 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
     return true;
   }
 
-  if (request.type === 'REFPIN_WEB_TRANSLATE' && Array.isArray(request.texts)) {
-    const texts = request.texts;
-    const targetLang = request.targetLang === 'en' ? 'en' : 'zh-CN';
+  if (request.type === 'REFPIN_WEB_TRANSLATE' || request.type === 'REFPIN_WEB_TRANSLATE_CONFIG') {
     void (async () => {
       if (!(await trustedReader(sender))) {
         sendResponse({ ok: false });
         return;
       }
-      const translations = await translateTexts(texts, { provider: 'free', targetLang });
+      const saved = await loadTranslateConfig();
+      // 带密钥的配置会花用户的额度：未经右键授权的本机页面只能用公共通道。
+      const config = !saved.apiKey || await canSpendSavedApiKey(sender)
+        ? saved
+        : { ...DEFAULT_TRANSLATE_CONFIG, targetLang: saved.targetLang };
+      if (request.type !== 'REFPIN_WEB_TRANSLATE') {
+        sendResponse({ ok: true, summary: summarizeTranslateConfig(config), usesFreeChannel: usesFreeTranslateChannel(config) });
+        return;
+      }
+      if (request.connectionTest === true) {
+        await testConnection(config);
+        sendResponse({ ok: true });
+        return;
+      }
+      const texts = request.texts;
+      if (!Array.isArray(texts) || !texts.length || texts.length > MAX_BRIDGE_TEXTS ||
+          !texts.every(item => typeof item === 'string' && item.length <= MAX_BRIDGE_TEXT_LENGTH)) {
+        sendResponse({ ok: false });
+        return;
+      }
+      if (usesFreeTranslateChannel(config) && request.allowFreeChannel !== true) {
+        sendResponse({ ok: false, error: message('translate.freeConsentRequired') });
+        return;
+      }
+      const translations = await translateTexts(texts, config);
+      if (config.apiKey && translations.some(value => value.includes(config.apiKey))) {
+        sendResponse({ ok: false, error: message('translate.invalidResponse') });
+        return;
+      }
       sendResponse({ ok: true, translations });
     })().catch((error: unknown) =>
       sendResponse({
         ok: false,
-        error: describeError(error, message('translate.requestFailed')),
+        error: translationFailure(error),
       }),
     );
     return true;
   }
 
   if (request.type === 'REFPIN_TRANSLATE_BATCH' && Array.isArray(request.texts)) {
-    void translateTexts(request.texts, request.config)
-      .then((translations) => sendResponse({ ok: true, translations }))
+    const result = request.connectionTest
+      ? loadTranslateConfig().then(config => testConnection({ ...config, ...request.config }))
+      : translateTexts(request.texts, request.config);
+    void result.then((translations) => sendResponse({ ok: true, translations }))
       .catch((error: unknown) =>
         sendResponse({
           ok: false,
-          error: describeError(error, message('translate.requestFailed')),
+          error: translationFailure(error),
         }),
       );
     return true;

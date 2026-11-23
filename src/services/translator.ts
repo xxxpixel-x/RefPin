@@ -13,10 +13,29 @@ export interface TranslateConfig {
   apiBaseUrl: string;
   apiKey: string;
   model: string;
+  /** 网页明确选择单独保存后，即使选用内置服务也沿用网页设置。 */
+  webOnly?: true;
+}
+
+export type TranslateConfigSummary = Pick<TranslateConfig, 'provider' | 'model' | 'targetLang'> & { hasApiKey: boolean };
+
+export function summarizeTranslateConfig(config: TranslateConfig): TranslateConfigSummary {
+  const key = config.apiKey.trim();
+  return {
+    provider: config.provider,
+    model: key && config.model.includes(key) ? '' : config.model,
+    targetLang: config.targetLang,
+    hasApiKey: Boolean(key),
+  };
+}
+
+export function canUseExtensionSettings(config: TranslateConfig): boolean {
+  return !IS_EXTENSION_PAGE && !config.webOnly && config.provider === DEFAULT_TRANSLATE_CONFIG.provider;
 }
 
 // The no-setup provider sends paragraphs to a third-party service, so readers acknowledge that once.
 const FREE_CONSENT_KEY = 'refpin.freeTranslateConsent.v1';
+let sessionConsent = false;
 
 /** A custom endpoint without a key falls back to the free channel unless it is a local model server. */
 export function usesFreeTranslateChannel(config: Pick<TranslateConfig, 'provider' | 'apiKey' | 'apiBaseUrl'>): boolean {
@@ -25,12 +44,12 @@ export function usesFreeTranslateChannel(config: Pick<TranslateConfig, 'provider
 }
 
 export function needsFreeTranslateConsent(config: TranslateConfig): boolean {
-  if (!usesFreeTranslateChannel(config)) return false;
+  if (sessionConsent || !usesFreeTranslateChannel(config)) return false;
   try { return localStorage.getItem(FREE_CONSENT_KEY) !== '1'; } catch { return true; }
 }
 
 export function grantFreeTranslateConsent(): void {
-  try { localStorage.setItem(FREE_CONSENT_KEY, '1'); } catch { /* Ask again next session. */ }
+  try { localStorage.setItem(FREE_CONSENT_KEY, '1'); } catch { sessionConsent = true; }
 }
 
 export const DEFAULT_TRANSLATE_CONFIG: TranslateConfig = {
@@ -139,7 +158,9 @@ async function translateBatchOpenAI(
   config: TranslateConfig,
   allowPlainText: boolean,
 ): Promise<string[]> {
-  const base = new URL(config.apiBaseUrl);
+  let base: URL;
+  try { base = new URL(config.apiBaseUrl); }
+  catch { throw new LocalizedError(message('translate.invalidConfig')); }
   if (!['https:', 'http:'].includes(base.protocol)) throw new LocalizedError(message('translate.invalidProtocol'));
   const path = base.pathname.replace(/\/+$/, '');
   base.pathname = path.endsWith('/chat/completions') ? path : path + '/chat/completions';
@@ -176,15 +197,19 @@ async function translateBatchOpenAI(
   );
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    const reason = message('translate.httpError', { provider: 'API', status: response.status });
-    throw new LocalizedError({ ...reason, detail: errText.slice(0, 120) });
+    throw new LocalizedError(message('translate.httpError', { provider: 'API', status: response.status }));
   }
 
-  const data = (await response.json()) as {
+  const data = (await response.json().catch(() => {
+    throw new LocalizedError(message('translate.invalidResponse'));
+  })) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  const rawContent = data.choices?.[0]?.message?.content?.trim() || '';
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || (config.apiKey && content.includes(config.apiKey))) {
+    throw new LocalizedError(message('translate.invalidResponse'));
+  }
+  const rawContent = content.trim();
   const cleaned = rawContent
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
@@ -192,12 +217,15 @@ async function translateBatchOpenAI(
 
   // Small local models may return a single translation without the array wrapper.
   if (allowPlainText && texts.length === 1 && cleaned && !/^[\[{"`]/.test(cleaned)) return [cleaned];
-  const parsed: unknown = JSON.parse(cleaned);
-  if (!Array.isArray(parsed) || parsed.length !== texts.length) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(cleaned); }
+  catch { throw new LocalizedError(message('translate.invalidResponse')); }
+  if (!Array.isArray(parsed) || parsed.length !== texts.length || parsed.some(entry =>
+    typeof entry !== 'string' || !entry.trim() || (config.apiKey && entry.includes(config.apiKey)))) {
     throw new LocalizedError(message('translate.invalidResponse'));
   }
 
-  return parsed.map((entry) => String(entry ?? '').trim());
+  return parsed.map(entry => entry.trim());
 }
 
 interface BrowserTranslatorInstance {
@@ -209,26 +237,39 @@ interface BrowserTranslatorStatic {
 }
 
 let extBridgeUnavailableUntil = 0;
+let detectedExtensionSettings: ExtensionTranslateSettings | null = null;
+let settingsRequest: Promise<ExtensionTranslateSettings | null> | undefined;
 let googleGtxCooldownUntil = 0;
 
 export function resetWebFreeState() {
   extBridgeUnavailableUntil = 0;
+  detectedExtensionSettings = null;
+  settingsRequest = undefined;
   googleGtxCooldownUntil = 0;
 }
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !IS_EXTENSION_PAGE) {
   window.addEventListener('message', (event: MessageEvent) => {
-    if (event.source === window && event.data?.source === 'refpin-extension' && event.data?.type === 'REFPIN_EXT_READY') {
+    if (event.source === window && event.origin === location.origin &&
+        event.data?.source === 'refpin-extension' && event.data?.type === 'REFPIN_EXT_READY') {
       extBridgeUnavailableUntil = 0;
     }
   });
 }
 
+export interface TranslateBridgeReply {
+  ok: boolean;
+  translations?: string[];
+  summary?: TranslateConfigSummary;
+  usesFreeChannel?: boolean;
+  error?: LocalizedMessage;
+}
+
 function requestExtensionBridge(
   payload: Record<string, unknown>,
-  expectedType: string,
+  expectedType: 'REFPIN_EXT_TRANSLATE_CONFIG' | 'REFPIN_EXT_TRANSLATE',
   timeoutMs: number,
-): Promise<{ ok: boolean; translations?: string[] }> {
+): Promise<TranslateBridgeReply> {
   return new Promise((resolve) => {
     if (
       IS_EXTENSION_PAGE ||
@@ -240,7 +281,8 @@ function requestExtensionBridge(
       resolve({ ok: false });
       return;
     }
-    const origin = location.origin && location.origin !== 'null' ? location.origin : '*';
+    const origin = location.origin;
+    if (origin === 'null') { resolve({ ok: false }); return; }
     const requestId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -250,37 +292,73 @@ function requestExtensionBridge(
       clearTimeout(timer);
       window.removeEventListener('message', onMessage);
     };
+    const send = () => window.postMessage({ ...payload, source: 'refpin-web', type: expectedType, requestId }, origin);
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
-      if (event.source !== window || data?.source !== 'refpin-extension') return;
+      if (event.source !== window || event.origin !== origin || data?.source !== 'refpin-extension') return;
+      if (expectedType === 'REFPIN_EXT_TRANSLATE_CONFIG' && data.type === 'REFPIN_EXT_READY') { send(); return; }
       if (data.type !== expectedType || data.requestId !== requestId) return;
       cleanup();
-      resolve(data as { ok: boolean; translations?: string[] });
+      resolve(data);
     };
     const timer = setTimeout(() => {
       cleanup();
       resolve({ ok: false });
     }, timeoutMs);
     window.addEventListener('message', onMessage);
-    window.postMessage({ ...payload, source: 'refpin-web', type: expectedType, requestId }, origin);
+    send();
   });
 }
 
-async function tryTranslateViaExtensionBridge(
-  texts: string[],
-  targetLang: TranslateTargetLang,
-): Promise<string[] | null> {
-  if (Date.now() < extBridgeUnavailableUntil) return null;
-  const ping = await requestExtensionBridge({}, 'REFPIN_EXT_PING', 180);
-  if (!ping.ok) {
-    extBridgeUnavailableUntil = Date.now() + 30_000;
-    return null;
+export interface ExtensionTranslateSettings {
+  summary: TranslateConfigSummary;
+  usesFreeChannel: boolean;
+}
+
+export const MAX_BRIDGE_TEXTS = 20;
+export const MAX_BRIDGE_TEXT_LENGTH = 6000;
+
+export async function getExtensionTranslateSettings(config: TranslateConfig): Promise<ExtensionTranslateSettings | null> {
+  if (!canUseExtensionSettings(config) || Date.now() < extBridgeUnavailableUntil) return null;
+  settingsRequest ??= requestExtensionBridge({}, 'REFPIN_EXT_TRANSLATE_CONFIG', 1000).then(reply => {
+    if (reply.ok && reply.summary && typeof reply.usesFreeChannel === 'boolean') {
+      detectedExtensionSettings = { summary: reply.summary, usesFreeChannel: reply.usesFreeChannel };
+    } else {
+      detectedExtensionSettings = null;
+      extBridgeUnavailableUntil = Date.now() + 30_000;
+    }
+    return detectedExtensionSettings;
+  }).finally(() => { settingsRequest = undefined; });
+  return settingsRequest;
+}
+
+async function translateViaExtensionBridge(texts: string[], connectionTest = false): Promise<string[]> {
+  const reply = await requestExtensionBridge({
+    texts, connectionTest, allowFreeChannel: connectionTest || !needsFreeTranslateConsent(DEFAULT_TRANSLATE_CONFIG),
+  }, 'REFPIN_EXT_TRANSLATE', 35_000);
+  if (!reply.ok) {
+    if (!reply.error) detectedExtensionSettings = null;
+    throw new LocalizedError(reply.error ?? message('translate.requestFailed'));
   }
-  const reply = await requestExtensionBridge({ texts, targetLang }, 'REFPIN_EXT_TRANSLATE', 12_000);
-  if (reply.ok && Array.isArray(reply.translations) && reply.translations.length === texts.length) {
-    return reply.translations;
+  if (connectionTest) return [];
+  if (!Array.isArray(reply.translations) || reply.translations.length !== texts.length ||
+      !reply.translations.every(value => typeof value === 'string')) {
+    throw new LocalizedError(message('translate.invalidResponse'));
   }
-  return null;
+  return reply.translations;
+}
+
+async function translateWithExtensionSettings(texts: string[]): Promise<string[]> {
+  const outputs = texts.map(() => [] as string[]);
+  const parts = texts.flatMap((text, index) =>
+    splitTextForFreeLimit(sanitizeSourceText(text), MAX_BRIDGE_TEXT_LENGTH).map(part => ({ index, part })),
+  );
+  for (let offset = 0; offset < parts.length; offset += MAX_BRIDGE_TEXTS) {
+    const batch = parts.slice(offset, offset + MAX_BRIDGE_TEXTS);
+    const translated = await translateViaExtensionBridge(batch.map(item => item.part));
+    batch.forEach(({ index }, pos) => outputs[index].push(translated[pos]));
+  }
+  return outputs.map(parts => parts.join(' '));
 }
 
 async function tryTranslateViaBrowserNative(
@@ -399,15 +477,11 @@ export async function translateBatchWebFree(
   texts: string[],
   targetLang: TranslateTargetLang,
 ): Promise<string[]> {
-  // 1) 若当前浏览器安装了 RefPin 扩展，优先通过安全桥接走无跨域限制的批量通道
-  const bridged = await tryTranslateViaExtensionBridge(texts, targetLang);
-  if (bridged) return bridged;
-
-  // 2) 若浏览器内置本地离线 Translator AI 已就绪，直接本机离线翻译
+  // 优先使用已就绪的浏览器离线翻译。
   const localTranslated = await tryTranslateViaBrowserNative(texts, targetLang);
   if (localTranslated) return localTranslated;
 
-  // 3) 纯网页 CORS 公共免费通道（Google GTX 优先，网络不可达时熔断切分句 MyMemory）
+  // Google 不可达时按句切分并使用 MyMemory。
   return Promise.all(
     texts.map(async (item) => {
       if (Date.now() >= googleGtxCooldownUntil) {
@@ -422,7 +496,18 @@ export async function translateBatchWebFree(
   );
 }
 
-type FreeProvider = (texts: string[], language: TranslateTargetLang) => Promise<string[]>;
+export function translationFailure(error: unknown): LocalizedMessage {
+  // 只保留翻译服务自己构造的原因，异常文本和上游响应可能包含请求凭据。
+  if (error instanceof LocalizedError) {
+    const { key, params } = error.uiMessage;
+    return { key, params };
+  }
+  if (error instanceof TypeError) return message('translate.unreachable');
+  if (error instanceof Error && error.name === 'AbortError') return message('translate.timeout');
+  return message('translate.requestFailed');
+}
+
+type FreeProvider = (texts: string[], language: TranslateTargetLang, connectionTest?: boolean) => Promise<string[]>;
 
 export function createTranslator(
   storage: TranslateConfigStorage,
@@ -442,6 +527,7 @@ export function createTranslator(
         apiBaseUrl: saved.apiBaseUrl?.trim() || defaults.apiBaseUrl,
         apiKey: saved.apiKey?.trim() || '',
         model: saved.model?.trim() || defaults.model,
+        ...(saved.webOnly === true && { webOnly: true }),
       };
     } catch {
       return { ...defaults };
@@ -458,6 +544,21 @@ export function createTranslator(
     return () => {
       listeners.delete(listener);
     };
+  }
+
+  async function testConnection(config: TranslateConfig): Promise<string[]> {
+    const probe = [config.targetLang === 'en' ? '这是一句测试文本。' : 'This is a test sentence.'];
+    const clean = { ...config, apiKey: config.apiKey.trim(), apiBaseUrl: config.apiBaseUrl.trim(), model: config.model.trim() };
+    if (clean.provider !== 'free' && (!clean.apiBaseUrl || !clean.model)) {
+      throw new LocalizedError(message('translate.missingConfig'));
+    }
+    const result = clean.provider === 'free' && freeProvider
+      ? await freeProvider(probe, clean.targetLang, true)
+      : await translateBatchOpenAI(probe, clean, true);
+    if (!result[0]?.trim() || result[0].trim() === probe[0]) {
+      throw new LocalizedError(message('translate.invalidResponse'));
+    }
+    return result;
   }
 
   async function translateTexts(texts: string[], overrideConfig?: Partial<TranslateConfig>) {
@@ -499,6 +600,7 @@ export function createTranslator(
     saveTranslateConfig,
     subscribeConfig,
     translateTexts,
+    testConnection,
   };
 }
 
@@ -515,7 +617,7 @@ export const extensionConfigStorage: TranslateConfigStorage = {
 };
 
 const webConfigKey = 'refpin.web.translate.v1';
-export const webTranslator = createTranslator(
+const localWebTranslator = createTranslator(
   {
     async read() {
       return JSON.parse(localStorage.getItem(webConfigKey) ?? 'null');
@@ -528,8 +630,24 @@ export const webTranslator = createTranslator(
   translateBatchWebFree,
 );
 
+export const webTranslator = {
+  ...localWebTranslator,
+  async translateTexts(texts: string[], overrideConfig?: Partial<TranslateConfig>) {
+    const config = { ...await localWebTranslator.loadTranslateConfig(), ...overrideConfig };
+    if (canUseExtensionSettings(config) && (detectedExtensionSettings || await getExtensionTranslateSettings(config))) {
+      return translateWithExtensionSettings(texts);
+    }
+    if (needsFreeTranslateConsent(config)) throw new LocalizedError(message('translate.freeConsentRequired'));
+    return localWebTranslator.translateTexts(texts, config);
+  },
+};
+
+export async function testExtensionTranslation(): Promise<void> {
+  await translateViaExtensionBridge([], true);
+}
+
 export const selectionTranslator = IS_EXTENSION_PAGE
-  ? createTranslator(extensionConfigStorage, DEFAULT_TRANSLATE_CONFIG, async (texts, targetLang) => {
+  ? createTranslator(extensionConfigStorage, DEFAULT_TRANSLATE_CONFIG, async (texts, targetLang, connectionTest) => {
       const reply = await chrome.runtime.sendMessage<{
         ok: boolean;
         translations?: string[];
@@ -538,6 +656,7 @@ export const selectionTranslator = IS_EXTENSION_PAGE
         type: 'REFPIN_TRANSLATE_BATCH',
         texts,
         config: { provider: 'free', targetLang },
+        ...(connectionTest && { connectionTest }),
       });
       if (!reply?.ok || reply.translations?.length !== texts.length) {
         throw new LocalizedError(reply?.error ?? message('translate.requestFailed'));

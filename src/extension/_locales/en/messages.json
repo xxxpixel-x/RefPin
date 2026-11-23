@@ -8,7 +8,7 @@
   "actionTitle": {
     "message": "Toggle RefPin Companion Side Panel"
   },
-  "menuAllowReader": { "message": "Allow academic PDF downloads in this RefPin reader tab" },
+  "menuAllowReader": { "message": "Allow this RefPin reader tab to download academic PDFs and use the extension translation settings" },
   "menuOpenFullReader": { "message": "Open in RefPin Full Reader" },
   "menuOpenPanel": {
     "message": "Open RefPin Companion Side Panel"

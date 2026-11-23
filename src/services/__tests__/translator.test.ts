@@ -2,13 +2,16 @@ import { t } from '../../i18n/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createTranslator,
+  canUseExtensionSettings,
   DEFAULT_TRANSLATE_CONFIG,
   grantFreeTranslateConsent,
   needsFreeTranslateConsent,
   resetWebFreeState,
   sanitizeSourceText,
   splitTextForFreeLimit,
+  summarizeTranslateConfig,
   translateBatchWebFree,
+  webTranslator,
   WEB_TRANSLATE_CONFIG,
   type TranslateConfig,
 } from '../translator';
@@ -27,6 +30,53 @@ afterEach(() => {
 });
 
 describe('shared translator', () => {
+  it('网页默认服务商可以沿用扩展，保存过自定义服务商后使用网页配置', () => {
+    expect(canUseExtensionSettings(DEFAULT_TRANSLATE_CONFIG)).toBe(true);
+    expect(canUseExtensionSettings({ ...DEFAULT_TRANSLATE_CONFIG, targetLang: 'en' })).toBe(true);
+    expect(canUseExtensionSettings({ ...DEFAULT_TRANSLATE_CONFIG, webOnly: true })).toBe(false);
+    expect(canUseExtensionSettings(local)).toBe(false);
+    expect(canUseExtensionSettings({ ...local, apiKey: 'saved-key' })).toBe(false);
+  });
+
+  it('配置摘要仅含四项公开字段，即使把密钥误填进模型名也不会回传', () => {
+    const apiKey = 'private-test-credential';
+    const config = { ...local, apiKey, apiBaseUrl: 'https://example.test/?token=' + apiKey };
+    expect(summarizeTranslateConfig(config)).toEqual({
+      provider: 'openai', model: 'local-paper', targetLang: 'zh-CN', hasApiKey: true,
+    });
+    expect(summarizeTranslateConfig({ ...config, model: 'model-' + apiKey }).model).toBe('');
+    expect(summarizeTranslateConfig({ ...config, apiKey: '  ' }).hasApiKey).toBe(false);
+  });
+
+  it('连接测试用草稿配置实际请求端点，即使已有成功译文或没有密钥', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '测试成功' } }] }))
+      .mockResolvedValueOnce(new Response('header: private-test-credential', { status: 401 }));
+    vi.stubGlobal('fetch', fetch);
+    const free = vi.fn();
+    const service = createTranslator(storage(), DEFAULT_TRANSLATE_CONFIG, free);
+    const draft = { ...local, apiBaseUrl: 'https://example.test/v1' };
+    await service.testConnection(draft);
+    const failure = await service.testConnection({ ...draft, apiKey: 'private-test-credential' }).catch(error => error);
+    expect(failure.uiMessage).toEqual({ key: 'translate.httpError', params: { provider: 'API', status: 401 } });
+    expect(failure.message).not.toContain('private-test-credential');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(free).not.toHaveBeenCalled();
+    expect(await service.loadTranslateConfig()).toEqual(DEFAULT_TRANSLATE_CONFIG);
+  });
+
+  it('未安装扩展时，网页沿用已有同意状态和浏览器内置翻译', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'refpin.freeTranslateConsent.v1' ? '1' : null });
+    vi.stubGlobal('Translator', {
+      availability: async () => 'available',
+      create: async () => ({ translate: async () => '网页译文' }),
+    });
+    expect(await webTranslator.translateTexts(['Selection without extension'])).toEqual(['网页译文']);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('round-trips settings and clears a key through the supplied adapter', async () => {
     const adapter = storage();
     const first = createTranslator(adapter);

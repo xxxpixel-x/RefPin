@@ -1,6 +1,8 @@
 import { t } from '../../i18n/core';
 import clsx from 'clsx';
 import type { TranslateConfig } from '../protocol';
+import { TranslateConnectionTest } from '../../components/layout/TranslateConnectionTest';
+import { testConnection } from '../translator';
 
 interface TranslateSettingsBarProps {
   config: TranslateConfig;
@@ -107,6 +109,7 @@ export function TranslateSettingsBar({
         </div>
       )}
 
+      <TranslateConnectionTest config={config} onTest={() => testConnection(config)} />
       <div className="mt-2 flex justify-end">
         <button
           type="button"

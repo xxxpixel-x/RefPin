@@ -4,8 +4,12 @@ import clsx from 'clsx';
 import { IS_EXTENSION_PAGE } from '../../config/runtime';
 import { formatMessage, message, t, type DisplayMessage } from '../../i18n';
 import type { PaperTranslationController } from '../../services/usePaperTranslation';
+import { TranslateConnectionTest } from './TranslateConnectionTest';
 import {
   TRANSLATE_PRESETS,
+  readerTranslator,
+  testExtensionTranslation,
+  usesFreeTranslateChannel,
   type TranslateConfig,
   type TranslateDisplayMode,
 } from '../../services/translator';
@@ -17,6 +21,7 @@ interface TranslateControlProps {
 
 const fieldClass =
   'mt-1 w-full rounded-lg border border-paper-border bg-paper-card px-2.5 py-1.5 text-xs text-paper-ink outline-none focus:border-paper-gold';
+const panelClass = 'absolute left-0 top-full z-50 mt-1.5 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-paper-border bg-paper-card p-3 text-xs text-paper-ink shadow-float';
 
 export function TranslateControl({ translation, numPages }: TranslateControlProps) {
   const {
@@ -24,6 +29,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
     doneCount,
     running,
     config,
+    extensionSettings,
     settingsOpen,
     setSettingsOpen,
     updateConfig,
@@ -37,6 +43,8 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
   } = translation;
 
   const [draft, setDraft] = useState<TranslateConfig>(config);
+  const [editingLocally, setEditingLocally] = useState(false);
+  const summary = editingLocally ? null : extensionSettings?.summary;
   const [notice, setNotice] = useState<DisplayMessage | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -45,7 +53,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
   }, [config]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen) { setEditingLocally(false); return; }
     const onPointerDown = (event: PointerEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) {
         setSettingsOpen(false);
@@ -84,6 +92,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
 
   const openCustomApiSettings = () => {
     dismissConsent();
+    setEditingLocally(true);
     setDraft({ ...config, provider: 'openai' });
     setNotice(null);
     setSettingsOpen(true);
@@ -96,6 +105,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
       apiBaseUrl: draft.apiBaseUrl.trim(),
       model: draft.model.trim(),
       apiKey: draft.apiKey.trim(),
+      ...(!IS_EXTENSION_PAGE && (editingLocally || config.provider === 'openai' || draft.provider === 'openai') && { webOnly: true }),
     };
     if (next.provider !== 'free' && (!/^https?:\/\//i.test(next.apiBaseUrl) || !next.model)) {
       setNotice(message('translate.invalidConfig'));
@@ -261,10 +271,27 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
         </div>
       )}
 
-      {settingsOpen && (
+      {settingsOpen && (summary ? (
+        <div className={panelClass}>
+          <p className="break-words font-medium">
+            {t('translate.extensionSettings', {
+              provider: t(summary.provider === 'free' ? 'translate.free' : 'translate.custom'),
+              model: summary.provider === 'free' || !summary.model ? t('translate.defaultModel') : summary.model,
+            })}
+          </p>
+          <p className="mt-1 text-paper-muted">
+            {t('translate.target')} · {t(summary.targetLang === 'en' ? 'language.english' : 'language.chinese')}
+          </p>
+          <TranslateConnectionTest config={summary} onTest={testExtensionTranslation} />
+          <button type="button" onClick={openCustomApiSettings}
+            className="mt-2.5 rounded-md border border-paper-border px-2.5 py-1.5 text-paper-ink hover:bg-paper-bg">
+            {t('translate.configureHere')}
+          </button>
+        </div>
+      ) : (
         <form
           onSubmit={(e) => void handleSave(e)}
-          className="absolute left-0 top-full z-50 mt-1.5 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-paper-border bg-paper-card p-3 text-xs text-paper-ink shadow-float"
+          className={panelClass}
         >
           <div className="flex items-center justify-between gap-2">
             <div className="grid flex-1 grid-cols-2 gap-1 rounded-lg bg-paper-bg p-0.5 text-xs">
@@ -389,17 +416,16 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
             </div>
           )}
 
-          <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">
+          {usesFreeTranslateChannel(draft) && <p className="mt-2 text-[11px] leading-relaxed text-paper-muted">
             {t(
               draft.provider === 'free'
                 ? IS_EXTENSION_PAGE
                   ? 'translate.freeNotice'
                   : 'translate.webFreeNotice'
-                : !draft.apiKey && !/^http:\/\/(?:localhost|127\.0\.0\.1)\b/i.test(draft.apiBaseUrl)
-                  ? 'translate.keyFallback'
-                  : 'translate.privacy',
+                : 'translate.keyFallback',
             )}
-          </p>
+          </p>}
+          <TranslateConnectionTest config={draft} onTest={() => readerTranslator.testConnection(draft)} />
 
           {notice && (
             <p role="status" className="mt-1.5 text-xs text-paper-goldtext">
@@ -424,7 +450,7 @@ export function TranslateControl({ translation, numPages }: TranslateControlProp
             </button>
           </div>
         </form>
-      )}
+      ))}
     </div>
   );
 }

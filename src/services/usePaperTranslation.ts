@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { extractPdfPageBlocks, type TranslatedBlock } from '../engine/pdfParagraphs';
-import { describeError, message, type DisplayMessage } from '../i18n';
+import { describeError, LocalizedError, message, type DisplayMessage } from '../i18n';
+import { useExtensionTranslateSettings } from './useExtensionTranslateSettings';
 import {
   DEFAULT_TRANSLATE_CONFIG,
   grantFreeTranslateConsent,
   needsFreeTranslateConsent,
   readerTranslator,
   type TranslateConfig,
+  type ExtensionTranslateSettings,
   type TranslateDisplayMode,
 } from './translator';
 
@@ -18,6 +20,7 @@ export interface PaperTranslationController {
   running: boolean;
   error: DisplayMessage | null;
   config: TranslateConfig;
+  extensionSettings: ExtensionTranslateSettings | null;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
   updateConfig: (next: TranslateConfig) => Promise<void>;
@@ -34,7 +37,7 @@ export interface PaperTranslationController {
 const BATCH_SIZE = 5;
 
 function configSignature(cfg: TranslateConfig): string {
-  return JSON.stringify([cfg.provider, cfg.targetLang, cfg.apiBaseUrl, cfg.model, Boolean(cfg.apiKey)]);
+  return JSON.stringify([cfg.provider, cfg.targetLang, cfg.apiBaseUrl, cfg.model, Boolean(cfg.apiKey), Boolean(cfg.webOnly)]);
 }
 
 export function usePaperTranslation(
@@ -48,8 +51,10 @@ export function usePaperTranslation(
   const [doneCount, setDoneCount] = useState(0);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<DisplayMessage | null>(null);
-  const [config, setConfig] = useState<TranslateConfig>(DEFAULT_TRANSLATE_CONFIG);
+  const [loadedConfig, setConfig] = useState<TranslateConfig | null>(null);
+  const config = loadedConfig ?? DEFAULT_TRANSLATE_CONFIG;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const extensionSettings = useExtensionTranslateSettings(loadedConfig, settingsOpen);
   const [consentMode, setConsentMode] = useState<Exclude<TranslateDisplayMode, 'off'> | null>(null);
 
   const lastActiveModeRef = useRef<Exclude<TranslateDisplayMode, 'off'>>('translated');
@@ -141,7 +146,6 @@ export function usePaperTranslation(
             const slice = pending.slice(i, i + BATCH_SIZE);
             const translations = await readerTranslator.translateTexts(
               slice.map((b) => b.text),
-              configRef.current,
             );
             if (token !== runTokenRef.current || controller.signal.aborted) return;
 
@@ -160,6 +164,13 @@ export function usePaperTranslation(
           setDoneCount(nextDone.size);
         } catch (err) {
           if (token !== runTokenRef.current || controller.signal.aborted) return;
+          if (err instanceof LocalizedError && err.uiMessage.key === 'translate.freeConsentRequired' && displayModeRef.current !== 'off') {
+            setConsentMode(displayModeRef.current);
+            setDisplayMode('off');
+            displayModeRef.current = 'off';
+            stop();
+            return;
+          }
           const notice =
             err instanceof TypeError
               ? message('translate.unreachable')
@@ -176,7 +187,7 @@ export function usePaperTranslation(
         setRunning(false);
       }
     },
-    [],
+    [stop],
   );
 
   useEffect(() => {
@@ -234,7 +245,8 @@ export function usePaperTranslation(
         setError(message('translate.configureFirst'));
         return;
       }
-      if (!consented && displayModeRef.current === 'off' && needsFreeTranslateConsent(cfg)) {
+      if (!consented && displayModeRef.current === 'off' &&
+          extensionSettings?.usesFreeChannel !== false && needsFreeTranslateConsent(cfg)) {
         setConsentMode(mode);
         return;
       }
@@ -245,7 +257,7 @@ export function usePaperTranslation(
         void runLoop(pdfDoc, numPages);
       }
     },
-    [pdfDoc, numPages, runLoop, stop],
+    [pdfDoc, numPages, runLoop, stop, extensionSettings],
   );
 
   const setMode = useCallback((mode: TranslateDisplayMode) => startMode(mode), [startMode]);
@@ -291,6 +303,7 @@ export function usePaperTranslation(
     running,
     error,
     config,
+    extensionSettings,
     settingsOpen,
     setSettingsOpen,
     updateConfig,

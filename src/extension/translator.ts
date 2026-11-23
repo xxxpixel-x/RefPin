@@ -180,6 +180,6 @@ async function translateBatchFree(
   return results;
 }
 
-export const { loadTranslateConfig, saveTranslateConfig, translateTexts } = createTranslator(
+export const { loadTranslateConfig, saveTranslateConfig, translateTexts, testConnection } = createTranslator(
   extensionConfigStorage, DEFAULT_TRANSLATE_CONFIG, translateBatchFree,
 );
