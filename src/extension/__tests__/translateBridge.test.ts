@@ -10,6 +10,7 @@ import {
   testExtensionTranslation, webTranslator, type TranslateConfig,
 } from '../../services/translator';
 import { installWebBridge } from '../pdfBridge';
+import { streamExtensionExplanation } from '../../services/explanationBridge';
 import type { ExtensionMessage } from '../protocol';
 
 const extensionConfig: TranslateConfig = {
@@ -19,6 +20,16 @@ const extensionConfig: TranslateConfig = {
 const reader = { id: 'refpin', frameId: 0, tab: { id: 1 }, url: 'http://localhost:5173/' };
 let sender: chrome.runtime.MessageSender;
 let receive: Parameters<typeof chrome.runtime.onMessage.addListener>[0];
+let receivePort: (port: chrome.runtime.Port) => void;
+
+function connectPort({ name }: { name: string }): chrome.runtime.Port {
+  let onRequest: (value: unknown) => void, onReply: (value: unknown) => void;
+  const disconnects: Array<() => void> = [];
+  const common = { name, sender, onDisconnect: { addListener: (callback: () => void) => disconnects.push(callback) },
+    disconnect: () => disconnects.splice(0).forEach(fn => fn()) };
+  receivePort({ ...common, onMessage: { addListener: cb => { onRequest = cb; } }, postMessage: value => onReply(value) });
+  return { ...common, onMessage: { addListener: cb => { onReply = cb; } }, postMessage: value => onRequest(value) };
+}
 const sendMessage = vi.fn((request: ExtensionMessage) => new Promise(resolve => receive(request, sender, resolve)));
 const readConfig = vi.fn(async () => ({ [STORAGE_KEY_TRANSLATE_CONFIG]: extensionConfig }));
 const fetch = vi.fn<typeof globalThis.fetch>();
@@ -30,7 +41,8 @@ beforeAll(async () => {
   vi.stubGlobal('fetch', fetch);
   const listener = { addListener: vi.fn() };
   vi.stubGlobal('chrome', {
-    runtime: { id: reader.id, onInstalled: listener, sendMessage, onMessage: {
+    runtime: { id: reader.id, onInstalled: listener, sendMessage, connect: connectPort,
+      onConnect: { addListener: (cb: typeof receivePort) => { receivePort = cb; } }, onMessage: {
       addListener: (callback: typeof receive) => { receive = callback; },
     } },
     storage: { local: { get: readConfig }, session: { get: async (key: string) => (key in grants ? { [key]: grants[key] } : {}) } },
@@ -45,6 +57,38 @@ beforeAll(async () => {
     window.dispatchEvent(new MessageEvent('message', { data, origin: location.origin, source: window }));
   }));
   installWebBridge();
+});
+
+it('解释复用扩展配置，转发流式正文；停止时取消后台请求', async () => {
+  const settings = await getExtensionTranslateSettings(await webTranslator.loadTranslateConfig());
+  expect(settings?.explanationService).toBe('remote');
+  const encoder = new TextEncoder();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  fetch.mockResolvedValue(new Response(new ReadableStream({ start(c) { writer = c; } })));
+  const emit = vi.fn();
+  const controller = new AbortController();
+  const stream = streamExtensionExplanation('摘录', 'en', true, controller.signal, emit);
+  writer.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"解释"}}]}\n\n'));
+  await vi.waitFor(() => expect(emit).toHaveBeenCalledWith('解释'));
+  expect(fetch.mock.lastCall?.[1]?.headers).toMatchObject({ Authorization: 'Bearer ' + extensionConfig.apiKey });
+  expect(JSON.stringify(post.mock.calls)).not.toContain(extensionConfig.apiKey);
+  controller.abort();
+  await expect(stream).rejects.toMatchObject({ name: 'AbortError' });
+  expect(fetch.mock.lastCall?.[1]?.signal?.aborted).toBe(true);
+  writer.close();
+});
+
+it('解释桥接拒绝未同意的远端请求、未经授权的密钥使用及非受信任来源', async () => {
+  const request = (allowRemote = true) => streamExtensionExplanation('摘录', 'en', allowRemote,
+    new AbortController().signal, vi.fn());
+  await expect(request(false)).rejects.toMatchObject({ uiMessage: { key: 'explain.consentTitle' } });
+  grants = {};
+  await expect(request()).rejects.toMatchObject({ uiMessage: { key: 'explain.configure' } });
+  sender = { ...reader, frameId: 1 };
+  readConfig.mockClear();
+  await expect(request()).rejects.toMatchObject({ uiMessage: { key: 'translate.requestFailed' } });
+  expect(readConfig).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 beforeEach(() => {

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { Check, Copy, Languages, MessageSquarePlus, Settings } from 'lucide-react';
 import { HighlightColors, type MenuPoint } from './HighlightEditor';
 import { readHighlightSelection, readSelectionText } from './pdfSelection';
+import { ExplanationPanel } from './ExplanationPanel';
 import type { Highlight, HighlightSelection } from '../../types/paper';
 import { useReaderStore } from '../../store/useReaderStore';
 import { useExtensionTranslateSettings } from '../../services/useExtensionTranslateSettings';
@@ -17,6 +18,7 @@ import {
 } from '../../services/translator';
 
 interface Anchor {
+  pages: HighlightSelection[];
   text: string;
   left: number;
   edge: number;
@@ -40,6 +42,7 @@ export function SelectionToolbar({ viewerRef, onOpenSettings, onAnnotate }: Sele
     let dragging = false;
     let frame = 0;
     let savedText = '';
+    let selectedPages: HighlightSelection[] = [];
     let backwards = false;
 
     function hide() {
@@ -58,7 +61,7 @@ export function SelectionToolbar({ viewerRef, onOpenSettings, onAnnotate }: Sele
       if (!rect) { setAnchor(null); return; }
       const above = window.innerHeight - rect.bottom < Math.min(320, rect.top);
       setAnchor({
-        text, above, edge: above ? window.innerHeight - rect.top + 6 : rect.bottom + 6,
+        text, pages: selectedPages, above, edge: above ? window.innerHeight - rect.top + 6 : rect.bottom + 6,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - Math.min(320, window.innerWidth - 16) - 8)),
       });
     }
@@ -75,6 +78,7 @@ export function SelectionToolbar({ viewerRef, onOpenSettings, onAnnotate }: Sele
       if (!viewer.contains(range.commonAncestorContainer)) return hide();
       savedText = readSelectionText(range, viewer);
       if (!savedText) return hide();
+      selectedPages = readHighlightSelection(range, viewer);
       backwards = selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset;
       rangeRef.current = range.cloneRange();
       measure(rangeRef.current, savedText);
@@ -146,6 +150,7 @@ export function SelectionToolbar({ viewerRef, onOpenSettings, onAnnotate }: Sele
       style={{ left: anchor.left, [anchor.above ? 'bottom' : 'top']: anchor.edge, maxHeight: Math.max(48, window.innerHeight - anchor.edge - 8) }}
       onMouseDown={event => { if ((event.target as Element).closest('button')) event.preventDefault(); }}>
       <SelectionActions key={anchor.text} text={anchor.text} restoreSelection={restoreSelection} onOpenSettings={onOpenSettings} />
+      {!!anchor.pages.length && <ExplanationPanel target={{ selection: anchor.pages }} />}
       <div className="flex items-center justify-between gap-2 border-t border-paper-border px-1 py-0.5">
         <HighlightColors onChoose={mark} />
         <button type="button" className={actionClass} onClick={() => mark()}>

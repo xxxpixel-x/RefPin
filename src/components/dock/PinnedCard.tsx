@@ -1,4 +1,5 @@
 import { ReferenceDetails } from '../peek/ReferenceDetails';
+import { ExplanationPanel, isExplanationKind } from '../peek/ExplanationPanel';
 import { usePreviewColor } from '../peek/usePreviewColor';
 import { pinTitle } from '../../i18n/pinTitle';
 import { t } from '../../i18n/core';
@@ -391,6 +392,9 @@ export function PinnedCard({
               <BacklinkStrip backlinks={backlinks} onJumpToBacklink={onJumpToBacklink} />
             </div>
           )}
+          {isExplanationKind(item.kind) && <ExplanationPanel target={{ asset: {
+            key: item.id, label: item.title, caption: item.subtitle ?? '', pageNumber: item.pageNumber,
+          }, rect: item.originalCropRect ?? item.cropRect }} />}
         </div>
       )}
     </article>

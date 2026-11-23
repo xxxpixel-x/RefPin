@@ -12,3 +12,4 @@ eval/report.json
 # 本地协作说明与笔记，不进仓库
 AGENTS.md
 *.local.md
+*.tsbuildinfo

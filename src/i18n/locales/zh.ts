@@ -1,6 +1,19 @@
 import type { MessageKey } from '../types';
 
 export const zh = {
+  "explain.action": "解释",
+  "explain.configure": "需要在翻译设置中配置 AI 服务",
+  "explain.native": "用浏览器 AI 解释",
+  "explain.consentTitle": "允许向已配置的 AI 服务发送论文摘录吗？",
+  "explain.consentBody": "解释图表或公式时，会发送图注或公式文本及最多三段引用它的正文。解释选文时，会发送选中文字、所在段落和前后各一段，同时附上相关术语释义和页码。PDF 文件和页面图片保留在本机。",
+  "explain.consentDestination": "发送到：{destination}",
+  "explain.extensionService": "扩展中配置的 AI 服务",
+  "explain.allow": "同意并解释",
+  "explain.running": "正在生成解释…",
+  "explain.stop": "停止",
+  "explain.stopped": "已停止解释",
+  "explain.disclaimer": "AI 生成，可能有误",
+  "explain.sources": "依据页码",
   "backup.export": "导出阅读档案",
   "backup.import": "导入阅读档案",
   "backup.exportHint": "备份最近阅读、进度、钉板、高亮批注和界面设置。重新打开论文时需提供原 PDF。",

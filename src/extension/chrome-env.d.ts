@@ -7,6 +7,16 @@ declare namespace chrome {
   }
 
   namespace runtime {
+    interface Port {
+      name: string;
+      sender?: MessageSender;
+      postMessage(message: unknown): void;
+      disconnect(): void;
+      onMessage: { addListener(callback: (message: unknown) => void): void };
+      onDisconnect: { addListener(callback: () => void): void };
+    }
+    function connect(options: { name: string }): Port;
+    const onConnect: { addListener(callback: (port: Port) => void): void };
     const id: string;
     const lastError: { message?: string } | undefined;
     function getURL(path: string): string;

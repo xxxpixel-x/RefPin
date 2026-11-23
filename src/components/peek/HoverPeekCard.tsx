@@ -1,4 +1,5 @@
 import { ReferenceDetails } from './ReferenceDetails';
+import { ExplanationPanel, isExplanationKind } from './ExplanationPanel';
 import { usePreviewColor } from './usePreviewColor';
 import { t } from '../../i18n/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -86,6 +87,7 @@ export function HoverPeekCard({
   const enterTimer = useRef<number>();
   const leaveTimer = useRef<number>();
   const hoveringCard = useRef(false);
+  const explaining = useRef(false);
   const peekRef = useRef(onPeek);
   peekRef.current = onPeek;
   const dismissRef = useRef(onDismiss);
@@ -118,7 +120,7 @@ export function HoverPeekCard({
     window.clearTimeout(leaveTimer.current);
     if (!trigger) {
       if (activeRef.current?.locked) setActiveTrigger(null);
-      else if (!hoveringCard.current) {
+      else if (!hoveringCard.current && !explaining.current) {
         leaveTimer.current = window.setTimeout(() => setActiveTrigger(null), HIDE_DELAY);
       }
       return;
@@ -127,6 +129,7 @@ export function HoverPeekCard({
       const sameMention = activeRef.current?.mention.id === trigger.mention.id;
       setActiveTrigger(trigger);
       if (sameMention) return;
+      explaining.current = false;
       setActiveRefIndex(0);
       peekRef.current(trigger.mention);
     };
@@ -224,7 +227,7 @@ export function HoverPeekCard({
 
   const scheduleClose = () => {
     hoveringCard.current = false;
-    if (activeTrigger.locked) return;
+    if (activeTrigger.locked || explaining.current) return;
     leaveTimer.current = window.setTimeout(() => setActiveTrigger(null), HIDE_DELAY);
   };
 
@@ -480,6 +483,12 @@ export function HoverPeekCard({
               {t('peek.source')}
             </button>
           </div>
+          {isExplanationKind(citation.kind) && (asset || citation.targetKeys[0]) && (
+            <ExplanationPanel onInteract={() => { explaining.current = true; window.clearTimeout(leaveTimer.current); }}
+              target={{ asset: asset ?? { key: citation.targetKeys[0], label: citation.rawText, caption: '',
+                pageNumber: citation.nativeDest?.pageNumber ?? citation.pageNumber },
+                rect: asset?.cropRect ?? matchedFallback?.cropRect }} />
+          )}
         </div>
       )}
       </>}

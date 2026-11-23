@@ -17,7 +17,9 @@ export interface TranslatedBlock extends PdfParagraphBlock {
   translated?: string;
 }
 
-function mergeLinesToText(lines: TextLine[]): string {
+type ParagraphLine = Pick<TextLine, 'text' | 'rect'>;
+
+function mergeLinesToText(lines: ParagraphLine[]): string {
   let acc = '';
   for (const line of lines) {
     const t = line.text.trim();
@@ -44,7 +46,7 @@ function mergeLinesToText(lines: TextLine[]): string {
     .trim();
 }
 
-function unionRects(lines: TextLine[]): NormalizedRect {
+function unionRects(lines: ParagraphLine[]): NormalizedRect {
   let left = 1;
   let top = 1;
   let right = 0;
@@ -132,16 +134,18 @@ function shouldSkipBlockForOverlay(
   return false;
 }
 
-function groupColumnBlocks(
-  lines: TextLine[],
+export function groupParagraphBlocks(
+  lines: ParagraphLine[],
   pageNumber: number,
   prefix: string,
+  forExplanation = false,
 ): PdfParagraphBlock[] {
   const blocks: PdfParagraphBlock[] = [];
   if (lines.length === 0) return blocks;
 
-  const sorted = [...lines].sort((a, b) => a.rect.y - b.rect.y);
-  let bucket: TextLine[] = [];
+  // 解释使用已有的阅读顺序（含 OCR），翻译层传入的是单栏原始文本行。
+  const sorted = forExplanation ? lines : [...lines].sort((a, b) => a.rect.y - b.rect.y);
+  let bucket: ParagraphLine[] = [];
   let idx = 0;
 
   const flush = () => {
@@ -155,7 +159,7 @@ function groupColumnBlocks(
     const heading = isHeadingText(text) || (pageNumber === 1 && idx === 0 && rect.y < 0.18 && lineCount <= 3);
     const caption = isCaptionText(text);
 
-    if (shouldSkipBlockForOverlay(text, rect, lineCount, heading, caption, pageNumber)) {
+    if (!forExplanation && shouldSkipBlockForOverlay(text, rect, lineCount, heading, caption, pageNumber)) {
       return;
     }
 
@@ -199,6 +203,7 @@ function groupColumnBlocks(
       prev.rect.x > line.rect.x + line.rect.width + 0.02;
 
     if (
+      (forExplanation && line.rect.y + avgHeight * 0.5 < prev.rect.y) ||
       gap > avgHeight * 0.85 ||
       heightJump ||
       indentShift ||
@@ -239,7 +244,7 @@ export async function extractPdfPageBlocks(
 
   const isTwoCol = leftLines.length >= 4 && rightLines.length >= 4;
   if (!isTwoCol) {
-    return groupColumnBlocks(lines, pageNumber, 'all');
+    return groupParagraphBlocks(lines, pageNumber, 'all');
   }
 
   const colTop = Math.min(
@@ -250,9 +255,9 @@ export async function extractPdfPageBlocks(
   const bottomFull = fullLines.filter((l) => l.rect.y >= colTop + 0.01);
 
   return [
-    ...groupColumnBlocks(topFull, pageNumber, 'top'),
-    ...groupColumnBlocks(leftLines, pageNumber, 'left'),
-    ...groupColumnBlocks(rightLines, pageNumber, 'right'),
-    ...groupColumnBlocks(bottomFull, pageNumber, 'bot'),
+    ...groupParagraphBlocks(topFull, pageNumber, 'top'),
+    ...groupParagraphBlocks(leftLines, pageNumber, 'left'),
+    ...groupParagraphBlocks(rightLines, pageNumber, 'right'),
+    ...groupParagraphBlocks(bottomFull, pageNumber, 'bot'),
   ];
 }

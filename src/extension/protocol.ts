@@ -90,6 +90,7 @@ export interface PendingPinRecord {
 }
 
 export type ExtensionMessage =
+  | { type: 'REFPIN_WEB_EXPLAIN'; text: string; targetLang: TranslateConfig['targetLang']; allowRemote: boolean }
   | { type: 'REFPIN_EXTRACT_DOM'; force?: boolean }
   | { type: 'REFPIN_SCROLL_TO_ANCHOR'; anchorId: string }
   | { type: 'REFPIN_START_PAGE_SNIP' }

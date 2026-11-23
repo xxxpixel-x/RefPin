@@ -13,6 +13,7 @@ import {
 
 import { canGrantReader, canSpendSavedApiKey, dismissedKey, grantKey, handleBridge, trustedReader } from './pdfBridge';
 import { inspectTabUrl } from './urlRules';
+import { explanationService, MAX_CONTEXT_LENGTH, streamChatExplanation } from '../services/explainer';
 
 const MENU_FULL_READER = 'refpin-open-full-reader';
 const MENU_ALLOW_READER = 'refpin-allow-reader';
@@ -88,6 +89,37 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.tabs.onRemoved.addListener(id => {
   void chrome.storage.session.remove([dismissedKey(id), grantKey(id)]).catch(() => {});
+});
+
+chrome.runtime.onConnect?.addListener(port => {
+  if (port.name !== 'REFPIN_WEB_EXPLAIN') return;
+  const controller = new AbortController();
+  port.onDisconnect.addListener(() => controller.abort());
+  let started = false;
+  port.onMessage.addListener(raw => {
+    if (started) return;
+    started = true;
+    const request = raw as Partial<Extract<ExtensionMessage, { type: 'REFPIN_WEB_EXPLAIN' }>> | null;
+    void (async () => {
+      if (!port.sender || !await trustedReader(port.sender) || request?.type !== 'REFPIN_WEB_EXPLAIN' ||
+          typeof request.text !== 'string' || !request.text.trim() || request.text.length > MAX_CONTEXT_LENGTH) {
+        port.postMessage({ error: message('translate.requestFailed') }); return;
+      }
+      const config = await loadTranslateConfig();
+      const service = explanationService(config);
+      if (!service || (config.apiKey && !await canSpendSavedApiKey(port.sender)) || config.targetLang !== request.targetLang) {
+        port.postMessage({ error: message('explain.configure') }); return;
+      }
+      if (service === 'remote' && request.allowRemote !== true) {
+        port.postMessage({ error: message('explain.consentTitle') }); return;
+      }
+      controller.signal.throwIfAborted();
+      await streamChatExplanation(config, request.text, controller.signal, delta => port.postMessage({ delta }));
+      port.postMessage({ done: true });
+    })().catch(error => {
+      if (!controller.signal.aborted) port.postMessage({ error: translationFailure(error) });
+    });
+  });
 });
 
 chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
@@ -203,7 +235,8 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
         ? saved
         : { ...DEFAULT_TRANSLATE_CONFIG, targetLang: saved.targetLang };
       if (request.type !== 'REFPIN_WEB_TRANSLATE') {
-        sendResponse({ ok: true, summary: summarizeTranslateConfig(config), usesFreeChannel: usesFreeTranslateChannel(config) });
+        sendResponse({ ok: true, summary: summarizeTranslateConfig(config), usesFreeChannel: usesFreeTranslateChannel(config),
+          explanationService: explanationService(config) });
         return;
       }
       if (request.connectionTest === true) {

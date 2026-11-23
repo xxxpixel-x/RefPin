@@ -1,6 +1,7 @@
 import { fetchPdfBytes, isBridgePdfUrl } from '../services/arxivFetch';
 import { MAX_BRIDGE_TEXT_LENGTH, MAX_BRIDGE_TEXTS, type TranslateBridgeReply } from '../services/translator';
 import type { ExtensionMessage } from './protocol';
+import { MAX_CONTEXT_LENGTH } from '../services/explainer';
 
 export const grantKey = (tabId: number) => 'refpin.readerGrant.' + tabId;
 export const dismissedKey = (tabId: number) => 'refpin.badgeDismissed.' + tabId;
@@ -63,10 +64,39 @@ export async function handleBridge(sender: chrome.runtime.MessageSender, url?: s
 
 export function installWebBridge() {
   if (window !== window.top || !document.querySelector('meta[name="application-name"][content="RefPin"]')) return;
+  const streams = new Map<string, chrome.runtime.Port>();
+  window.addEventListener('pagehide', () => {
+    for (const port of streams.values()) port.disconnect();
+    streams.clear();
+  });
   window.addEventListener('message', async event => {
     if (event.source !== window || event.origin !== location.origin) return;
     const data = event.data;
     if (data?.source !== 'refpin-web' || typeof data.requestId !== 'string' || data.requestId.length > 80) return;
+    if (data.type === 'REFPIN_EXT_EXPLAIN_STOP') {
+      streams.get(data.requestId)?.disconnect();
+      streams.delete(data.requestId);
+      return;
+    }
+    if (data.type === 'REFPIN_EXT_EXPLAIN') {
+      if (streams.has(data.requestId) || typeof data.text !== 'string' || !data.text.trim() ||
+          data.text.length > MAX_CONTEXT_LENGTH || !['en', 'zh-CN'].includes(data.targetLang)) return;
+      const reply = (payload: unknown) => window.postMessage({
+        source: 'refpin-extension', type: data.type, requestId: data.requestId, payload,
+      }, location.origin);
+      try {
+        const port = chrome.runtime.connect({ name: 'REFPIN_WEB_EXPLAIN' });
+        streams.set(data.requestId, port);
+        port.onMessage.addListener(reply);
+        port.onDisconnect.addListener(() => {
+          streams.delete(data.requestId);
+          reply({ disconnected: true });
+        });
+        port.postMessage({ type: 'REFPIN_WEB_EXPLAIN', text: data.text, targetLang: data.targetLang,
+          allowRemote: data.allowRemote === true } satisfies ExtensionMessage);
+      } catch { streams.delete(data.requestId); reply({ disconnected: true }); }
+      return;
+    }
     const ping = data.type === 'REFPIN_EXT_PING';
     const isConfig = data.type === 'REFPIN_EXT_TRANSLATE_CONFIG';
     const isPdf = data.type === 'REFPIN_EXT_FETCH_PDF' && typeof data.url === 'string' && isBridgePdfUrl(data.url);
@@ -95,6 +125,7 @@ export function installWebBridge() {
       const { provider, model, targetLang, hasApiKey } = reply.summary;
       response.summary = { provider, model, targetLang, hasApiKey };
       response.usesFreeChannel = reply.usesFreeChannel;
+      if (reply.explanationService) response.explanationService = reply.explanationService;
     } else if (isPdf) {
       response.base64 = reply.base64;
     } else if (isTranslate) {

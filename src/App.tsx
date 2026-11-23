@@ -22,6 +22,7 @@ import { OnboardingCoach } from './components/layout/OnboardingCoach';
 import { useOnboarding } from './store/onboarding';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
 import { SelectionToolbar } from './components/peek/SelectionToolbar';
+import { ExplanationProvider } from './components/peek/ExplanationPanel';
 import { HighlightEditor, type MenuPoint } from './components/peek/HighlightEditor';
 import { PinDock } from './components/dock/PinDock';
 import { useDockPopout } from './components/dock/useDockPopout';
@@ -1015,6 +1016,8 @@ export default function App() {
   );
 
   return (
+    <ExplanationProvider config={translation.config} extensionSettings={translation.extensionSettings}
+      setSettingsOpen={translation.setSettingsOpen} onJump={handleJump}>
     <div className="flex h-full flex-col bg-paper-bg">
       <TopBar
         onBackup={setBackupAction}
@@ -1199,5 +1202,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </ExplanationProvider>
   );
 }

@@ -153,18 +153,22 @@ export async function fetchWithTimeout(
   }
 }
 
+export function chatCompletionsUrl(apiBaseUrl: string): URL {
+  let base: URL;
+  try { base = new URL(apiBaseUrl); }
+  catch { throw new LocalizedError(message('translate.invalidConfig')); }
+  if (!['https:', 'http:'].includes(base.protocol)) throw new LocalizedError(message('translate.invalidProtocol'));
+  const path = base.pathname.replace(/\/+$/, '');
+  base.pathname = path.endsWith('/chat/completions') ? path : path + '/chat/completions';
+  return base;
+}
+
 async function translateBatchOpenAI(
   texts: string[],
   config: TranslateConfig,
   allowPlainText: boolean,
 ): Promise<string[]> {
-  let base: URL;
-  try { base = new URL(config.apiBaseUrl); }
-  catch { throw new LocalizedError(message('translate.invalidConfig')); }
-  if (!['https:', 'http:'].includes(base.protocol)) throw new LocalizedError(message('translate.invalidProtocol'));
-  const path = base.pathname.replace(/\/+$/, '');
-  base.pathname = path.endsWith('/chat/completions') ? path : path + '/chat/completions';
-  const endpoint = base.toString();
+  const endpoint = chatCompletionsUrl(config.apiBaseUrl).toString();
   const targetName = config.targetLang === 'zh-CN' ? 'Simplified Chinese' : 'English';
 
   const response = await fetchWithTimeout(
@@ -262,6 +266,7 @@ export interface TranslateBridgeReply {
   translations?: string[];
   summary?: TranslateConfigSummary;
   usesFreeChannel?: boolean;
+  explanationService?: 'local' | 'remote';
   error?: LocalizedMessage;
 }
 
@@ -313,6 +318,7 @@ function requestExtensionBridge(
 export interface ExtensionTranslateSettings {
   summary: TranslateConfigSummary;
   usesFreeChannel: boolean;
+  explanationService?: 'local' | 'remote';
 }
 
 export const MAX_BRIDGE_TEXTS = 20;
@@ -322,7 +328,8 @@ export async function getExtensionTranslateSettings(config: TranslateConfig): Pr
   if (!canUseExtensionSettings(config) || Date.now() < extBridgeUnavailableUntil) return null;
   settingsRequest ??= requestExtensionBridge({}, 'REFPIN_EXT_TRANSLATE_CONFIG', 1000).then(reply => {
     if (reply.ok && reply.summary && typeof reply.usesFreeChannel === 'boolean') {
-      detectedExtensionSettings = { summary: reply.summary, usesFreeChannel: reply.usesFreeChannel };
+      detectedExtensionSettings = { summary: reply.summary, usesFreeChannel: reply.usesFreeChannel,
+        ...(reply.explanationService && { explanationService: reply.explanationService }) };
     } else {
       detectedExtensionSettings = null;
       extBridgeUnavailableUntil = Date.now() + 30_000;
@@ -361,6 +368,12 @@ async function translateWithExtensionSettings(texts: string[]): Promise<string[]
   return outputs.map(parts => parts.join(' '));
 }
 
+/** 只使用已在本机就绪的模型。探测期间不会创建会话或启动下载。 */
+export async function browserModelReady<T>(api: { availability?(options: T): Promise<string> } | undefined, options: T) {
+  try { return await api?.availability?.(options) === 'available'; }
+  catch { return false; }
+}
+
 async function tryTranslateViaBrowserNative(
   texts: string[],
   targetLang: TranslateTargetLang,
@@ -370,8 +383,7 @@ async function tryTranslateViaBrowserNative(
   const sourceLanguage = targetLang === 'zh-CN' ? 'en' : 'zh';
   const targetLanguage = targetLang === 'zh-CN' ? 'zh' : 'en';
   try {
-    const status = await api.availability({ sourceLanguage, targetLanguage });
-    if (status !== 'available') return null;
+    if (!await browserModelReady(api, { sourceLanguage, targetLanguage })) return null;
     const instance = await api.create({ sourceLanguage, targetLanguage });
     const results: string[] = [];
     for (const text of texts) {
