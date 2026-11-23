@@ -83,7 +83,7 @@ export function TopBar({
   const [pageInput, setPageInput] = useState('');
 
   return (
-    <header className="relative z-30 flex h-[52px] shrink-0 items-center gap-2 border-b border-paper-border bg-paper-card/85 px-3 backdrop-blur">
+    <header className="relative z-30 flex min-h-[52px] shrink-0 flex-wrap items-center gap-2 border-b border-paper-border bg-paper-card/85 px-3 py-1.5 backdrop-blur md:h-[52px] md:flex-nowrap md:py-0">
       <button type="button" aria-pressed={drawerOpen} onClick={onToggleDrawer}
         className={clsx(toolButton, toggledButton)} title={t('reader.toggleAssets')} aria-label={t('reader.toggleAssets')}>
         <PanelLeft className="h-3.5 w-3.5" />

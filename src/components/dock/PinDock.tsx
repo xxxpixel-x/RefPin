@@ -48,6 +48,7 @@ interface PinDockProps {
   width: number;
   height: number;
   dockCollapsed?: boolean;
+  bottomDrawer?: boolean;
   onDockCollapsedChange?: (collapsed: boolean) => void;
   workspaceRef?: RefObject<HTMLDivElement>;
   onPositionChange: (position: DockEdge) => void;
@@ -122,6 +123,7 @@ export function PinDock({
   width,
   height,
   dockCollapsed: dockCollapsedProp,
+  bottomDrawer = false,
   onDockCollapsedChange,
   workspaceRef,
   onPositionChange,
@@ -174,6 +176,7 @@ export function PinDock({
   const [viewportTick, setViewportTick] = useState(0);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
   const resizingRef = useRef<{
     axis: 'x' | 'y';
     pos: DockEdge;
@@ -405,17 +408,30 @@ export function PinDock({
           'relative z-10 flex shrink-0 border-paper-border bg-paper-card/90',
           dockOrderClass,
           dockBorderClass,
-          isHorizontal ? 'h-9 w-full flex-row items-center' : 'h-full w-9 flex-col items-center',
+          isHorizontal ? [bottomDrawer ? 'h-11' : 'h-9', 'w-full flex-row items-center'] : 'h-full w-9 flex-col items-center',
         )}
       >
         <button
           type="button"
           onClick={() => setDockCollapsed(false)}
+          onPointerDown={event => {
+            if (!bottomDrawer || event.pointerType !== 'touch') return;
+            swipe.current = event.isPrimary ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
+          }}
+          onPointerCancel={() => { swipe.current = null; }}
+          onPointerUp={event => {
+            const start = swipe.current;
+            swipe.current = null;
+            if (!start || event.pointerId !== start.id) return;
+            const distance = start.y - event.clientY;
+            if (distance > 24 && distance > Math.abs(event.clientX - start.x)) setDockCollapsed(false);
+          }}
           title={t('dock.expand')}
-          aria-label={t('dock.expand')}
+          aria-label={bottomDrawer ? t('dock.drawerExpand', { count: items.length }) : t('dock.expand')}
           aria-expanded={false}
           className={clsx(
             'group flex h-full w-full items-center gap-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink',
+            bottomDrawer && 'touch-none justify-center',
             isHorizontal ? 'flex-row px-3' : 'flex-col py-3',
           )}
         >
@@ -450,14 +466,14 @@ export function PinDock({
   return (
     <>
       <aside
-        style={poppedOut ? undefined : dockStyle}
+        style={poppedOut ? undefined : bottomDrawer ? { ...dockStyle, maxHeight: '50%' } : dockStyle}
         className={clsx(
           'relative z-10 flex min-h-0 min-w-0 shrink-0 flex-col border-paper-border bg-paper-bg',
           poppedOut ? 'h-full w-full' : [dockOrderClass, dockBorderClass],
         )}
       >
         {/* 自由拖拽宽/高手柄 */}
-        {!poppedOut && !allHorizontalCollapsed && (
+        {!poppedOut && !bottomDrawer && !allHorizontalCollapsed && (
           <div
             role="separator"
             aria-orientation={isHorizontal ? 'horizontal' : 'vertical'}
@@ -483,12 +499,12 @@ export function PinDock({
 
         {/* 标题栏：支持按住拖动停靠到页面上下左右 + 快捷切换按钮 */}
         <div
-          onMouseDown={poppedOut ? undefined : startDockDrag}
-          title={poppedOut ? undefined : t('dock.dragToEdge')}
+          onMouseDown={poppedOut || bottomDrawer ? undefined : startDockDrag}
+          title={poppedOut || bottomDrawer ? undefined : t('dock.dragToEdge')}
           className={clsx('flex min-h-10 shrink-0 select-none flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-paper-border px-2.5 py-1',
-            !poppedOut && 'cursor-grab active:cursor-grabbing')}
+            !poppedOut && !bottomDrawer && 'cursor-grab active:cursor-grabbing')}
         >
-          {!poppedOut && <GripVertical className="h-3.5 w-3.5 shrink-0 text-paper-muted/70" />}
+          {!poppedOut && !bottomDrawer && <GripVertical className="h-3.5 w-3.5 shrink-0 text-paper-muted/70" />}
           <Pin className="h-3.5 w-3.5 shrink-0 text-paper-gold" />
           <span className="truncate text-xs font-medium text-paper-ink">
             {t('dock.title')}
@@ -516,7 +532,7 @@ export function PinDock({
                   onClick={() => { setExportMenu(false); onExport(mode); }}>{t(mode === 'copy' ? 'notes.copy' : 'notes.zip')}</button>)}
               </div>}
             </div>}
-            {!poppedOut && <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
+            {!poppedOut && !bottomDrawer && <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
               {POSITION_OPTIONS.map(({ key, hint, Icon }) => {
                 const active = position === key;
                 return (

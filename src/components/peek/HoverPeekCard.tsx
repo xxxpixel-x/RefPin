@@ -29,6 +29,7 @@ export interface PeekTrigger {
   anchorEl: HTMLElement;
   /** Opened by a click: stays open until dismissed instead of following the pointer. */
   locked?: boolean;
+  touch?: boolean;
 }
 
 interface HoverPeekCardProps {
@@ -176,7 +177,7 @@ export function HoverPeekCard({
     const top = below ? rect.bottom + gap : Math.max(12, rect.top - height - gap);
     const left = Math.min(
       Math.max(12, rect.left - 16),
-      window.innerWidth - CARD_WIDTH - 12,
+      Math.max(12, window.innerWidth - cardRef.current.offsetWidth - 12),
     );
     setPosition({ left, top });
   }, [activeTrigger]);
@@ -266,7 +267,8 @@ export function HoverPeekCard({
       onFocus={keepOpen}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose(); }}
       style={{ left: position.left, top: position.top, width: CARD_WIDTH }}
-      className="animate-fade-in-up fixed z-50 max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-paper-border bg-paper-card shadow-float"
+      className={clsx('animate-fade-in-up fixed z-50 max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-paper-border bg-paper-card shadow-float',
+        activeTrigger.touch && '[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_a]:min-h-[44px] [&_a]:min-w-[44px] [&_button>svg:only-child]:mx-auto')}
     >
       {definition && (
         <>

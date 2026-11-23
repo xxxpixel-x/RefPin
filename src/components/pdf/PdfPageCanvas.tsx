@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import type { GlossaryMention, Highlight, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
 import type { MenuPoint } from '../peek/HighlightEditor';
 import { FreeSnipOverlay } from './FreeSnipOverlay';
+import { beginMentionPress } from './mentionPress';
 
 export interface FlashHighlight {
   pageNumber: number;
@@ -37,7 +38,7 @@ interface Props {
   isCompanionPage?: boolean;
   onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onMentionLeave?: () => void;
-  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
+  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement, touch?: boolean) => void;
 }
 
 function overlayPosition(rect: NormalizedRect): CSSProperties {
@@ -93,6 +94,9 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hotspotsRef = useRef<HTMLDivElement>(null);
   const hoverRef = useRef<HTMLElement | null>(null);
+  const cancelTouch = useRef<() => void>();
+  const touchedMention = useRef(false);
+  useEffect(() => () => cancelTouch.current?.(), [pdfDoc, pageNumber, scale, isVisible, snipMode, mentions]);
   const pressRef = useRef<{ x: number; y: number; mention?: ReaderMention; dragged: boolean } | null>(null);
   const renderedScaleRef = useRef<number | null>(null);
   const renderedDocRef = useRef<PDFDocumentProxy | null>(null);
@@ -191,6 +195,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
       leaveMention();
       return;
     }
+    if (event.pointerType === 'touch') return;
     if (window.getSelection()?.toString().trim()) return leaveMention();
     const index = mentionAt(event);
     const anchor = hotspotsRef.current?.children[index] as HTMLElement | undefined;
@@ -206,17 +211,42 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   return (
     <div
       onPointerMove={handlePointerMove}
-      onPointerLeave={() => {
+      onPointerLeave={event => {
+        if (event.pointerType === 'touch') return;
         if (pressRef.current) pressRef.current.dragged = true;
         leaveMention();
       }}
       onPointerCancel={() => { pressRef.current = null; }}
       onPointerDown={event => {
+        cancelTouch.current?.();
+        cancelTouch.current = undefined;
+        touchedMention.current = false;
         if (snipMode || !rendered || event.button !== 0) return;
         leaveMention();
+        const index = mentionAt(event);
+        if (event.pointerType === 'touch') {
+          const chip = (event.target as Element).closest<HTMLElement>('[data-coach-citation]');
+          const anchor = chip ?? hotspotsRef.current?.children[index];
+          const mention = chip ? citations.find(cite => cite.id === chip.dataset.coachCitation) : mentions[index];
+          if (!event.isPrimary || (mention && anchor instanceof HTMLElement)) {
+            touchedMention.current = true;
+            pressRef.current = null;
+            event.preventDefault();
+            if (event.isPrimary && mention && anchor instanceof HTMLElement) {
+              cancelTouch.current = beginMentionPress(event.nativeEvent, anchor, () => onMentionClick?.(mention, anchor, true));
+            }
+            return;
+          }
+        }
         pressRef.current = {
-          x: event.clientX, y: event.clientY, mention: mentions[mentionAt(event)], dragged: false,
+          x: event.clientX, y: event.clientY, mention: mentions[index], dragged: false,
         };
+      }}
+      onClickCapture={event => {
+        if (touchedMention.current && event.detail !== 0) {
+          event.stopPropagation();
+          event.preventDefault();
+        }
       }}
       onClick={event => {
         const press = pressRef.current;
@@ -248,6 +278,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         const anchor = hotspotsRef.current?.children[index];
         if (anchor instanceof HTMLElement && mentions[index] === press.mention) onMentionClick?.(press.mention, anchor);
       }}
+      data-pdf-sheet=""
       data-page={isCompanionPage ? undefined : pageNumber}
       className={clsx(
         'relative shrink-0 rounded-sm bg-paper-card shadow-paper ring-1 ring-black/[0.04]',
@@ -324,9 +355,9 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
                         key={cite.id}
                         type="button"
                         data-coach-citation={cite.id}
-                        onMouseEnter={(e) => onMentionHover?.(cite, e.currentTarget)}
-                        onMouseLeave={() => onMentionLeave?.()}
-                        onFocus={(e) => onMentionHover?.(cite, e.currentTarget)}
+                        onPointerEnter={(e) => { if (e.pointerType !== 'touch') onMentionHover?.(cite, e.currentTarget); }}
+                        onPointerLeave={(e) => { if (e.pointerType !== 'touch') onMentionLeave?.(); }}
+                        onFocus={(e) => { if (!touchedMention.current || e.currentTarget.matches(':focus-visible')) onMentionHover?.(cite, e.currentTarget); }}
                         onBlur={() => onMentionLeave?.()}
                         onClick={(e) => {
                           e.stopPropagation();

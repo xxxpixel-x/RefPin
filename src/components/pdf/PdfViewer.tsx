@@ -17,6 +17,7 @@ import type { GlossaryMention, Highlight, InlineCitation, NormalizedRect, Reader
 import type { MenuPoint } from '../peek/HighlightEditor';
 import { useReaderStore } from '../../store/useReaderStore';
 import { PdfPageCanvas, type FlashHighlight } from './PdfPageCanvas';
+import { attachPinchZoom } from './pinchZoom';
 
 const NO_CITATIONS: InlineCitation[] = [];
 const NO_GLOSSARY_MENTIONS: GlossaryMention[] = [];
@@ -67,7 +68,7 @@ interface Props {
   onScrollTopChange?: (top: number) => void;
   onMentionHover?: (mention: ReaderMention, anchor: HTMLElement) => void;
   onMentionLeave?: () => void;
-  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement) => void;
+  onMentionClick?: (mention: ReaderMention, anchor: HTMLElement, touch?: boolean) => void;
   onPageChange?: (pageNumber: number) => void;
   /** Shrink to fit the viewer width when the paper first loads (new papers without a saved zoom). */
   fitWidthOnLoad?: boolean;
@@ -117,6 +118,10 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   const lastPageRef = useRef(0);
   const didInitialScrollRef = useRef(false);
   const [dims, setDims] = useState<Array<{ width: number; height: number }> | null>(null);
+  useEffect(() => {
+    if (!scrollRef.current || !dims || snipMode) return;
+    return attachPinchZoom(scrollRef.current, () => useReaderStore.getState().scale, useReaderStore.getState().setScale);
+  }, [dims, pdfDoc, translateMode, snipMode]);
   const [flash, setFlash] = useState<FlashHighlight | null>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
   const [selectedPages, setSelectedPages] = useState<[number, number] | null>(null);
@@ -388,7 +393,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
       ref={scrollRef}
       data-pdf-viewer
       onScroll={onScroll}
-      className="relative h-full w-full overflow-auto bg-paper-bg"
+      className="relative h-full w-full overflow-auto bg-paper-bg [touch-action:pan-x_pan-y]"
     >
       {snipMode && (
         <div className="pointer-events-none sticky top-3 z-40 flex justify-center">

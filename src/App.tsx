@@ -43,7 +43,7 @@ import { parsePaper, type ScannedPaper } from './engine/parsePaper';
 import { OcrBanner } from './components/pdf/OcrBanner';
 import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
 import { usePaperTranslation } from './services/usePaperTranslation';
-import { useReaderStore } from './store/useReaderStore';
+import { NARROW_DOCK_QUERY, useReaderStore, visibleDockCollapsed } from './store/useReaderStore';
 import { SAMPLES, getSampleById } from './config/samples';
 import {
   deletePaperArchive, listRecentPapers, loadPaperArchive, loadPdfBlob,
@@ -123,10 +123,19 @@ export default function App() {
   const drawerSection = useReaderStore((state) => state.drawerSection);
   const snipMode = useReaderStore((state) => state.snipMode);
   const outline = useReaderStore(state => state.outline);
-  const dockPosition = useReaderStore((state) => state.dockPosition);
+  const bottomDrawer = useReaderStore(state => state.narrowDock && state.dockPosition !== 'popout');
+  const savedPosition = useReaderStore(state => state.dockPosition);
+  const dockPosition = bottomDrawer ? 'bottom' : savedPosition;
   const dockWidth = useReaderStore((state) => state.dockWidth);
   const dockHeight = useReaderStore((state) => state.dockHeight);
-  const dockCollapsed = useReaderStore((state) => state.dockCollapsed);
+  const dockCollapsed = useReaderStore(visibleDockCollapsed);
+  useEffect(() => {
+    const media = window.matchMedia(NARROW_DOCK_QUERY);
+    const update = () => useReaderStore.setState({ narrowDock: media.matches });
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set([1, 2]));
   const coach = useOnboarding(state => state.run);
@@ -323,8 +332,8 @@ export default function App() {
   }
 
   const flashPinnedCard = useCallback((id: string) => {
-    if (useReaderStore.getState().dockCollapsed) {
-      useReaderStore.getState().setDockCollapsed(false);
+    if (visibleDockCollapsed(useReaderStore.getState())) {
+      useReaderStore.getState().toggleDockCollapsed();
     }
     setHighlightedPinId(id);
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
@@ -722,8 +731,8 @@ export default function App() {
   }, []);
 
   const handleMentionClick = useCallback(
-    (mention: ReaderMention, anchorEl: HTMLElement) => {
-      setHoverTrigger({ mention, anchorEl, locked: true });
+    (mention: ReaderMention, anchorEl: HTMLElement, touch?: boolean) => {
+      setHoverTrigger({ mention, anchorEl, locked: true, touch });
     },
     [],
   );
@@ -984,7 +993,8 @@ export default function App() {
       width={dockWidth}
       height={dockHeight}
       dockCollapsed={dockCollapsed}
-      onDockCollapsedChange={(collapsed) => useReaderStore.getState().setDockCollapsed(collapsed)}
+      bottomDrawer={bottomDrawer}
+      onDockCollapsedChange={collapsed => bottomDrawer ? useReaderStore.setState({ drawerCollapsed: collapsed }) : useReaderStore.getState().setDockCollapsed(collapsed)}
       workspaceRef={workspaceRef}
       onPopout={openPopout}
       onPositionChange={(pos) => useReaderStore.getState().setDockPosition(pos)}

@@ -65,7 +65,7 @@ export function LightboxModal({
   const adjusted = useRef(false);
   const [interacting, setInteracting] = useState(false);
   const panning = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
-  const gesture = useRef<{ kind: 'move' | ResizeEdge; x: number; y: number; start: Frame } | null>(null);
+  const gesture = useRef<{ pointerId: number; kind: 'move' | ResizeEdge; x: number; y: number; start: Frame } | null>(null);
 
   const assetKey = asset?.key;
   const assetUrl = asset?.imageUrl;
@@ -104,20 +104,20 @@ export function LightboxModal({
     setZoom((current) => Math.min(3, Math.max(0.5, Number((current + delta).toFixed(2)))));
 
   const startGesture = (kind: 'move' | ResizeEdge) => (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || gesture.current) return;
     // Let buttons in the title bar keep working.
     if (kind === 'move' && (event.target as HTMLElement).closest('button')) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    gesture.current = { kind, x: event.clientX, y: event.clientY, start: frame };
+    gesture.current = { pointerId: event.pointerId, kind, x: event.clientX, y: event.clientY, start: frame };
     adjusted.current = true;
     setInteracting(true);
   };
 
   const onGestureMove = (event: ReactPointerEvent<HTMLElement>) => {
     const g = gesture.current;
-    if (!g) return;
+    if (!g || g.pointerId !== event.pointerId) return;
     const dx = event.clientX - g.x;
     const dy = event.clientY - g.y;
     const s = g.start;
@@ -142,7 +142,7 @@ export function LightboxModal({
   };
 
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!gesture.current) return;
+    if (gesture.current?.pointerId !== event.pointerId) return;
     gesture.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -170,7 +170,7 @@ export function LightboxModal({
       )}
     >
       <div
-        className="flex h-10 shrink-0 cursor-move items-center gap-2 rounded-t-xl border-b border-paper-border bg-paper-bg/60 pl-3 pr-1.5"
+        className="flex h-10 shrink-0 touch-none cursor-move items-center gap-2 rounded-t-xl border-b border-paper-border bg-paper-bg/60 pl-3 pr-1.5"
         onPointerDown={startGesture('move')}
         onDoubleClick={(event) => {
           if ((event.target as HTMLElement).closest('button')) return;
@@ -232,7 +232,7 @@ export function LightboxModal({
       <div
         className={clsx(
           'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-xl bg-paper-bg p-3',
-          zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
+          zoom > 1 ? 'touch-none cursor-grab active:cursor-grabbing' : 'cursor-default',
         )}
         onWheel={(event) => changeZoom(event.deltaY > 0 ? -0.1 : 0.1)}
         onPointerDown={(event) => {
