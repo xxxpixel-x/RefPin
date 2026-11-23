@@ -89,24 +89,31 @@ function result<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+async function runTransaction<T>(
+  mode: IDBTransactionMode,
+  work: (archives: IDBObjectStore, blobs: IDBObjectStore) => Promise<T>,
+): Promise<T> {
+  const db = await openDatabase();
+  const tx = db.transaction(['archives', 'pdfBlobs'], mode);
+  const complete = new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
+  });
+  const operation = work(tx.objectStore('archives'), tx.objectStore('pdfBlobs')).catch(error => {
+    try { tx.abort(); } catch { /* 事务可能已由 IndexedDB 中止。 */ }
+    throw error;
+  });
+  const [value] = await Promise.all([operation, complete]);
+  return value;
+}
+
 async function transact<T>(
   mode: IDBTransactionMode,
   fallback: T,
   work: (archives: IDBObjectStore, blobs: IDBObjectStore) => Promise<T>,
 ): Promise<T> {
   try {
-    const db = await openDatabase();
-    const tx = db.transaction(['archives', 'pdfBlobs'], mode);
-    const complete = new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(tx.error);
-    });
-    const operation = work(tx.objectStore('archives'), tx.objectStore('pdfBlobs')).catch(error => {
-      try { tx.abort(); } catch { /* Already aborted by IndexedDB. */ }
-      throw error;
-    });
-    const [value] = await Promise.all([operation, complete]);
-    return value;
+    return await runTransaction(mode, work);
   } catch {
     // Storage can be unavailable or full. Reading the PDF still works.
     return fallback;
@@ -120,19 +127,60 @@ export function loadPaperArchive(hash: string): Promise<PaperArchive | undefined
   });
 }
 
-export function listRecentPapers(): Promise<PaperArchive[]> {
-  return transact('readonly', [], async archives => {
+export function readAllPaperArchives(): Promise<PaperArchive[]> {
+  return runTransaction('readonly', async archives => {
     const rows: LegacyArchive[] = await result(archives.getAll());
     return rows.map(migratePaperArchive).sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+  });
+}
+
+export function listRecentPapers(): Promise<PaperArchive[]> {
+  return readAllPaperArchives().catch(() => []);
+}
+
+export function planArchiveImport(existing: PaperArchive[], incoming: PaperArchive[]) {
+  const local = new Map(existing.map(row => [row.paperHash, row]));
+  const merged = new Map(local);
+  for (const row of incoming) {
+    const previous = merged.get(row.paperHash);
+    if (!previous || row.lastOpenedAt > previous.lastOpenedAt) merged.set(row.paperHash, row);
+  }
+  const evicted = computeLruEvictions([...merged.values()], ARCHIVE_LIMIT);
+  for (const key of evicted) merged.delete(key);
+  return {
+    updates: [...merged.values()].filter(row => local.get(row.paperHash) !== row),
+    evicted: evicted.filter(key => local.has(key)),
+  };
+}
+
+export function mergePaperArchives(incoming: PaperArchive[]) {
+  return runTransaction('readwrite', async (archives, blobs) => {
+    const { updates, evicted } = planArchiveImport(await result(archives.getAll()), incoming);
+    for (const row of updates) {
+      const hasCachedPdf = await result(blobs.getKey(row.paperHash)) !== undefined;
+      archives.put({ ...row, hasCachedPdf });
+    }
+    for (const key of evicted) {
+      archives.delete(key);
+      blobs.delete(key);
+    }
+    return { imported: updates.map(row => row.paperHash), evicted };
   });
 }
 
 export function savePaperArchive(archive: Omit<LegacyArchive, 'hasCachedPdf'>, previousHighlights?: Highlight[]): Promise<boolean> {
   return transact('readwrite', false, async (archives, blobs) => {
     const { paperHash, sampleId } = archive;
+    const stored: LegacyArchive | undefined = await result(archives.get(paperHash));
+    // 另一窗口可能刚恢复了较新的档案。旧会话自动保存时仅应用它实际编辑过的批注。
+    if (stored && stored.lastOpenedAt > archive.lastOpenedAt) {
+      if (archive.highlights && previousHighlights && archive.highlights !== previousHighlights) {
+        archives.put({ ...stored, highlights: mergeHighlightChanges(stored.highlights ?? [], previousHighlights, archive.highlights) });
+      }
+      return true;
+    }
     if (sampleId) blobs.delete(paperHash);
     const hasCachedPdf = !sampleId && (await result(blobs.getKey(paperHash))) !== undefined;
-    const stored: LegacyArchive | undefined = await result(archives.get(paperHash));
     let highlights = archive.highlights ?? stored?.highlights ?? [];
     if (stored && previousHighlights && archive.highlights) {
       highlights = mergeHighlightChanges(stored.highlights ?? [], previousHighlights, archive.highlights);

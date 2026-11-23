@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { computeLruEvictions, listRecentPapers, loadPaperArchive, loadPdfBlob, MAX_PDF_BYTES, mergeHighlightChanges, migratePaperArchive, savePdfBlob, stripPinnedItemForStorage } from '../paperDb';
+import { computeLruEvictions, listRecentPapers, loadPaperArchive, loadPdfBlob, MAX_PDF_BYTES, mergeHighlightChanges, mergePaperArchives, migratePaperArchive, readAllPaperArchives, savePdfBlob, stripPinnedItemForStorage } from '../paperDb';
 import type { Highlight } from '../../types/paper';
 
 describe('paper archives', () => {
@@ -55,6 +55,8 @@ describe('paper archives', () => {
     vi.stubGlobal('indexedDB', undefined);
     try {
       expect(await listRecentPapers()).toEqual([]);
+      await expect(readAllPaperArchives()).rejects.toThrow();
+      await expect(mergePaperArchives([])).rejects.toThrow();
       expect(await loadPaperArchive('missing')).toBeUndefined();
       expect(await loadPdfBlob('missing')).toBeUndefined();
       expect(await savePdfBlob('local', new Blob(['pdf']))).toBe(false);

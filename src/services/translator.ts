@@ -666,3 +666,28 @@ export const selectionTranslator = IS_EXTENSION_PAGE
   : webTranslator;
 
 export const readerTranslator = selectionTranslator;
+
+export type BackupTranslateConfig = Omit<TranslateConfig, 'apiKey'> & { apiKey?: string };
+
+export async function exportBackupTranslateConfig(includeApiKey = false): Promise<BackupTranslateConfig | undefined> {
+  // 扩展的设置和凭据始终留在扩展内，网页备份也无需查询桥接摘要。
+  if (IS_EXTENSION_PAGE) return undefined;
+  const config = await localWebTranslator.loadTranslateConfig();
+  if (canUseExtensionSettings(config)) return undefined;
+  const { apiKey, ...settings } = config;
+  if (!includeApiKey && apiKey && (settings.apiBaseUrl.includes(apiKey) || settings.model.includes(apiKey))) {
+    return undefined;
+  }
+  return includeApiKey ? { ...settings, apiKey } : settings;
+}
+
+export async function restoreBackupTranslateConfig(config: BackupTranslateConfig) {
+  // 备份里的翻译配置来自网页端。扩展页面的设置与密钥只能在扩展里修改，导入时不覆盖。
+  if (IS_EXTENSION_PAGE) return;
+  const current = await readerTranslator.loadTranslateConfig();
+  // 脱敏备份只可复用同一服务地址下的本机密钥。
+  const sameEndpoint = current.provider === config.provider && current.apiBaseUrl === config.apiBaseUrl;
+  await readerTranslator.saveTranslateConfig({
+    ...config, apiKey: config.apiKey ?? (sameEndpoint ? current.apiKey : ''),
+  });
+}

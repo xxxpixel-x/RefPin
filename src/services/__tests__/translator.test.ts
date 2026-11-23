@@ -4,6 +4,8 @@ import {
   createTranslator,
   canUseExtensionSettings,
   DEFAULT_TRANSLATE_CONFIG,
+  exportBackupTranslateConfig,
+  restoreBackupTranslateConfig,
   grantFreeTranslateConsent,
   needsFreeTranslateConsent,
   resetWebFreeState,
@@ -30,6 +32,52 @@ afterEach(() => {
 });
 
 describe('shared translator', () => {
+  it('网页独立配置默认脱敏，仅显式选择时写入密钥；旧版独立配置可迁移', async () => {
+    let saved = { ...local, apiKey: 'private-test-key', webOnly: true as true | undefined };
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(saved) });
+    expect(await exportBackupTranslateConfig()).toEqual({ ...local, apiKey: undefined, webOnly: true });
+    expect(await exportBackupTranslateConfig()).not.toHaveProperty('apiKey');
+    expect(await exportBackupTranslateConfig(true)).toEqual(saved);
+    saved = { ...saved, webOnly: undefined };
+    expect(await exportBackupTranslateConfig()).toMatchObject({ provider: 'openai', model: local.model });
+    saved = { ...saved, model: saved.apiKey };
+    expect(await exportBackupTranslateConfig()).toBeUndefined();
+  });
+
+  it('网页沿用扩展时即使选择包含密钥也省略配置，不请求扩展摘要或存储', async () => {
+    const get = vi.fn(), postMessage = vi.fn();
+    vi.stubGlobal('chrome', { storage: { local: { get } } });
+    vi.stubGlobal('window', { postMessage });
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify({ ...DEFAULT_TRANSLATE_CONFIG, apiKey: 'stale' }) });
+    expect(await exportBackupTranslateConfig(true)).toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('扩展阅读器也不会将扩展配置写入文件', async () => {
+    vi.resetModules();
+    vi.doMock('../../config/runtime', () => ({ IS_EXTENSION_PAGE: true }));
+    const get = vi.fn();
+    vi.stubGlobal('chrome', { storage: { local: { get } } });
+    try {
+      const service = await import('../translator');
+      expect(await service.exportBackupTranslateConfig(true)).toBeUndefined();
+      expect(get).not.toHaveBeenCalled();
+    } finally { vi.doUnmock('../../config/runtime'); vi.resetModules(); }
+  });
+
+  it('导入无密钥配置只复用相同端点的密钥，新端点无法取得旧密钥', async () => {
+    let saved = JSON.stringify({ ...local, apiKey: 'local-key' });
+    vi.stubGlobal('localStorage', { getItem: () => saved, setItem: (_key: string, json: string) => { saved = json; } });
+    const { apiKey: _key, ...config } = local;
+    await restoreBackupTranslateConfig(config);
+    expect(JSON.parse(saved).apiKey).toBe('local-key');
+    await restoreBackupTranslateConfig({ ...config, apiBaseUrl: 'https://another.test' });
+    expect(JSON.parse(saved).apiKey).toBe('');
+    await restoreBackupTranslateConfig({ ...config, apiKey: 'imported' });
+    expect(JSON.parse(saved).apiKey).toBe('imported');
+  });
+
   it('网页默认服务商可以沿用扩展，保存过自定义服务商后使用网页配置', () => {
     expect(canUseExtensionSettings(DEFAULT_TRANSLATE_CONFIG)).toBe(true);
     expect(canUseExtensionSettings({ ...DEFAULT_TRANSLATE_CONFIG, targetLang: 'en' })).toBe(true);

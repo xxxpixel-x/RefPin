@@ -1,4 +1,5 @@
 import { RemotePaperInput } from './RemotePaperInput';
+import { SettingsMenu, type BackupAction } from '../layout/SettingsMenu';
 import { ThemeSwitcher } from '../layout/ThemeSwitcher';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
 import { getLocale, t } from '../../i18n/core';
@@ -8,6 +9,7 @@ import clsx from 'clsx';
 import type { PaperArchive, SamplePaperMeta } from '../../types/paper';
 
 interface LandingViewProps {
+  onBackup: (action: BackupAction) => void;
   initialArxiv?: string;
   onConsumeLink?: () => void;
   samples: SamplePaperMeta[];
@@ -29,6 +31,7 @@ function relativeTime(timestamp: number) {
 }
 
 export function LandingView({
+  onBackup,
   initialArxiv,
   onConsumeLink,
   samples,
@@ -45,7 +48,9 @@ export function LandingView({
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center px-6 py-12">
-      <div className="absolute right-4 top-4 flex items-center gap-2"><ThemeSwitcher /><LanguageToggle /></div>
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        <ThemeSwitcher /><LanguageToggle /><SettingsMenu onBackup={onBackup} />
+      </div>
       <div className="w-full max-w-xl">
         <h1 className="mb-1 flex items-center justify-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-ink text-[13px] font-semibold text-paper-card">

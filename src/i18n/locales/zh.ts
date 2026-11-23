@@ -1,6 +1,23 @@
 import type { MessageKey } from '../types';
 
 export const zh = {
+  "backup.export": "导出阅读档案",
+  "backup.import": "导入阅读档案",
+  "backup.exportHint": "备份最近阅读、进度、钉板、高亮批注和界面设置。重新打开论文时需提供原 PDF。",
+  "backup.importHint": "选择 RefPin 备份后将恢复档案和设置。同一论文保留最近打开的记录。合并超过 30 篇时，只保留最近打开的 30 篇。",
+  "backup.includeKey": "包含 API 密钥",
+  "backup.extensionConfig": "扩展的翻译配置和密钥只保存在扩展内，导出时不包含，导入时也不会被覆盖。",
+  "backup.keyRisk": "API 密钥会以明文写入 JSON。拿到文件的人可以使用你的密钥，请妥善保管。",
+  "backup.download": "下载 JSON",
+  "backup.choose": "选择 JSON 文件",
+  "backup.working": "处理中…",
+  "backup.invalid": "文件格式或字段无效。请选择版本为 1 的 RefPin 阅读档案备份。",
+  "backup.tooLarge": "备份文件超过 64 MiB。",
+  "backup.exportFailed": "导出失败，请检查浏览器是否允许读取本地存储并重试。",
+  "backup.importFailed": "导入失败，请检查文件是否可读，以及浏览器是否有可用存储空间。",
+  "backup.saveFailed": "当前阅读进度未能保存，请检查浏览器存储后重试。",
+  "backup.imported": "已导入 {imported} 条，跳过 {skipped} 条。",
+  "backup.configFailed": "已导入 {imported} 条，跳过 {skipped} 条。翻译配置未能保存。",
   "notes.export": "导出笔记",
   "notes.copy": "复制 Markdown",
   "notes.zip": "下载图文包 .zip",

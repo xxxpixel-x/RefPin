@@ -1,4 +1,4 @@
-import { SettingsMenu } from './SettingsMenu';
+import { SettingsMenu, type BackupAction } from './SettingsMenu';
 import { TranslateControl } from './TranslateControl';
 import { useReaderStore } from '../../store/useReaderStore';
 import type { PaperTranslationController } from '../../services/usePaperTranslation';
@@ -18,6 +18,7 @@ import {
 import clsx from 'clsx';
 
 interface TopBarProps {
+  onBackup: (action: BackupAction) => void;
   fileName: string;
   numPages: number;
   currentPage: number;
@@ -52,6 +53,7 @@ const toggledButton =
 const iconButton = 'shrink-0 rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink';
 
 export function TopBar({
+  onBackup,
   fileName,
   numPages,
   currentPage,
@@ -176,7 +178,7 @@ export function TopBar({
             }}
           />
         </label>
-        <SettingsMenu onPalette={onPalette} onShowShortcuts={onShowShortcuts} onReplayCoach={onReplayCoach} />
+        <SettingsMenu onBackup={onBackup} onPalette={onPalette} onShowShortcuts={onShowShortcuts} onReplayCoach={onReplayCoach} />
         <button type="button" onClick={onReset} title={t('reader.home')} aria-label={t('reader.home')} className={iconButton}>
           <Home size={15} />
         </button>

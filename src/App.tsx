@@ -11,6 +11,10 @@ import { CommandPalette } from './components/layout/CommandPalette';
 import { ShortcutHelp } from './components/layout/ShortcutHelp';
 import { buildStudyNotesMarkdown, exportStudyPackZip } from './services/noteExporter';
 import { TopBar } from './components/layout/TopBar';
+import { ReadingBackupDialog } from './components/layout/ReadingBackupDialog';
+import type { BackupAction } from './components/layout/SettingsMenu';
+import { applyBackupSettings, type ParsedReadingBackup } from './storage/readingBackup';
+import { restoreBackupTranslateConfig } from './services/translator';
 import { getCachedPageLines, searchPageLines } from './engine/pageLinesCache';
 import { SearchBar } from './components/layout/SearchBar';
 import { ReturnBanner } from './components/layout/ReturnBanner';
@@ -42,7 +46,7 @@ import { useReaderStore } from './store/useReaderStore';
 import { SAMPLES, getSampleById } from './config/samples';
 import {
   deletePaperArchive, listRecentPapers, loadPaperArchive, loadPdfBlob,
-  MAX_PDF_BYTES, savePaperArchive, savePdfBlob,
+  MAX_PDF_BYTES, mergePaperArchives, savePaperArchive, savePdfBlob,
 } from './storage/paperDb';
 import type {
   GlossaryEntry,
@@ -135,6 +139,8 @@ export default function App() {
   const consumeLink = useCallback(() => setSharedArxiv(undefined), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [backupAction, setBackupAction] = useState<BackupAction | null>(null);
+  const importingBackup = useRef(false);
   const [fitOnOpen, setFitOnOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const exportInProgress = useRef(false);
@@ -183,7 +189,7 @@ export default function App() {
   const flushArchive = useCallback(() => {
     window.clearTimeout(saveTimerRef.current);
     const state = useReaderStore.getState();
-    if (!state.paperHash || !state.pdfDoc) return;
+    if (importingBackup.current || !state.paperHash || !state.pdfDoc) return;
     const session = archiveSession.current;
     const archive = {
       paperHash: state.paperHash, fileName: state.fileName, sampleId: session.sampleId,
@@ -390,7 +396,8 @@ export default function App() {
         setFitOnOpen(!archive?.scale);
         const scrollTop = requestedPage ? undefined : archive?.lastScrollTop;
         archiveSession.current = {
-          sampleId: sampleId ?? archive?.sampleId, scrollTop: scrollTop ?? 0, openedAt: Date.now(),
+          sampleId: sampleId ?? archive?.sampleId, scrollTop: scrollTop ?? 0,
+          openedAt: Math.max(Date.now(), archive?.lastOpenedAt ?? 0),
           savedHighlights: archive?.highlights ?? [],
         };
         setInitialPage(requestedPage ?? archive?.lastPage);
@@ -493,10 +500,10 @@ export default function App() {
     [openPaper],
   );
 
-  const handleReset = useCallback(() => {
+  const closePaper = useCallback(() => {
     useOnboarding.getState().close();
     closeSearch();
-    void flushArchive();
+    window.clearTimeout(saveTimerRef.current);
     openControllerRef.current?.abort();
     openControllerRef.current = null;
     setBootingName(null);
@@ -509,7 +516,42 @@ export default function App() {
     activePeekIdRef.current = null;
     nativePreviewCacheRef.current.clear();
     useReaderStore.getState().resetPaper();
-  }, [flushArchive, closeSearch]);
+  }, [closeSearch]);
+
+  const handleReset = useCallback(() => {
+    void flushArchive();
+    closePaper();
+  }, [flushArchive, closePaper]);
+
+  async function saveBeforeBackup() {
+    const saving = flushArchive();
+    if (saving) {
+      if (!await saving) throw new LocalizedError(message('backup.saveFailed'));
+    } else {
+      // 从首页操作时，等刚关闭的论文写入完毕，再读取已存档的数据。
+      await archiveSession.current.saving;
+    }
+  }
+
+  async function importBackup(backup: ParsedReadingBackup) {
+    const saved = saveBeforeBackup();
+    importingBackup.current = true;
+    try {
+      await saved;
+      const { imported, evicted } = await mergePaperArchives(backup.archives);
+      const currentHash = useReaderStore.getState().paperHash;
+      if (currentHash && (imported.includes(currentHash) || evicted.includes(currentHash))) closePaper();
+      setRecent(await listRecentPapers());
+      applyBackupSettings(backup.settings);
+      const counts = { imported: imported.length, skipped: backup.total - imported.length };
+      if (backup.translateConfig) {
+        translation.setMode('off');
+        try { await restoreBackupTranslateConfig(backup.translateConfig); }
+        catch { return message('backup.configFailed', counts); }
+      }
+      return message('backup.imported', counts);
+    } finally { importingBackup.current = false; }
+  }
 
   const replayCoach = () => {
     const sample = coachSession.current.sample;
@@ -764,7 +806,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useReaderStore.getState();
-      if (event.isComposing || bootingName) return;
+      if (event.isComposing || bootingName || backupAction) return;
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setPaletteOpen(value => !value);
@@ -841,7 +883,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bootingName, paletteOpen, shortcutsOpen, toggleSearch, closeSearch, navigateHistory, translation]);
+  }, [bootingName, backupAction, paletteOpen, shortcutsOpen, toggleSearch, closeSearch, navigateHistory, translation]);
 
   const assetsList = useMemo(
     () =>
@@ -882,6 +924,9 @@ export default function App() {
     />
   );
 
+  const backupDialog = backupAction && <ReadingBackupDialog key="reading-backup" action={backupAction}
+    onClose={() => setBackupAction(null)} onBeforeExport={saveBeforeBackup} onImport={importBackup} />;
+
   if (!pdfDoc) {
     if (bootingName) {
       return (
@@ -897,6 +942,7 @@ export default function App() {
     return (
       <div className="min-h-full bg-paper-bg">
         <LandingView
+          onBackup={setBackupAction}
           samples={SAMPLES}
           initialArxiv={sharedArxiv}
           onConsumeLink={consumeLink}
@@ -915,6 +961,7 @@ export default function App() {
           error={formatMessage(bootError || parseError)}
         />
         {palette}
+        {backupDialog}
       </div>
     );
   }
@@ -957,6 +1004,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-paper-bg">
       <TopBar
+        onBackup={setBackupAction}
         fileName={archiveSession.current.sampleId ? getSampleById(archiveSession.current.sampleId)?.title ?? fileName : fileName}
         numPages={numPages}
         currentPage={currentPage}
@@ -1119,6 +1167,7 @@ export default function App() {
         );
       })}
       {palette}
+      {backupDialog}
       {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}
 
       {/* Top-centred so it never collides with the jump-back bar at the bottom of the page. */}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Command, Keyboard, MoreHorizontal, RotateCcw } from 'lucide-react';
+import { Command, Download, Keyboard, MoreHorizontal, RotateCcw, Upload } from 'lucide-react';
 import clsx from 'clsx';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
@@ -8,7 +8,10 @@ import { useI18n } from '../../i18n';
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 const iconButton = 'shrink-0 rounded-md p-1.5 text-paper-muted transition hover:bg-paper-bg hover:text-paper-ink';
 
+export type BackupAction = 'export' | 'import';
+
 interface SettingsMenuProps {
+  onBackup?: (action: BackupAction) => void;
   onPalette?: () => void;
   onShowShortcuts?: () => void;
   onReplayCoach?: () => void;
@@ -17,7 +20,7 @@ interface SettingsMenuProps {
 }
 
 /** Overflow menu for low-frequency preferences: theme, language, command palette, shortcuts. */
-export function SettingsMenu({ onPalette, onShowShortcuts, onReplayCoach, triggerClassName }: SettingsMenuProps) {
+export function SettingsMenu({ onBackup, onPalette, onShowShortcuts, onReplayCoach, triggerClassName }: SettingsMenuProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,6 +58,14 @@ export function SettingsMenu({ onPalette, onShowShortcuts, onReplayCoach, trigge
             <LanguageToggle />
           </div>
           <div className="my-1.5 border-t border-paper-border" />
+          {onBackup && <>
+            <button type="button" role="menuitem" className={menuItem} onClick={() => { setOpen(false); onBackup('export'); }}>
+              <Download size={14} className="text-paper-muted" />{t('backup.export')}
+            </button>
+            <button type="button" role="menuitem" className={menuItem} onClick={() => { setOpen(false); onBackup('import'); }}>
+              <Upload size={14} className="text-paper-muted" />{t('backup.import')}
+            </button>
+          </>}
           {onReplayCoach && (
             <button type="button" role="menuitem" className={menuItem} onClick={() => { setOpen(false); onReplayCoach(); }}>
               <RotateCcw size={14} className="text-paper-muted" />
