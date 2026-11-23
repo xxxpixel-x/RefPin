@@ -4,3 +4,7 @@ dist-ext
 release
 .DS_Store
 *.local
+
+# 本地协作说明与笔记，不进仓库
+AGENTS.md
+*.local.md
