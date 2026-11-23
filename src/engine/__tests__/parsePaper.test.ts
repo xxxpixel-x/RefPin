@@ -2,7 +2,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { detectCitations } from '../citationDetector';
 import { getCachedPageLines } from '../pageLinesCache';
-import { parsePaper, parsePaperCitations } from '../parsePaper';
+import { parsePaper, parsePaperCitations, type ScannedPaper } from '../parsePaper';
 import { extractPageLines } from '../pdfLoader';
 import { useReaderStore } from '../../store/useReaderStore';
 import { annotationDoc, textLine } from './fixtures';
@@ -55,6 +55,27 @@ describe('reader parse lifecycle', () => {
     expect((await parsePaper(doc)).isImageOnly).toBe(true);
     expect(getCachedPageLines(doc)).toEqual({ 1: [] });
     expect((await parsePaper({ ...doc, numPages: 0 } as PDFDocumentProxy)).isImageOnly).toBe(false);
+  });
+
+  it('混合文档只补扫描页，逐页刷新，支持取消重试及后出现的文献', async () => {
+    const doc = { ...annotationDoc(), numPages: 3 } as PDFDocumentProxy;
+    vi.mocked(extractPageLines).mockImplementation(async (_, page) => page === 1 ? [textLine('See Fig. 3.')] : []);
+    let paper!: ScannedPaper;
+    await parsePaper(doc, undefined, undefined, session => { paper = session; });
+    expect([...paper.pending]).toEqual([2, 3]);
+    const signal = new AbortController().signal;
+    const first = await paper.applyPage(2, [textLine('见图 1 和 [4]。', { pageNumber: 2 })], signal);
+    expect(first.backlinksMap['fig-1']).toHaveLength(1);
+    expect(first.backlinksMap['fig-3']).toHaveLength(1);
+    expect(getCachedPageLines(doc)?.[2][0].text).toBe('见图 1 和 [4]。');
+    await expect(paper.applyPage(3, [], AbortSignal.abort())).rejects.toMatchObject({ name: 'AbortError' });
+    expect([...paper.pending]).toEqual([3]);
+    const last = await paper.applyPage(3, [textLine('参考文献', { pageNumber: 3 }),
+      textLine('[4] Zhang. 2020. Title.', { pageNumber: 3, y: 0.4 })], signal);
+    expect(last.referencesMap['ref-4']).toBeDefined();
+    expect(last.backlinksMap['ref-4']).toHaveLength(1);
+    expect(paper.pending.size).toBe(0);
+    expect(extractPageLines).toHaveBeenCalledTimes(3);
   });
 
   it('publishes and clears glossary entries and resolved author-year mentions with the document', async () => {

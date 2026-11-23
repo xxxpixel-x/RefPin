@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { renderRefPinIcon } from './refpin-icon.mjs';
+import { copyOcrLicenses } from './copy-ocr-licenses.mjs';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -121,6 +122,7 @@ async function run() {
 
   // 仅复制 pdf.js 必需的 cmaps 与 standard_fonts，刻意排除 public/samples/
   copyDir(path.join(rootDir, 'src/extension/_locales'), path.join(outDir, '_locales'));
+  copyOcrLicenses(outDir);
   copyDir(path.join(rootDir, 'public/cmaps'), path.join(outDir, 'cmaps'));
   copyDir(
     path.join(rootDir, 'public/standard_fonts'),

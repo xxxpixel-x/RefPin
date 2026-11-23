@@ -32,8 +32,8 @@ function compactLine({ text, rect, pageNumber, chars }: TextLine): CompactTextLi
   return line;
 }
 
-export function cachePageLines(doc: PDFDocumentProxy, linesByPage: LinesByPage): void {
-  const pages: Record<number, CompactTextLine[]> = {};
+export function cachePageLines(doc: PDFDocumentProxy, linesByPage: LinesByPage, merge = false): void {
+  const pages: Record<number, CompactTextLine[]> = merge ? { ...cache.get(doc) } : {};
   for (const [page, lines] of Object.entries(linesByPage)) {
     pages[Number(page)] = readingOrder(lines).map(compactLine);
   }

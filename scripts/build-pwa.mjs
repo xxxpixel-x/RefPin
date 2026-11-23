@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { copyOcrLicenses } from './copy-ocr-licenses.mjs';
 
 const output = new URL('../dist/', import.meta.url);
+copyOcrLicenses(fileURLToPath(output));
 const files = [];
 const hash = createHash('sha256');
 function collect(directory) {

@@ -6,10 +6,17 @@ const prefix = 'refpin-web:' + scope + ':';
 const cacheName = prefix + version;
 const shell = new URL('./index.html', scope).href;
 const staticUrls = new Set(files.map(file => new URL(file, scope).href));
+// 首次打开不预取可选的 OCR 引擎。模型缓存只会在用户点击同意后创建。
+const ocrUrls = new Set([...staticUrls].filter(url =>
+  /\/assets\/(?:ocrFallback-|worker\.min-|tesseract-core-)/.test(new URL(url).pathname)));
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(cacheName).then(cache =>
-    cache.addAll([...staticUrls].map(url => new Request(url, { cache: 'reload' })))));
+  event.waitUntil((async () => {
+    const cache = await caches.open(cacheName);
+    const includeOcr = await caches.has('refpin-ocr-models');
+    const urls = [...staticUrls].filter(url => includeOcr || !ocrUrls.has(url));
+    await cache.addAll(urls.map(url => new Request(url, { cache: 'reload' })));
+  })());
 });
 
 self.addEventListener('activate', event => {
@@ -18,6 +25,13 @@ self.addEventListener('activate', event => {
       if (name.startsWith(prefix) && name !== cacheName) await caches.delete(name);
     }
     await self.clients.claim();
+    // 首次安装期间已开始识别的页面可能在受控之前就加载了 Worker。
+    if (await caches.has('refpin-ocr-models')) {
+      const cache = await caches.open(cacheName);
+      await Promise.all([...ocrUrls].map(async url => {
+        if (!await cache.match(url)) await cache.add(new Request(url, { cache: 'force-cache' }));
+      }));
+    }
   })());
 });
 

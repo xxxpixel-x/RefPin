@@ -39,7 +39,8 @@ import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
 import { loadReaderPdf } from './engine/pdfLoader';
 import { findAssetForCitation, glossaryPinId } from './engine/backlinks';
-import { parsePaper } from './engine/parsePaper';
+import { parsePaper, type ScannedPaper } from './engine/parsePaper';
+import { OcrBanner } from './components/pdf/OcrBanner';
 import { captureDestinationPreview, recropPageRegion } from './engine/assetExtractor';
 import { usePaperTranslation } from './services/usePaperTranslation';
 import { useReaderStore } from './store/useReaderStore';
@@ -101,7 +102,7 @@ export default function App() {
   const isParsing = useReaderStore((state) => state.isParsing);
   const parseProgress = useReaderStore((state) => state.parseProgress);
   const parseError = useReaderStore((state) => state.parseError);
-  const isImageOnly = useReaderStore((state) => state.isImageOnly);
+  const [scannedPaper, setScannedPaper] = useState<ScannedPaper | null>(null);
   const assetsMap = useReaderStore((state) => state.assetsMap);
   const referencesMap = useReaderStore((state) => state.referencesMap);
   const citationsByPage = useReaderStore((state) => state.citationsByPage);
@@ -353,6 +354,7 @@ export default function App() {
       const previousSave = flushArchive();
       openControllerRef.current?.abort();
       const controller = new AbortController();
+      setScannedPaper(null);
       openControllerRef.current = controller;
       const { signal } = controller;
       setBootError(null);
@@ -424,7 +426,7 @@ export default function App() {
 
         const result = await parsePaper(doc, (percent) => {
           if (!signal.aborted) useReaderStore.getState().setParseProgress(percent);
-        }, signal);
+        }, signal, setScannedPaper);
         if (signal.aborted) return;
         useReaderStore.getState().setParseResult(result);
         useOnboarding.getState().start(sample, useReaderStore.getState(), coachSession.current.replay);
@@ -506,6 +508,7 @@ export default function App() {
     window.clearTimeout(saveTimerRef.current);
     openControllerRef.current?.abort();
     openControllerRef.current = null;
+    setScannedPaper(null);
     setBootingName(null);
     setBootError(null);
     setInitialPage(undefined);
@@ -1043,11 +1046,11 @@ export default function App() {
         {t('highlight.saveFailed')}
       </div>}
 
-      {isImageOnly && (
-        <div role="status" className="border-b border-paper-border bg-paper-card px-4 py-2 text-xs text-paper-muted">
-          {t('reader.scanned')}
-        </div>
-      )}
+      {pdfDoc && scannedPaper && openControllerRef.current && <OcrBanner doc={pdfDoc} paper={scannedPaper}
+        documentSignal={openControllerRef.current.signal} onComplete={(recognized, total) => {
+          setScannedPaper(null);
+          showToast(message('ocr.complete', { recognized, total }));
+        }} />}
 
       <div
         ref={workspaceRef}

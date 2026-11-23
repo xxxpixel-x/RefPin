@@ -87,22 +87,24 @@ export async function loadPdfDocument(
   }
 }
 
-interface RawBox {
+export interface TextBox {
   text: string;
   x: number;
   y: number;
   width: number;
   height: number;
   baseline: number;
+  /** OCR 已分词时，可抑制中文词间和括号内的虚假空格。 */
+  joinPrevious?: boolean;
 }
 
 /**
  * 在行聚类之前先用原始 box 判断整页是否双栏。
  * 单栏页的正文 box 往往横跨中缝，不会被误判。
  */
-function looksTwoColumn(boxes: RawBox[]): boolean {
-  const left: RawBox[] = [];
-  const right: RawBox[] = [];
+function looksTwoColumn(boxes: TextBox[]): boolean {
+  const left: TextBox[] = [];
+  const right: TextBox[] = [];
 
   for (const box of boxes) {
     if (box.width < 0.18) continue;
@@ -117,7 +119,7 @@ function looksTwoColumn(boxes: RawBox[]): boolean {
   if (left.length < 3 || right.length < 3) return false;
 
   // 每一栏的行需要共享稳定的左边界，排除单栏页右侧的零散行尾碎片
-  const alignedCount = (boxes: RawBox[]) => {
+  const alignedCount = (boxes: TextBox[]) => {
     let best = 0;
     for (const candidate of boxes) {
       let count = 0;
@@ -153,7 +155,7 @@ function looksTwoColumn(boxes: RawBox[]): boolean {
   return overlap >= Math.min(leftBottom - leftTop, rightBottom - rightTop) * 0.35;
 }
 
-function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
+function textLineFromBoxes(boxes: TextBox[], pageNumber: number): TextLine | null {
   const chars: TextChar[] = [];
   let text = '';
 
@@ -165,7 +167,7 @@ function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
       // without having a word space before it.
       const raisedNumber = /^\d/.test(box.text) && gap < prev.height * 0.4 &&
         box.height < prev.height * 0.8 && box.baseline < prev.baseline - prev.height * 0.12;
-      if (!raisedNumber && gap > 0.0015 && !text.endsWith(' ') && !box.text.startsWith(' ')) {
+      if (!box.joinPrevious && !raisedNumber && gap > 0.0015 && !text.endsWith(' ') && !box.text.startsWith(' ')) {
         const spaceRect: NormalizedRect = {
           x: prev.x + prev.width,
           y: box.y,
@@ -223,6 +225,29 @@ function toLine(boxes: RawBox[], pageNumber: number): TextLine | null {
   };
 }
 
+/** OCR 和原生文本层共用的行内分栏及字符坐标转换。 */
+export function textLinesFromRow(boxes: TextBox[], pageNumber: number, twoColumnPage = false): TextLine[] {
+  if (!boxes.length) return [];
+  boxes.sort((a, b) => a.x - b.x);
+  const lines: TextLine[] = [];
+  let start = 0;
+  const flush = (end: number) => {
+    const line = textLineFromBoxes(boxes.slice(start, end), pageNumber);
+    if (line) lines.push(line);
+    start = end;
+  };
+  for (let i = 1; i < boxes.length; i++) {
+    const prev = boxes[i - 1], current = boxes[i];
+    const gap = current.x - (prev.x + prev.width);
+    const threshold = Math.max(COLUMN_GAP, prev.height * 1.6);
+    // 双栏页的窄中缝也可能小于常规阈值。
+    const crossesMidline = twoColumnPage && prev.x + prev.width < 0.5 && current.x > 0.49 && gap > MIDLINE_GAP;
+    if (gap > threshold || crossesMidline) flush(i);
+  }
+  flush(boxes.length);
+  return lines;
+}
+
 /**
  * 提取一页的视觉文本行。
  * 关键：pdf.js 会把 “Fig.” “2” “[” “14” “]” 拆成多个 TextItem，
@@ -234,7 +259,7 @@ export async function extractPageLines(
 ): Promise<TextLine[]> {
   const viewport = page.getViewport({ scale: 1 });
   const content = await page.getTextContent();
-  const boxes: RawBox[] = [];
+  const boxes: TextBox[] = [];
 
   for (const raw of content.items) {
     if (!('str' in raw)) continue;
@@ -264,7 +289,7 @@ export async function extractPageLines(
   const twoColumnPage = looksTwoColumn(boxes);
 
   // 1) 按基线聚类成“同一视觉行”
-  const groups: RawBox[][] = [];
+  const groups: TextBox[][] = [];
   for (const box of boxes) {
     let placed = false;
     for (let i = groups.length - 1; i >= 0; i -= 1) {
@@ -281,36 +306,7 @@ export async function extractPageLines(
   }
 
   // 2) 同一行内按水平大间距断成不同栏 / 文本块
-  const lines: TextLine[] = [];
-  for (const group of groups) {
-    group.sort((a, b) => a.x - b.x);
-    let run: RawBox[] = [group[0]];
-
-    const flush = () => {
-      const line = toLine(run, pageNumber);
-      if (line) lines.push(line);
-    };
-
-    for (let i = 1; i < group.length; i += 1) {
-      const prev = group[i - 1];
-      const current = group[i];
-      const gap = current.x - (prev.x + prev.width);
-      const threshold = Math.max(COLUMN_GAP, prev.height * 1.6);
-      // 双栏页里左右两栏的窄中缝也可能小于常规阈值，必须强制断开
-      const crossesMidline =
-        twoColumnPage &&
-        prev.x + prev.width < 0.5 &&
-        current.x > 0.49 &&
-        gap > MIDLINE_GAP;
-      if (gap > threshold || crossesMidline) {
-        flush();
-        run = [current];
-      } else {
-        run.push(current);
-      }
-    }
-    flush();
-  }
+  const lines = groups.flatMap(group => textLinesFromRow(group, pageNumber, twoColumnPage));
 
   return lines.sort((a, b) => a.baseline - b.baseline || a.rect.x - b.rect.x);
 }
