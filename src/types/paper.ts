@@ -91,7 +91,8 @@ export interface ReferenceEntry {
 }
 
 /** 钉板停靠位置 */
-export type DockPosition = 'right' | 'left' | 'top' | 'bottom';
+export type DockEdge = 'right' | 'left' | 'top' | 'bottom';
+export type DockPosition = DockEdge | 'popout';
 
 /** 对照钉板中的一项 */
 export interface PinnedItem {

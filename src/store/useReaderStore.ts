@@ -184,7 +184,7 @@ function loadSavedDockLayout(): {
 }
 
 function saveDockLayout(dockPosition: DockPosition, dockWidth: number, dockHeight: number, dockCollapsed = false) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || dockPosition === 'popout') return;
   try {
     window.localStorage.setItem(
       DOCK_STORAGE_KEY,

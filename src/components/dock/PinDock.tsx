@@ -25,10 +25,11 @@ import {
   PanelLeft,
   PanelRight,
   PanelTop,
+  PictureInPicture2,
   Pin,
 } from 'lucide-react';
 import clsx from 'clsx';
-import type { CitationBacklink, DockPosition, InlineCitation, NormalizedRect, PaperAsset, PinnedItem } from '../../types/paper';
+import type { CitationBacklink, DockEdge, DockPosition, InlineCitation, NormalizedRect, PaperAsset, PinnedItem } from '../../types/paper';
 import { currentPageAssets } from '../../engine/backlinks';
 import { useReaderStore } from '../../store/useReaderStore';
 import { PinnedCard } from './PinnedCard';
@@ -49,7 +50,8 @@ interface PinDockProps {
   dockCollapsed?: boolean;
   onDockCollapsedChange?: (collapsed: boolean) => void;
   workspaceRef?: RefObject<HTMLDivElement>;
-  onPositionChange: (position: DockPosition) => void;
+  onPositionChange: (position: DockEdge) => void;
+  onPopout?: () => void;
   onWidthChange: (width: number) => void;
   onHeightChange: (height: number) => void;
   onUnpin: (id: string) => void;
@@ -85,7 +87,7 @@ const POSITION_OPTIONS = [
   { key: 'top', hint: 'dock.moveTop', Icon: PanelTop },
   { key: 'bottom', hint: 'dock.moveBottom', Icon: PanelBottom },
 ] as const satisfies ReadonlyArray<{
-  key: DockPosition;
+  key: DockEdge;
   hint: MessageKey;
   Icon: typeof PanelRight;
 }>;
@@ -95,12 +97,12 @@ const DROP_LABEL = {
   right: 'dock.dropRight',
   top: 'dock.dropTop',
   bottom: 'dock.dropBottom',
-} as const satisfies Record<DockPosition, MessageKey>;
+} as const satisfies Record<DockEdge, MessageKey>;
 
-function computeNearestEdge(clientX: number, clientY: number, rect: DOMRect): DockPosition {
+function computeNearestEdge(clientX: number, clientY: number, rect: DOMRect): DockEdge {
   const nx = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
   const ny = Math.min(1, Math.max(0, (clientY - rect.top) / Math.max(1, rect.height)));
-  const candidates: Array<{ pos: DockPosition; dist: number }> = [
+  const candidates: Array<{ pos: DockEdge; dist: number }> = [
     { pos: 'left', dist: nx },
     { pos: 'right', dist: 1 - nx },
     { pos: 'top', dist: ny },
@@ -123,6 +125,7 @@ export function PinDock({
   onDockCollapsedChange,
   workspaceRef,
   onPositionChange,
+  onPopout,
   onWidthChange,
   onHeightChange,
   onUnpin,
@@ -139,7 +142,8 @@ export function PinDock({
   const setEnabled = useReaderStore(state => state.setAutoSyncEnabled);
   const storeDockCollapsed = useReaderStore(state => state.dockCollapsed);
   const setStoreDockCollapsed = useReaderStore(state => state.setDockCollapsed);
-  const isDockCollapsed = dockCollapsedProp ?? storeDockCollapsed;
+  const poppedOut = position === 'popout';
+  const isDockCollapsed = !poppedOut && (dockCollapsedProp ?? storeDockCollapsed);
   const setDockCollapsed = useCallback(
     (next: boolean) => {
       if (onDockCollapsedChange) onDockCollapsedChange(next);
@@ -154,16 +158,17 @@ export function PinDock({
   const [exportMenu, setExportMenu] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!exportMenu) return;
+    const menuDocument = exportRef.current?.ownerDocument;
+    if (!exportMenu || !menuDocument) return;
     const outside = (event: PointerEvent) => { if (!exportRef.current?.contains(event.target as Node)) setExportMenu(false); };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setExportMenu(false); };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+    menuDocument.addEventListener('pointerdown', outside);
+    menuDocument.addEventListener('keydown', escape);
+    return () => { menuDocument.removeEventListener('pointerdown', outside); menuDocument.removeEventListener('keydown', escape); };
   }, [exportMenu]);
   const [isResizing, setIsResizing] = useState(false);
   const [dragDropPreview, setDragDropPreview] = useState<{
-    target: DockPosition;
+    target: DockEdge;
     bounds: CardRectSnapshot;
   } | null>(null);
   const [viewportTick, setViewportTick] = useState(0);
@@ -171,7 +176,7 @@ export function PinDock({
   const listRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef<{
     axis: 'x' | 'y';
-    pos: DockPosition;
+    pos: DockEdge;
     startPointer: number;
     startSize: number;
   } | null>(null);
@@ -179,22 +184,24 @@ export function PinDock({
     startX: number;
     startY: number;
     active: boolean;
-    target: DockPosition;
+    target: DockEdge;
   } | null>(null);
 
   const isHorizontal = position === 'top' || position === 'bottom';
 
   // 监听窗口大小变化以动态夹紧宽度/高度
   useEffect(() => {
+    if (poppedOut) return;
     const onResize = () => {
       setViewportTick((v) => v + 1);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, [poppedOut]);
 
   // 按 Esc 取消拖动停靠
   useEffect(() => {
+    if (poppedOut) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || !dockDragRef.current) return;
       dockDragRef.current = null;
@@ -204,7 +211,7 @@ export function PinDock({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [poppedOut]);
 
   const getWorkspaceRect = useCallback((): DOMRect => {
     if (workspaceRef?.current) {
@@ -215,6 +222,7 @@ export function PinDock({
 
   // 拖拽调整钉板宽/高
   useEffect(() => {
+    if (poppedOut) return;
     const onMove = (event: MouseEvent) => {
       if (resizingRef.current) {
         const { axis, pos, startPointer, startSize } = resizingRef.current;
@@ -294,6 +302,7 @@ export function PinDock({
     onPositionChange,
     onWidthChange,
     position,
+    poppedOut,
   ]);
 
   const clampedWidth = useMemo(() => {
@@ -347,6 +356,7 @@ export function PinDock({
           : '-top-1.5 left-0 h-3 w-full cursor-row-resize';
 
   const startResize = (event: React.MouseEvent) => {
+    if (position === 'popout') return;
     event.preventDefault();
     resizingRef.current = {
       axis: isHorizontal ? 'y' : 'x',
@@ -360,7 +370,7 @@ export function PinDock({
   };
 
   const startDockDrag = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+    if (position === 'popout' || event.button !== 0) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('button, input, a')) return;
     dockDragRef.current = {
@@ -440,15 +450,14 @@ export function PinDock({
   return (
     <>
       <aside
-        style={dockStyle}
+        style={poppedOut ? undefined : dockStyle}
         className={clsx(
           'relative z-10 flex min-h-0 min-w-0 shrink-0 flex-col border-paper-border bg-paper-bg',
-          dockOrderClass,
-          dockBorderClass,
+          poppedOut ? 'h-full w-full' : [dockOrderClass, dockBorderClass],
         )}
       >
         {/* 自由拖拽宽/高手柄 */}
-        {!allHorizontalCollapsed && (
+        {!poppedOut && !allHorizontalCollapsed && (
           <div
             role="separator"
             aria-orientation={isHorizontal ? 'horizontal' : 'vertical'}
@@ -474,24 +483,31 @@ export function PinDock({
 
         {/* 标题栏：支持按住拖动停靠到页面上下左右 + 快捷切换按钮 */}
         <div
-          onMouseDown={startDockDrag}
-          title={t('dock.dragToEdge')}
-          className="flex h-10 shrink-0 cursor-grab select-none items-center gap-1.5 border-b border-paper-border px-2.5 active:cursor-grabbing"
+          onMouseDown={poppedOut ? undefined : startDockDrag}
+          title={poppedOut ? undefined : t('dock.dragToEdge')}
+          className={clsx('flex min-h-10 shrink-0 select-none flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-paper-border px-2.5 py-1',
+            !poppedOut && 'cursor-grab active:cursor-grabbing')}
         >
-          <GripVertical className="h-3.5 w-3.5 shrink-0 text-paper-muted/70" />
+          {!poppedOut && <GripVertical className="h-3.5 w-3.5 shrink-0 text-paper-muted/70" />}
           <Pin className="h-3.5 w-3.5 shrink-0 text-paper-gold" />
           <span className="truncate text-xs font-medium text-paper-ink">
             {t('dock.title')}
             <span className="ml-1 font-mono text-[11px] text-paper-muted">({items.length})</span>
           </span>
 
+          {!poppedOut && onPopout && (
+            <button type="button" onClick={onPopout} title={t('dock.popoutHint')}
+              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-paper-ink hover:bg-paper-card hover:text-paper-gold">
+              <PictureInPicture2 size={13} />{t('dock.popoutButton')}
+            </button>
+          )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {onExport && <div ref={exportRef} className="relative">
               <button type="button" title={t('notes.export')} aria-label={t('notes.export')} aria-expanded={exportMenu}
                 disabled={exporting} onClick={() => setExportMenu(!exportMenu)}
                 className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-paper-ink hover:bg-paper-card">
                 {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                {(isHorizontal || clampedWidth >= 410) && t('notes.export')}
+                {(poppedOut || isHorizontal || clampedWidth >= 410) && t('notes.export')}
               </button>
               {exportMenu && <div className={clsx('absolute z-30 w-max rounded-lg border border-paper-border bg-paper-card p-1 shadow-float',
                 position === 'bottom' ? 'bottom-full mb-1' : 'top-full mt-1', position === 'left' ? 'left-0' : 'right-0')}>
@@ -500,7 +516,7 @@ export function PinDock({
                   onClick={() => { setExportMenu(false); onExport(mode); }}>{t(mode === 'copy' ? 'notes.copy' : 'notes.zip')}</button>)}
               </div>}
             </div>}
-            <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
+            {!poppedOut && <div className="flex items-center rounded-md border border-paper-border/80 bg-paper-card/80 p-0.5">
               {POSITION_OPTIONS.map(({ key, hint, Icon }) => {
                 const active = position === key;
                 return (
@@ -521,7 +537,7 @@ export function PinDock({
                   </button>
                 );
               })}
-            </div>
+            </div>}
 
             {items.length > 0 && (
               <button
@@ -535,7 +551,7 @@ export function PinDock({
               </button>
             )}
 
-            <button
+            {!poppedOut && <button
               type="button"
               onClick={() => setDockCollapsed(true)}
               title={t('dock.collapse')}
@@ -545,7 +561,7 @@ export function PinDock({
             >
               {(isHorizontal || clampedWidth >= 280) && <span>{t('common.collapse')}</span>}
               <CollapseIcon className="h-3 w-3" />
-            </button>
+            </button>}
           </div>
         </div>
 

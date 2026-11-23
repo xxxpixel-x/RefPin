@@ -16,6 +16,7 @@ interface Props {
   onToggleTranslate?: () => void;
   onSetTranslateMode?: (mode: TranslateDisplayMode) => void;
   onExport: (mode: 'copy' | 'zip') => void;
+  onPopout?: () => void;
   onHome: () => void;
   onSearch: () => void;
 }
@@ -29,6 +30,7 @@ export function CommandPalette({
   onToggleTranslate,
   onSetTranslateMode,
   onExport,
+  onPopout,
   onHome,
   onSearch,
 }: Props) {
@@ -51,7 +53,8 @@ export function CommandPalette({
       ['search.find', onSearch],
       ['assets.title', () => state().toggleDrawerSection('assets')],
       ['glossary.title', () => state().toggleDrawerSection('glossary')],
-      ['dock.toggle', () => state().toggleDockCollapsed()],
+      ...(state().dockPosition === 'popout' ? [] : [['dock.toggle', () => state().toggleDockCollapsed()] as const]),
+      ...(onPopout ? [['dock.popout', onPopout] as const] : []),
       ...(onToggleTranslate ? [['translate.oneClick', onToggleTranslate] as const] : []),
       ...(onSetTranslateMode ? [['translate.bilingual', () => onSetTranslateMode('bilingual')] as const] : []),
       ['dock.clearAll', () => state().clearPinnedItems()], ['reader.home', onHome],
@@ -87,7 +90,7 @@ export function CommandPalette({
       pin: onPinGlossary ? () => onPinGlossary(entry) : undefined,
     });
     return rows;
-  }, [assets, refs, outline, glossary, numPages, locale, setLocale, t, onJump, onPinAsset, onPinReference, onPinGlossary, onToggleTranslate, onSetTranslateMode, onExport, onSearch, onHome]);
+  }, [assets, refs, outline, glossary, numPages, locale, setLocale, t, onJump, onPinAsset, onPinReference, onPinGlossary, onToggleTranslate, onSetTranslateMode, onExport, onPopout, onSearch, onHome]);
 
   return <CommandDialog commands={commands} numPages={numPages} onJump={onJump} onClose={onClose} />;
 }

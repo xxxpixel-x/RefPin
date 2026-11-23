@@ -53,8 +53,9 @@ export function ReferenceDetails({ reference, deferUntilVisible = false }: { ref
       </summary><p className="mt-1 leading-relaxed">{metadata.abstractText}</p></details>}
     </div>}
     <button type="button" className="rounded border border-paper-border bg-paper-card px-2 py-1 text-paper-ink hover:bg-paper-goldbg"
-      onClick={async () => {
-        try { await navigator.clipboard.writeText(metadata?.bibtex || buildFallbackBibtex(reference)); setCopied('done'); }
+      onClick={async event => {
+        const host = event.currentTarget.ownerDocument.defaultView ?? window;
+        try { await host.navigator.clipboard.writeText(metadata?.bibtex || buildFallbackBibtex(reference)); setCopied('done'); }
         catch { setCopied('failed'); }
       }}>{t(copied === 'done' ? 'common.copied' : copied === 'failed' ? 'notes.copyFailed' : 'reference.copyBibtex')}</button>
   </div>;

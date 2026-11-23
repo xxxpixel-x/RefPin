@@ -8,6 +8,7 @@ import type { PaperAsset } from '../../types/paper';
 
 interface LightboxModalProps {
   asset: PaperAsset | null;
+  hostWindow?: Window;
   onClose: () => void;
 }
 
@@ -27,19 +28,19 @@ const MARGIN = 8;
 const VISIBLE_GRAB = 80;
 
 // Remember where the reader last left the window during this session.
-let lastFrame: Frame | null = null;
+const lastFrames = new WeakMap<Window, Frame>();
 
-function defaultFrame(): Frame {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+function defaultFrame(host: Window): Frame {
+  const vw = host.innerWidth;
+  const vh = host.innerHeight;
   const width = Math.max(MIN_WIDTH, Math.min(880, Math.round(vw * 0.6)));
   const height = Math.max(MIN_HEIGHT, Math.min(680, Math.round(vh * 0.7)));
   return { left: Math.round((vw - width) / 2), top: Math.round((vh - height) / 2), width, height };
 }
 
-function clampFrame(frame: Frame): Frame {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+function clampFrame(frame: Frame, host: Window): Frame {
+  const vw = host.innerWidth;
+  const vh = host.innerHeight;
   const width = Math.min(Math.max(MIN_WIDTH, frame.width), vw - MARGIN * 2);
   const height = Math.min(Math.max(MIN_HEIGHT, frame.height), vh - MARGIN * 2);
   const left = Math.min(Math.max(frame.left, VISIBLE_GRAB - width), vw - VISIBLE_GRAB);
@@ -62,11 +63,11 @@ const EDGE_CLASSES: Record<ResizeEdge, string> = {
  * Enlarged preview that floats above the reader like the hover card, but stays put:
  * drag the title bar to move it, drag any edge or corner to resize, scroll to zoom.
  */
-export function LightboxModal({ asset, onClose }: LightboxModalProps) {
+export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxModalProps) {
   const { filter, colorToggle } = usePreviewColor(asset?.key);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [frame, setFrame] = useState<Frame>(() => lastFrame ?? defaultFrame());
+  const [frame, setFrame] = useState<Frame>(() => lastFrames.get(hostWindow) ?? defaultFrame(hostWindow));
   const [interacting, setInteracting] = useState(false);
   const panning = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const gesture = useRef<{ kind: 'move' | ResizeEdge; x: number; y: number; start: Frame } | null>(null);
@@ -75,22 +76,22 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
     if (!asset) return;
     setZoom(1);
     setOffset({ x: 0, y: 0 });
-    setFrame(clampFrame(lastFrame ?? defaultFrame()));
-  }, [asset]);
+    setFrame(clampFrame(lastFrames.get(hostWindow) ?? defaultFrame(hostWindow), hostWindow));
+  }, [asset, hostWindow]);
 
   useEffect(() => {
     if (!asset) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    const onResize = () => setFrame((current) => clampFrame(current));
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', onResize);
+    const onResize = () => setFrame((current) => clampFrame(current, hostWindow));
+    hostWindow.addEventListener('keydown', onKey);
+    hostWindow.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', onResize);
+      hostWindow.removeEventListener('keydown', onKey);
+      hostWindow.removeEventListener('resize', onResize);
     };
-  }, [asset, onClose]);
+  }, [asset, onClose, hostWindow]);
 
   if (!asset) return null;
 
@@ -115,7 +116,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
     const dy = event.clientY - g.y;
     const s = g.start;
     if (g.kind === 'move') {
-      setFrame(clampFrame({ ...s, left: s.left + dx, top: s.top + dy }));
+      setFrame(clampFrame({ ...s, left: s.left + dx, top: s.top + dy }, hostWindow));
       return;
     }
     let { left, top, width, height } = s;
@@ -129,8 +130,8 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
       height = Math.max(MIN_HEIGHT, s.height - dy);
       top = s.top + s.height - height;
     }
-    width = Math.max(MIN_WIDTH, Math.min(width, window.innerWidth - MARGIN - Math.max(left, MARGIN)));
-    height = Math.max(MIN_HEIGHT, Math.min(height, window.innerHeight - MARGIN - Math.max(top, MARGIN)));
+    width = Math.max(MIN_WIDTH, Math.min(width, hostWindow.innerWidth - MARGIN - Math.max(left, MARGIN)));
+    height = Math.max(MIN_HEIGHT, Math.min(height, hostWindow.innerHeight - MARGIN - Math.max(top, MARGIN)));
     setFrame({ left: Math.max(MARGIN, left), top: Math.max(MARGIN, top), width, height });
   };
 
@@ -142,7 +143,7 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
     }
     setInteracting(false);
     setFrame((current) => {
-      lastFrame = current;
+      lastFrames.set(hostWindow, current);
       return current;
     });
   };
@@ -170,8 +171,8 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
         onPointerDown={startGesture('move')}
         onDoubleClick={(event) => {
           if ((event.target as HTMLElement).closest('button')) return;
-          const next = defaultFrame();
-          lastFrame = next;
+          const next = clampFrame(defaultFrame(hostWindow), hostWindow);
+          lastFrames.set(hostWindow, next);
           setFrame(next);
         }}
         title={t('lightbox.help')}
@@ -273,6 +274,6 @@ export function LightboxModal({ asset, onClose }: LightboxModalProps) {
         />
       ))}
     </div>,
-    document.body,
+    hostWindow.document.body,
   );
 }

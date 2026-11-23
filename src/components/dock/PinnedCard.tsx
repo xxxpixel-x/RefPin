@@ -85,7 +85,7 @@ export function PinnedCard({
   const isHorizontalDock = dockPosition === 'top' || dockPosition === 'bottom';
   const cropModified = hasCropChanged(item);
 
-  const imageMaxHeight = isHorizontalDock
+  const imageMaxHeight = dockPosition === 'popout' ? 'clamp(220px, 62vw, 460px)' : isHorizontalDock
     ? '100%'
     : `${Math.round(Math.min(460, Math.max(220, dockWidth * 0.62)))}px`;
 

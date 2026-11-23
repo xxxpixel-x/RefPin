@@ -3,6 +3,7 @@ import { extensionPdfUrl, openRemotePdf, parsePaperLocation, type PaperLocation 
 import { LocalizedError, describeError, formatMessage, message, useI18n, type DisplayMessage } from './i18n';
 import { pinTitle } from './i18n/pinTitle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { LandingView } from './components/landing/LandingView';
@@ -16,6 +17,7 @@ import { ReturnBanner } from './components/layout/ReturnBanner';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
 import { SelectionToolbar } from './components/peek/SelectionToolbar';
 import { PinDock } from './components/dock/PinDock';
+import { useDockPopout } from './components/dock/useDockPopout';
 import { LightboxModal } from './components/dock/LightboxModal';
 import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
@@ -140,7 +142,7 @@ export default function App() {
   const [recent, setRecent] = useState<PaperArchive[]>([]);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
-  const [lightboxAsset, setLightboxAsset] = useState<PaperAsset | null>(null);
+  const [lightbox, setLightbox] = useState<{ asset: PaperAsset; fromDock: boolean } | null>(null);
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ notice: DisplayMessage; action?: { label: DisplayMessage; run: () => void } } | null>(null);
 
@@ -196,6 +198,8 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), action ? 6000 : 1800);
   }, []);
 
+  const { popoutWindow, openPopout } = useDockPopout(pdfDoc, showToast);
+
   const handleClearPins = useCallback(() => {
     const store = useReaderStore.getState();
     const previous = store.pinnedItems;
@@ -213,13 +217,13 @@ export default function App() {
     });
   }, [showToast]);
 
-  const handleExport = useCallback(async (mode: 'copy' | 'zip') => {
+  const handleExport = useCallback(async (mode: 'copy' | 'zip', host: Window = window) => {
     const notes = useReaderStore.getState();
     if (!notes.pdfDoc || exportInProgress.current) return;
     const signal = openControllerRef.current?.signal;
     try {
       if (mode === 'copy') {
-        await navigator.clipboard.writeText(buildStudyNotesMarkdown(notes));
+        await host.navigator.clipboard.writeText(buildStudyNotesMarkdown(notes));
         showToast(message('notes.copied'));
       } else {
         exportInProgress.current = true;
@@ -265,7 +269,7 @@ export default function App() {
       setInitialPage(startPage);
       setHoverTrigger(null);
       setFallbackPreview(null);
-      setLightboxAsset(null);
+      setLightbox(null);
       activePeekIdRef.current = null;
       nativePreviewCacheRef.current.clear();
 
@@ -410,7 +414,7 @@ export default function App() {
     setInitialPage(undefined);
     setHoverTrigger(null);
     setFallbackPreview(null);
-    setLightboxAsset(null);
+    setLightbox(null);
     activePeekIdRef.current = null;
     nativePreviewCacheRef.current.clear();
     useReaderStore.getState().resetPaper();
@@ -629,7 +633,7 @@ export default function App() {
 
   const handleOpenLightboxFromPin = useCallback((item: PinnedItem) => {
     if (!item.imageUrl) return;
-    setLightboxAsset({
+    const asset: PaperAsset = {
       key: item.id,
       kind: item.kind === 'snip' || item.kind === 'reference' || item.kind === 'glossary' ? 'figure' : item.kind,
       label: pinTitle(item),
@@ -637,7 +641,8 @@ export default function App() {
       pageNumber: item.pageNumber,
       cropRect: item.cropRect ?? { x: 0, y: 0, width: 1, height: 1 },
       imageUrl: item.imageUrl,
-    });
+    };
+    setLightbox({ asset, fromDock: true });
   }, []);
 
   // 全局快捷键：S 开关框选、[ 开关论文索引、G 开关术语栏、T 一键翻译、Esc 收起浮窗/框选
@@ -658,7 +663,7 @@ export default function App() {
       }
       if (event.key === 'Escape') {
         closeSearch();
-        setLightboxAsset(null);
+        setLightbox(null);
         setHoverTrigger(null);
         translation.setSettingsOpen(false);
         if (useReaderStore.getState().snipMode) {
@@ -703,7 +708,7 @@ export default function App() {
       } else if (event.key === '[') {
         event.preventDefault();
         state.setDrawerOpen(!state.drawerOpen);
-      } else if (event.key === ']') {
+      } else if (event.key === ']' && state.dockPosition !== 'popout') {
         event.preventDefault();
         state.toggleDockCollapsed();
       } else if (event.key.toLowerCase() === 'g') {
@@ -744,6 +749,7 @@ export default function App() {
   const palette = paletteOpen && (
     <CommandPalette
       onClose={() => setPaletteOpen(false)}
+      onPopout={popoutWindow ? undefined : openPopout}
       onExport={handleExport}
       onJump={(page, rect, label) => handleJump(page, rect, undefined, undefined, label)}
       onPinAsset={handlePinAsset}
@@ -793,6 +799,41 @@ export default function App() {
     );
   }
 
+  const dock = (
+    <PinDock
+      currentPage={currentPage}
+      citations={citationsByPage[currentPage] ?? []}
+      assetsMap={assetsMap}
+      onPinAsset={handlePinAsset}
+      onPreviewAsset={asset => setLightbox({ asset, fromDock: true })}
+      items={pinnedItems}
+      backlinksMap={backlinksMap}
+      onJumpToBacklink={handleJump}
+      highlightedId={highlightedPinId}
+      position={dockPosition}
+      width={dockWidth}
+      height={dockHeight}
+      dockCollapsed={dockCollapsed}
+      onDockCollapsedChange={(collapsed) => useReaderStore.getState().setDockCollapsed(collapsed)}
+      workspaceRef={workspaceRef}
+      onPopout={openPopout}
+      onPositionChange={(pos) => useReaderStore.getState().setDockPosition(pos)}
+      onWidthChange={(w) => useReaderStore.getState().setDockWidth(w)}
+      onHeightChange={(h) => useReaderStore.getState().setDockHeight(h)}
+      onUnpin={(id) => useReaderStore.getState().unpinItem(id)}
+      onToggleCollapse={(id) => useReaderStore.getState().togglePinCollapse(id)}
+      onJump={handleJump}
+      onExpandCrop={(id, direction) => void handleExpandCrop(id, direction)}
+      onResetCrop={(id) => void handleResetCrop(id)}
+      onOpenLightbox={handleOpenLightboxFromPin}
+      onRename={(id, title) => useReaderStore.getState().renamePinnedItem(id, title)}
+      onMove={(id, delta) => useReaderStore.getState().movePinnedItem(id, delta === -1 ? 'up' : 'down')}
+      onExport={mode => handleExport(mode, popoutWindow ?? window)}
+      exporting={exporting}
+      onClear={handleClearPins}
+    />
+  );
+
   return (
     <div className="flex h-full flex-col bg-paper-bg">
       <TopBar
@@ -819,7 +860,7 @@ export default function App() {
         }}
         onToggleSnip={() => useReaderStore.getState().setSnipMode(!snipMode)}
         onToggleDrawer={() => useReaderStore.getState().setDrawerOpen(!drawerOpen)}
-        onToggleDock={() => useReaderStore.getState().toggleDockCollapsed()}
+        onToggleDock={popoutWindow ? undefined : () => useReaderStore.getState().toggleDockCollapsed()}
         onReset={handleReset}
         onOpenFile={(file) => void handleOpenFile(file)}
       />
@@ -896,37 +937,7 @@ export default function App() {
           {!snipMode && <SelectionToolbar viewerRef={readerRef} onOpenSettings={() => translation.setSettingsOpen(true)} />}
         </main>
 
-        <PinDock
-          currentPage={currentPage}
-          citations={citationsByPage[currentPage] ?? []}
-          assetsMap={assetsMap}
-          onPinAsset={handlePinAsset}
-          onPreviewAsset={setLightboxAsset}
-          items={pinnedItems}
-          backlinksMap={backlinksMap}
-          onJumpToBacklink={handleJump}
-          highlightedId={highlightedPinId}
-          position={dockPosition}
-          width={dockWidth}
-          height={dockHeight}
-          dockCollapsed={dockCollapsed}
-          onDockCollapsedChange={(collapsed) => useReaderStore.getState().setDockCollapsed(collapsed)}
-          workspaceRef={workspaceRef}
-          onPositionChange={(pos) => useReaderStore.getState().setDockPosition(pos)}
-          onWidthChange={(w) => useReaderStore.getState().setDockWidth(w)}
-          onHeightChange={(h) => useReaderStore.getState().setDockHeight(h)}
-          onUnpin={(id) => useReaderStore.getState().unpinItem(id)}
-          onToggleCollapse={(id) => useReaderStore.getState().togglePinCollapse(id)}
-          onJump={(pageNumber, cropRect) => handleJump(pageNumber, cropRect)}
-          onExpandCrop={(id, direction) => void handleExpandCrop(id, direction)}
-          onResetCrop={(id) => void handleResetCrop(id)}
-          onOpenLightbox={handleOpenLightboxFromPin}
-          onRename={(id, title) => useReaderStore.getState().renamePinnedItem(id, title)}
-          onMove={(id, delta) => useReaderStore.getState().movePinnedItem(id, delta === -1 ? 'up' : 'down')}
-          onExport={handleExport}
-          exporting={exporting}
-          onClear={handleClearPins}
-        />
+        {popoutWindow ? createPortal(dock, popoutWindow.document.body) : dock}
       </div>
 
       <HoverPeekCard
@@ -938,14 +949,15 @@ export default function App() {
         onPinReference={handlePinReference}
         onPinGlossary={handlePinGlossary}
         onJump={handleJump}
-        onOpenLightbox={setLightboxAsset}
+        onOpenLightbox={asset => setLightbox({ asset, fromDock: false })}
         onPeek={handlePeek}
         onDismiss={() => setHoverTrigger(null)}
         pinnedIds={pinnedIds}
         fallbackPreview={fallbackPreview}
       />
 
-      <LightboxModal asset={lightboxAsset} onClose={() => setLightboxAsset(null)} />
+      <LightboxModal asset={lightbox?.asset ?? null} hostWindow={lightbox?.fromDock ? popoutWindow ?? window : window}
+        onClose={() => setLightbox(null)} />
       {palette}
       {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}
 
