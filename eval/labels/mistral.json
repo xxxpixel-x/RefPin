@@ -1,0 +1,33 @@
+{
+  "reviewedPages": [2, 3],
+  "citations": [
+    { "pageNumber": 2, "text": "[17]", "targetKeys": ["ref-17"] },
+    { "pageNumber": 2, "text": "[27]", "targetKeys": ["ref-27"] },
+    { "pageNumber": 2, "text": "Table 1", "context": "summarized in Table 1", "targetKeys": ["tab-1"] },
+    { "pageNumber": 2, "text": "Figure 1", "context": "illustrated in Figure 1", "targetKeys": ["fig-1"] },
+    { "pageNumber": 2, "text": "[11]", "targetKeys": ["ref-11"] },
+    { "pageNumber": 2, "text": "[18]", "targetKeys": ["ref-18"] },
+    { "pageNumber": 2, "text": "Figure 2", "targetKeys": ["fig-2"] },
+    { "pageNumber": 3, "text": "Figure 3", "context": "Figure 3 shows", "targetKeys": ["fig-3"] },
+    { "pageNumber": 3, "text": "[28]", "targetKeys": ["ref-28"] },
+    { "pageNumber": 3, "text": "[21]", "targetKeys": ["ref-21"] },
+    { "pageNumber": 3, "text": "[4]", "targetKeys": ["ref-4"] },
+    { "pageNumber": 3, "text": "[22]", "targetKeys": ["ref-22"] },
+    { "pageNumber": 3, "text": "[19]", "targetKeys": ["ref-19"] },
+    { "pageNumber": 3, "text": "[9]", "targetKeys": ["ref-9"] },
+    { "pageNumber": 3, "text": "[24]", "targetKeys": ["ref-24"] },
+    { "pageNumber": 3, "text": "[16]", "targetKeys": ["ref-16"] },
+    { "pageNumber": 3, "text": "[15]", "targetKeys": ["ref-15"] },
+    { "pageNumber": 3, "text": "[8]", "targetKeys": ["ref-8"] },
+    { "pageNumber": 3, "text": "[7]", "targetKeys": ["ref-7"] },
+    { "pageNumber": 3, "text": "[10]", "targetKeys": ["ref-10"] },
+    { "pageNumber": 3, "text": "[13]", "targetKeys": ["ref-13"] },
+    { "pageNumber": 3, "text": "[5]", "targetKeys": ["ref-5"] },
+    { "pageNumber": 3, "text": "[2]", "targetKeys": ["ref-2"] },
+    { "pageNumber": 3, "text": "[12]", "targetKeys": ["ref-12"] },
+    { "pageNumber": 3, "text": "[23]", "targetKeys": ["ref-23"] },
+    { "pageNumber": 3, "text": "[29]", "targetKeys": ["ref-29"] },
+    { "pageNumber": 3, "text": "Table 2", "targetKeys": ["tab-2"] },
+    { "pageNumber": 3, "text": "Figure 4", "targetKeys": ["fig-4"] }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "reviewedPages": [3, 4],
+  "citations": [
+    { "pageNumber": 3, "text": "Fig. 1b", "targetKeys": ["fig-1b"] },
+    { "pageNumber": 4, "text": "Fig. 1c", "occurrence": 1, "targetKeys": ["fig-1c"] },
+    { "pageNumber": 4, "text": "Fig. 1d", "occurrence": 1, "targetKeys": ["fig-1d"] },
+    { "pageNumber": 4, "text": "Fig. 1d", "occurrence": 2, "targetKeys": ["fig-1d"] },
+    { "pageNumber": 4, "text": "Fig. 1c", "occurrence": 2, "targetKeys": ["fig-1c"] },
+    { "pageNumber": 4, "text": "Fig. 1f", "targetKeys": ["fig-1f"] },
+    { "pageNumber": 4, "text": "Fig. 3", "targetKeys": ["fig-3"] },
+    { "pageNumber": 4, "text": "[19, 20]", "targetKeys": ["ref-19", "ref-20"] }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "reviewedPages": [3, 5],
+  "citations": [
+    { "pageNumber": 3, "text": "Figure 1", "context": "halves of Figure 1", "targetKeys": ["fig-1"] },
+    { "pageNumber": 3, "text": "[11]", "targetKeys": ["ref-11"] },
+    { "pageNumber": 3, "text": "[1]", "targetKeys": ["ref-1"] },
+    { "pageNumber": 5, "text": "Figure 2", "context": "depicted in Figure 2", "targetKeys": ["fig-2"] },
+    { "pageNumber": 5, "text": "[38, 2, 9]", "targetKeys": ["ref-38", "ref-2", "ref-9"] },
+    { "pageNumber": 5, "text": "Figure 2", "context": "See Figure 2", "targetKeys": ["fig-2"] },
+    { "pageNumber": 5, "text": "[30]", "targetKeys": ["ref-30"] }
+  ]
+}

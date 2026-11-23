@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "eval:fetch": "node scripts/fetch-eval-corpus.mjs",
+    "eval": "node scripts/eval-citations.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsc --noEmit && vite build && node scripts/build-pwa.mjs",

@@ -2,7 +2,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { detectCitations } from '../citationDetector';
 import { getCachedPageLines } from '../pageLinesCache';
-import { parsePaper } from '../parsePaper';
+import { parsePaper, parsePaperCitations } from '../parsePaper';
 import { extractPageLines } from '../pdfLoader';
 import { useReaderStore } from '../../store/useReaderStore';
 import { annotationDoc, textLine } from './fixtures';
@@ -11,6 +11,24 @@ vi.mock('../pdfLoader', () => ({ extractPageLines: vi.fn() }));
 beforeEach(() => vi.mocked(extractPageLines).mockReset());
 
 describe('reader parse lifecycle', () => {
+  it('keeps the same merged citations and bibliography in the reader and the evaluation entry', async () => {
+    const line = textLine('See Fig. 2 and [3].');
+    const digit = line.chars[line.text.indexOf('2')].rect;
+    const doc = { ...annotationDoc([{ subtype: 'Link', dest: [0, { name: 'Fit' }],
+      rect: [digit.x, digit.y, digit.x + digit.width, digit.y + digit.height] }]), numPages: 2 } as PDFDocumentProxy;
+    vi.mocked(extractPageLines).mockImplementation(async (_, page) => page === 1 ? [line] : [
+      textLine('References', { pageNumber: 2 }), textLine('[3] A. Smith. 2020. Example.', { pageNumber: 2, y: 0.4 }),
+    ]);
+    const evaluation = await parsePaperCitations(doc);
+    const reader = await parsePaper(doc);
+    expect(reader.citationsByPage).toEqual(evaluation.citationsByPage);
+    expect(reader.referencesMap).toEqual(evaluation.referencesMap);
+    expect(reader.referencesMap['ref-3']).toBeDefined();
+    expect(reader.citationsByPage[1].map(c => [c.id, c.rawText, c.targetKeys, c.nativeDest?.pageNumber])).toEqual([
+      ['cite-1-0', 'Fig. 2', ['fig-2'], 1], ['cite-1-1', '[3]', ['ref-3'], undefined],
+    ]);
+  });
+
   it('publishes compact lines per document, and indexes citations only when the result is installed', async () => {
     const doc = annotationDoc();
     doc.destroy = vi.fn(async () => {});

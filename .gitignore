@@ -2,6 +2,10 @@ node_modules
 dist
 dist-ext
 release
+eval/pdfs/
+# 评测生成的报告，本地查看，不进仓库
+eval/report.md
+eval/report.json
 .DS_Store
 *.local
 

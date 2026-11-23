@@ -546,6 +546,7 @@ async function detectFromAnnotations(
 }
 
 export interface DetectCitationsOptions {
+  channel?: 'native' | 'text' | 'both';
   referencesMap?: Record<string, ReferenceEntry>;
   refRange?: RefRange;
   signal?: AbortSignal;
@@ -564,11 +565,12 @@ export async function detectCitations(
   linesByPage: LinesByPage,
   options: DetectCitationOptions = {},
 ): Promise<Record<number, InlineCitation[]>> {
-  const { refRange, signal } = options;
+  const { channel = 'both', refRange, signal } = options;
   signal?.throwIfAborted();
   const index = indexReferences(options.referencesMap ?? {});
   const { citationsByPage: textLayer, matchesByLine } = detectFromText(linesByPage, index, refRange, signal);
-  const nativeLayer = await detectFromAnnotations(doc, linesByPage, matchesByLine, refRange, signal);
+  // 原生通道仍使用链接框附近的文本解释链接，但仅输出有内部链接的命中。
+  const nativeLayer = channel === 'text' ? {} : await detectFromAnnotations(doc, linesByPage, matchesByLine, refRange, signal);
   signal?.throwIfAborted();
 
   const merged: Record<number, InlineCitation[]> = {};
@@ -579,7 +581,7 @@ export async function detectCitations(
 
   for (const pageNumber of allPages) {
     signal?.throwIfAborted();
-    const citations = [...(textLayer[pageNumber] ?? [])];
+    const citations = channel === 'native' ? [] : [...(textLayer[pageNumber] ?? [])];
 
     for (const native of nativeLayer[pageNumber] ?? []) {
       const existing = citations.find((item) => rectIoU(item.rect, native.rect) > 0.4)

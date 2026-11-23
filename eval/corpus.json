@@ -1,0 +1,74 @@
+[
+  {
+    "id": "mistral",
+    "group": "ieee-numeric",
+    "title": "Mistral 7B",
+    "authors": "Albert Q. Jiang et al.",
+    "url": "https://arxiv.org/pdf/2310.06825v1",
+    "record": "https://arxiv.org/abs/2310.06825v1",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "sha256": "dfbac4e7035344b305c947481f2e7e8a02f7a24a563917eb6e47f6591d14c5ae"
+  },
+  {
+    "id": "llama",
+    "group": "author-year",
+    "title": "LLaMA: Open and Efficient Foundation Language Models",
+    "authors": "Hugo Touvron et al.",
+    "url": "https://arxiv.org/pdf/2302.13971v1",
+    "record": "https://arxiv.org/abs/2302.13971v1",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "sha256": "2e663675ae36ad12adb2f5a05281bac2747ecf8d23d92bedd9f937a89fee7136"
+  },
+  {
+    "id": "numpy",
+    "group": "two-column",
+    "title": "Array Programming with NumPy",
+    "authors": "Charles R. Harris et al.",
+    "url": "https://arxiv.org/pdf/2006.10256v1",
+    "record": "https://arxiv.org/abs/2006.10256v1",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "sha256": "c6705a2bad0a8b56e992009d1588dd6c7c2c4d657e253a11811dcee0315be791"
+  },
+  {
+    "id": "attention",
+    "group": "latex-hyperref",
+    "title": "Attention Is All You Need",
+    "authors": "Ashish Vaswani et al.",
+    "url": "https://arxiv.org/pdf/1706.03762v7",
+    "record": "https://arxiv.org/abs/1706.03762v7",
+    "license": "arXiv 非独占分发许可。首页另有 Google 对图表复用的说明。与 public/samples/attention.pdf 相同。",
+    "licenseUrl": "https://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+    "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697"
+  },
+  {
+    "id": "single-column-example",
+    "group": "single-column",
+    "local": true,
+    "license": "待选材后确认",
+    "todo": "补用于单栏版式对照的论文及标注。"
+  },
+  {
+    "id": "superscript-example",
+    "group": "superscript",
+    "local": true,
+    "license": "待选材后确认",
+    "todo": "补上标文献引用论文及逐页标注。"
+  },
+  {
+    "id": "word-example",
+    "group": "word-export",
+    "local": true,
+    "license": "拟采用团队原创测试文档",
+    "todo": "依照 README 用 Word 导出无超链接 PDF 并标注。"
+  },
+  {
+    "id": "zh-journal-example",
+    "group": "zh-journal",
+    "local": true,
+    "license": "待团队确认本地使用授权",
+    "todo": "补中文期刊或学位论文及标注，PDF 仅留本地。"
+  }
+]
