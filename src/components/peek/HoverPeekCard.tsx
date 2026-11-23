@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { findAssetForCitation, glossaryPinId } from '../../engine/backlinks';
+import { useOnboarding } from '../../store/onboarding';
+import { useReaderStore } from '../../store/useReaderStore';
 import type {
   GlossaryEntry,
   InlineCitation,
@@ -94,6 +96,7 @@ export function HoverPeekCard({
     // Any press outside the card (including starting a text selection) closes it,
     // so a click-locked card never lingers after the reader moves on.
     const dismissOnOutsidePress = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-coach-bubble]')) return;
       if (event.target instanceof Node && cardRef.current?.contains(event.target)) return;
       window.clearTimeout(enterTimer.current);
       window.clearTimeout(leaveTimer.current);
@@ -135,6 +138,10 @@ export function HoverPeekCard({
   }, [trigger]);
 
   const mention = activeTrigger?.mention;
+  const coachCitation = useOnboarding(state => state.run?.step === 'pin' ? state.run.citation.id : undefined);
+  useEffect(() => {
+    useOnboarding.getState().send({ type: 'preview', citationId: mention?.id });
+  }, [mention?.id]);
   const citation = mention && 'kind' in mention ? mention : null;
   const definition = mention && 'term' in mention ? glossaryMap?.[mention.term] : undefined;
 
@@ -233,9 +240,10 @@ export function HoverPeekCard({
     </button>
   );
 
-  const pinButton = (pinned: boolean, label: string, onClick: () => void, disabled = false) => (
+  const pinButton = (pinned: boolean, label: string, onClick: () => void, disabled = false, assetId?: string) => (
     <button
       type="button"
+      data-coach-pin={assetId}
       disabled={disabled}
       onClick={onClick}
       className={clsx(
@@ -449,7 +457,11 @@ export function HoverPeekCard({
           )}
 
           <div className="mt-2.5 flex items-center gap-2">
-            {pinButton(!!asset && pinnedIds.includes(asset.key), t('peek.pin'), () => { if (asset) onPinAsset(asset); }, !asset)}
+            {asset && coachCitation === citation.id && pinnedIds.includes(asset.key)
+              ? <button type="button" data-coach-pin={asset.key}
+                  className="rounded-lg border border-paper-border px-2.5 py-1.5 text-xs text-paper-ink hover:bg-paper-bg"
+                  onClick={() => useReaderStore.getState().unpinItem(asset.key)}>{t('coach.unpin')}</button>
+              : pinButton(!!asset && pinnedIds.includes(asset.key), t('peek.pin'), () => { if (asset) onPinAsset(asset); }, !asset, asset?.key)}
             <button
               type="button"
               onClick={() => {

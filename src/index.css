@@ -51,6 +51,19 @@
 }
 .pdf-image { filter: var(--pdf-filter); }
 .original-color-control { display: none; }
+[data-coach-target] { outline: 2px solid var(--paper-gold); outline-offset: 2px; }
+[data-coach-bubble]::before {
+  content: '';
+  position: absolute;
+  left: var(--coach-pointer);
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  border: solid rgb(var(--paper-border-rgb));
+  border-width: 1px 0 0 1px;
+}
+[data-coach-bubble][data-side="below"]::before { top: 0; transform: translate(-50%, -55%) rotate(45deg); }
+[data-coach-bubble][data-side="above"]::before { bottom: 0; transform: translate(-50%, 55%) rotate(225deg); }
 :root:is([data-theme="dark"], [data-theme="sepia"]) .original-color-control { display: inline-flex; }
 
 html,

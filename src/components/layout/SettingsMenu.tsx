@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Command, Keyboard, MoreHorizontal } from 'lucide-react';
+import { Command, Keyboard, MoreHorizontal, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { LanguageToggle } from '../../i18n/LanguageToggle';
@@ -11,12 +11,13 @@ const iconButton = 'shrink-0 rounded-md p-1.5 text-paper-muted transition hover:
 interface SettingsMenuProps {
   onPalette?: () => void;
   onShowShortcuts?: () => void;
+  onReplayCoach?: () => void;
   /** Extra class for the trigger, e.g. a bordered style in the side panel header. */
   triggerClassName?: string;
 }
 
 /** Overflow menu for low-frequency preferences: theme, language, command palette, shortcuts. */
-export function SettingsMenu({ onPalette, onShowShortcuts, triggerClassName }: SettingsMenuProps) {
+export function SettingsMenu({ onPalette, onShowShortcuts, onReplayCoach, triggerClassName }: SettingsMenuProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -54,6 +55,12 @@ export function SettingsMenu({ onPalette, onShowShortcuts, triggerClassName }: S
             <LanguageToggle />
           </div>
           <div className="my-1.5 border-t border-paper-border" />
+          {onReplayCoach && (
+            <button type="button" role="menuitem" className={menuItem} onClick={() => { setOpen(false); onReplayCoach(); }}>
+              <RotateCcw size={14} className="text-paper-muted" />
+              {t('coach.replay')}
+            </button>
+          )}
           {onPalette && (
             <button type="button" role="menuitem" className={menuItem} onClick={() => { setOpen(false); onPalette(); }}>
               <Command size={14} className="text-paper-muted" />

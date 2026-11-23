@@ -295,6 +295,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
                       <button
                         key={cite.id}
                         type="button"
+                        data-coach-citation={cite.id}
                         onMouseEnter={(e) => onMentionHover?.(cite, e.currentTarget)}
                         onMouseLeave={() => onMentionLeave?.()}
                         onFocus={(e) => onMentionHover?.(cite, e.currentTarget)}
@@ -322,6 +323,7 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
             <button
               key={mention.id}
               type="button"
+              data-coach-citation={mention.id}
               aria-label={t('term' in mention ? 'peek.showDefinition' : 'peek.showCitation', { name: mention.rawText })}
               className={`absolute border-b p-0 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-paper-gold ${
                 'term' in mention

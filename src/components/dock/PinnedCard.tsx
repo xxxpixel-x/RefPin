@@ -42,7 +42,7 @@ interface PinnedCardProps {
   dockHeight?: number;
   onUnpin: (id: string) => void;
   onToggleCollapse: (id: string) => void;
-  onJump: (pageNumber: number, cropRect?: PinnedItem['cropRect']) => void;
+  onJump: (pageNumber: number, cropRect?: PinnedItem['cropRect'], titleId?: string) => void;
   onExpandCrop: (id: string, direction: 'up' | 'down') => void;
   onResetCrop?: (id: string) => void;
   onOpenLightbox: (item: PinnedItem) => void;
@@ -132,10 +132,11 @@ export function PinnedCard({
         ) : (
           <button
             type="button"
+            data-coach-title={item.id}
             onClick={() => {
               // Wait briefly so a double-click renames instead of jumping first.
               window.clearTimeout(titleClickTimer.current);
-              titleClickTimer.current = window.setTimeout(() => onJump(item.pageNumber, item.cropRect), 220);
+              titleClickTimer.current = window.setTimeout(() => onJump(item.pageNumber, item.cropRect, item.id), 220);
             }}
             onDoubleClick={() => {
               window.clearTimeout(titleClickTimer.current);

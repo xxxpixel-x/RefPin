@@ -1,12 +1,14 @@
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useReaderStore } from '../../store/useReaderStore';
+import { useOnboarding } from '../../store/onboarding';
 
 export function ReturnBanner({ onNavigate }: { onNavigate: (direction: 'back' | 'forward') => void }) {
   const { t } = useI18n();
   const history = useReaderStore(state => state.jumpHistory);
   const cursor = useReaderStore(state => state.historyCursor);
   const visible = useReaderStore(state => state.historyVisible);
+  const guiding = useOnboarding(state => !!state.run);
   const place = history[cursor - 1]?.origin ?? history[cursor]?.target;
   if (!visible || !place) return null;
   return <nav aria-label={t('reader.return')} className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">
@@ -14,14 +16,18 @@ export function ReturnBanner({ onNavigate }: { onNavigate: (direction: 'back' | 
       {(['back', 'forward'] as const).map(direction => {
         const back = direction === 'back';
         const Icon = back ? ArrowLeft : ArrowRight;
-        const title = t(back ? 'history.back' : 'history.forward');
+        const title = t(back && guiding ? 'reader.return' : back ? 'history.back' : 'history.forward');
         return <button key={direction} type="button" title={title} aria-label={title}
+          data-coach-back={back ? '' : undefined}
           disabled={back ? cursor === 0 : cursor === history.length} onClick={() => onNavigate(direction)}
           className="rounded-full p-1.5 hover:bg-paper-bg disabled:opacity-30"><Icon size={14} /></button>;
       })}
       <span className="max-w-40 truncate border-l border-paper-border px-2">{place.label && place.label + ' · '}{t('reader.page', { page: place.pageNumber })}</span>
-      <kbd className="hidden text-[11px] text-paper-muted sm:inline">Alt+←/→</kbd>
-      <button type="button" onClick={useReaderStore.getState().dismissHistory} aria-label={t('reader.dismissReturn')}
+      {!guiding && <kbd className="hidden text-[11px] text-paper-muted sm:inline">Alt+←/→</kbd>}
+      <button type="button" onClick={() => {
+        useReaderStore.getState().dismissHistory();
+        useOnboarding.getState().send({ type: 'dismissReturn' });
+      }} aria-label={t('reader.dismissReturn')}
         className="rounded-full p-1.5 text-paper-muted hover:bg-paper-bg"><X size={12} /></button>
     </div>
   </nav>;

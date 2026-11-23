@@ -56,7 +56,7 @@ interface PinDockProps {
   onHeightChange: (height: number) => void;
   onUnpin: (id: string) => void;
   onToggleCollapse: (id: string) => void;
-  onJump: (pageNumber: number, cropRect?: PinnedItem['cropRect']) => void;
+  onJump: (pageNumber: number, cropRect?: PinnedItem['cropRect'], titleId?: string) => void;
   onExpandCrop: (id: string, direction: 'up' | 'down') => void;
   onResetCrop?: (id: string) => void;
   onOpenLightbox: (item: PinnedItem) => void;

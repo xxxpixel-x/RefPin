@@ -14,6 +14,8 @@ import { TopBar } from './components/layout/TopBar';
 import { getCachedPageLines, searchPageLines } from './engine/pageLinesCache';
 import { SearchBar } from './components/layout/SearchBar';
 import { ReturnBanner } from './components/layout/ReturnBanner';
+import { OnboardingCoach } from './components/layout/OnboardingCoach';
+import { useOnboarding } from './store/onboarding';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
 import { SelectionToolbar } from './components/peek/SelectionToolbar';
 import { PinDock } from './components/dock/PinDock';
@@ -93,6 +95,8 @@ export default function App() {
   const dockCollapsed = useReaderStore((state) => state.dockCollapsed);
 
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set([1, 2]));
+  const coach = useOnboarding(state => state.run);
+  const coachSession = useRef<{ sample?: SamplePaperMeta; replay: boolean }>({ replay: false });
   const translation = usePaperTranslation(pdfDoc, numPages, currentPage, visiblePages);
 
   const [sharedArxiv, setSharedArxiv] = useState(() => {
@@ -247,6 +251,7 @@ export default function App() {
   useEffect(
     () => () => {
       openControllerRef.current?.abort();
+      useOnboarding.getState().close();
       useReaderStore.getState().resetPaper();
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
@@ -255,7 +260,11 @@ export default function App() {
   );
 
   const openPaper = useCallback(
-    async (input: string | File | PaperArchive | PaperLocation, name: string, startPage?: number, sampleId?: string) => {
+    async (input: string | File | PaperArchive | PaperLocation, name: string, startPage?: number, sample?: SamplePaperMeta, replay = false) => {
+      useOnboarding.getState().close();
+      coachSession.current = { sample, replay };
+      // 扩展示例仍使用本地 PDF 缓存，示例入口身份与归档方式独立。
+      const sampleId = IS_EXTENSION_PAGE ? undefined : sample?.id;
       closeSearch();
       setSharedArxiv(undefined);
       setPaletteOpen(false);
@@ -332,6 +341,7 @@ export default function App() {
         }, signal);
         if (signal.aborted) return;
         useReaderStore.getState().setParseResult(result);
+        useOnboarding.getState().start(sample, useReaderStore.getState(), coachSession.current.replay);
       } catch (error) {
         if (signal.aborted) return;
         setBootingName(null);
@@ -399,12 +409,13 @@ export default function App() {
 
   const handleSelectSample = useCallback(
     (sample: SamplePaperMeta) => {
-      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, IS_EXTENSION_PAGE ? undefined : sample.id);
+      void openPaper(sample.url, `${sample.title}.pdf`, sample.demoStartPage, sample);
     },
     [openPaper],
   );
 
   const handleReset = useCallback(() => {
+    useOnboarding.getState().close();
     closeSearch();
     void flushArchive();
     openControllerRef.current?.abort();
@@ -420,16 +431,31 @@ export default function App() {
     useReaderStore.getState().resetPaper();
   }, [flushArchive, closeSearch]);
 
+  const replayCoach = () => {
+    const sample = coachSession.current.sample;
+    if (!sample) {
+      const demo = SAMPLES[0];
+      void openPaper(demo.url, `${demo.title}.pdf`, demo.demoStartPage, demo, true);
+      return;
+    }
+    coachSession.current.replay = true;
+    setHoverTrigger(null);
+    const reader = useReaderStore.getState();
+    reader.setSnipMode(false);
+    if (!reader.isParsing) useOnboarding.getState().start(sample, reader, true);
+  };
+
   const handlePinAsset = useCallback(
     (asset: PaperAsset) => {
       const store = useReaderStore.getState();
       if (store.pinnedItems.some((item) => item.id === asset.key)) {
         flashPinnedCard(asset.key);
         showToast(message('dock.alreadyPinned'));
-        return;
+        return false;
       }
       store.pinAsset(asset);
       showToast(message('dock.pinnedName', { name: asset.label }));
+      return true;
     },
     [flashPinnedCard, showToast],
   );
@@ -470,6 +496,7 @@ export default function App() {
       sourceRect?: NormalizedRect,
       sourcePage?: number,
       targetLabel?: string,
+      titleId?: string,
     ) => {
       const store = useReaderStore.getState();
       const viewer = viewerRef.current;
@@ -480,7 +507,10 @@ export default function App() {
       const origin = { pageNumber: page, label, scrollTop: viewer.getScrollTop(),
         scrollLeft: viewer.getScrollLeft(), highlightRect: sourceRect };
       const target = viewer.scrollToPosition(pageNumber, targetRect, true);
-      if (target) store.recordJump(origin, { ...target, pageNumber, highlightRect: targetRect, label: targetLabel });
+      if (target) {
+        store.recordJump(origin, { ...target, pageNumber, highlightRect: targetRect, label: targetLabel });
+        useOnboarding.getState().send({ type: 'jumped', titleId, origin });
+      }
       setHoverTrigger(null);
     },
     [],
@@ -490,10 +520,15 @@ export default function App() {
     const position = useReaderStore.getState().navigateHistory(direction);
     if (!position) return;
     setHoverTrigger(null);
-    viewerRef.current?.scrollToPosition(position.pageNumber, position.scrollTop, true, position.highlightRect, position.scrollLeft);
+    const target = viewerRef.current?.scrollToPosition(position.pageNumber, position.scrollTop, true, position.highlightRect, position.scrollLeft);
+    if (target && direction === 'back') useOnboarding.getState().send({ type: 'returned', position });
   }, []);
 
   const handlePeek = useCallback((mention: ReaderMention) => {
+    const run = useOnboarding.getState().run;
+    if (run?.step === 'hover' && run.citation.id === mention.id) {
+      setHoverTrigger(trigger => trigger?.mention.id === mention.id ? { ...trigger, locked: true } : trigger);
+    }
     activePeekIdRef.current = mention.id;
     const store = useReaderStore.getState();
     store.recordPeek();
@@ -785,7 +820,7 @@ export default function App() {
           recent={recent}
           onOpenRecent={entry => {
             const sample = entry.sampleId && getSampleById(entry.sampleId);
-            if (sample) void openPaper(sample.url, entry.fileName, undefined, sample.id);
+            if (sample) void openPaper(sample.url, entry.fileName, undefined, sample);
             else void openPaper(entry, entry.fileName);
           }}
           onRemoveRecent={async hash => {
@@ -822,7 +857,7 @@ export default function App() {
       onHeightChange={(h) => useReaderStore.getState().setDockHeight(h)}
       onUnpin={(id) => useReaderStore.getState().unpinItem(id)}
       onToggleCollapse={(id) => useReaderStore.getState().togglePinCollapse(id)}
-      onJump={handleJump}
+      onJump={(page, rect, titleId) => handleJump(page, rect, undefined, undefined, undefined, titleId)}
       onExpandCrop={(id, direction) => void handleExpandCrop(id, direction)}
       onResetCrop={(id) => void handleResetCrop(id)}
       onOpenLightbox={handleOpenLightboxFromPin}
@@ -850,6 +885,7 @@ export default function App() {
         dockCollapsed={dockCollapsed}
         translation={translation}
         onPalette={() => setPaletteOpen(true)}
+        onReplayCoach={replayCoach}
         onShowShortcuts={() => setShortcutsOpen(true)}
         onSearch={toggleSearch}
         onJumpPage={handleJump}
@@ -945,7 +981,12 @@ export default function App() {
         glossaryMap={glossaryMap}
         assetsMap={assetsMap}
         referencesMap={referencesMap}
-        onPinAsset={handlePinAsset}
+        onPinAsset={asset => {
+          if (handlePinAsset(asset)) {
+            useOnboarding.getState().send({ type: 'pinned', assetId: asset.key });
+            if (useOnboarding.getState().run?.step === 'jump') setHoverTrigger(null);
+          }
+        }}
         onPinReference={handlePinReference}
         onPinGlossary={handlePinGlossary}
         onJump={handleJump}
@@ -956,6 +997,7 @@ export default function App() {
         fallbackPreview={fallbackPreview}
       />
 
+      {coach && <OnboardingCoach run={coach} dockWindow={popoutWindow} />}
       <LightboxModal asset={lightbox?.asset ?? null} hostWindow={lightbox?.fromDock ? popoutWindow ?? window : window}
         onClose={() => setLightbox(null)} />
       {palette}

@@ -34,6 +34,7 @@ interface TopBarProps {
   onSearch?: () => void;
   onPalette?: () => void;
   onShowShortcuts?: () => void;
+  onReplayCoach?: () => void;
   onZoom: (nextScale: number) => void;
   onFitWidth?: () => void;
   onToggleSnip: () => void;
@@ -67,6 +68,7 @@ export function TopBar({
   onSearch,
   onPalette,
   onShowShortcuts,
+  onReplayCoach,
   onZoom,
   onFitWidth,
   onToggleSnip,
@@ -174,7 +176,7 @@ export function TopBar({
             }}
           />
         </label>
-        <SettingsMenu onPalette={onPalette} onShowShortcuts={onShowShortcuts} />
+        <SettingsMenu onPalette={onPalette} onShowShortcuts={onShowShortcuts} onReplayCoach={onReplayCoach} />
         <button type="button" onClick={onReset} title={t('reader.home')} aria-label={t('reader.home')} className={iconButton}>
           <Home size={15} />
         </button>
