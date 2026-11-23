@@ -5,48 +5,32 @@ import { createPortal } from 'react-dom';
 import { GripHorizontal, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { PaperAsset } from '../../types/paper';
+import {
+  PREVIEW_MARGIN as MARGIN,
+  PREVIEW_MIN_HEIGHT as MIN_HEIGHT,
+  PREVIEW_MIN_WIDTH as MIN_WIDTH,
+  clampPreviewFrame,
+  fitPreviewFrame,
+  type ImageSize,
+  type PreviewFrame as Frame,
+} from './previewWindows';
 
 interface LightboxModalProps {
   asset: PaperAsset | null;
   hostWindow?: Window;
   onClose: () => void;
-}
-
-interface Frame {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+  /** 打开时的位置和大小；省略时等图片加载后按截图比例自动计算。 */
+  initialFrame?: Frame;
+  zIndex?: number;
+  /** 按下浮窗任意位置时调用，用于把它提到最前面。 */
+  onFocus?: () => void;
+  /** 是否由浮窗自己响应 Esc；多个浮窗时只让最前面的那个响应。 */
+  closeOnEscape?: boolean;
 }
 
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-const MIN_WIDTH = 280;
-const MIN_HEIGHT = 200;
-const MARGIN = 8;
-/** Keep at least this much of the title bar on screen so the window can always be dragged back. */
-const VISIBLE_GRAB = 80;
-
-// Remember where the reader last left the window during this session.
-const lastFrames = new WeakMap<Window, Frame>();
-
-function defaultFrame(host: Window): Frame {
-  const vw = host.innerWidth;
-  const vh = host.innerHeight;
-  const width = Math.max(MIN_WIDTH, Math.min(880, Math.round(vw * 0.6)));
-  const height = Math.max(MIN_HEIGHT, Math.min(680, Math.round(vh * 0.7)));
-  return { left: Math.round((vw - width) / 2), top: Math.round((vh - height) / 2), width, height };
-}
-
-function clampFrame(frame: Frame, host: Window): Frame {
-  const vw = host.innerWidth;
-  const vh = host.innerHeight;
-  const width = Math.min(Math.max(MIN_WIDTH, frame.width), vw - MARGIN * 2);
-  const height = Math.min(Math.max(MIN_HEIGHT, frame.height), vh - MARGIN * 2);
-  const left = Math.min(Math.max(frame.left, VISIBLE_GRAB - width), vw - VISIBLE_GRAB);
-  const top = Math.min(Math.max(frame.top, MARGIN), vh - 48);
-  return { left, top, width, height };
-}
+const clampFrame = (frame: Frame, host: Window) => clampPreviewFrame(frame, host);
 
 const EDGE_CLASSES: Record<ResizeEdge, string> = {
   n: 'inset-x-3 -top-1 h-2 cursor-ns-resize',
@@ -63,21 +47,42 @@ const EDGE_CLASSES: Record<ResizeEdge, string> = {
  * Enlarged preview that floats above the reader like the hover card, but stays put:
  * drag the title bar to move it, drag any edge or corner to resize, scroll to zoom.
  */
-export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxModalProps) {
+export function LightboxModal({
+  asset,
+  onClose,
+  hostWindow = window,
+  initialFrame,
+  zIndex = 60,
+  onFocus,
+  closeOnEscape = true,
+}: LightboxModalProps) {
   const { filter, colorToggle } = usePreviewColor(asset?.key);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [frame, setFrame] = useState<Frame>(() => lastFrames.get(hostWindow) ?? defaultFrame(hostWindow));
+  const [frame, setFrame] = useState<Frame>(() => clampFrame(initialFrame ?? fitPreviewFrame(null, hostWindow), hostWindow));
+  const imageSize = useRef<ImageSize | null>(null);
+  /** 用户拖动或缩放过之后，不再自动按图片比例调整。 */
+  const adjusted = useRef(false);
   const [interacting, setInteracting] = useState(false);
   const panning = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const gesture = useRef<{ kind: 'move' | ResizeEdge; x: number; y: number; start: Frame } | null>(null);
 
+  const assetKey = asset?.key;
+  const assetUrl = asset?.imageUrl;
   useLayoutEffect(() => {
-    if (!asset) return;
+    if (!assetKey) return;
     setZoom(1);
     setOffset({ x: 0, y: 0 });
-    setFrame(clampFrame(lastFrames.get(hostWindow) ?? defaultFrame(hostWindow), hostWindow));
-  }, [asset, hostWindow]);
+    imageSize.current = null;
+    adjusted.current = Boolean(initialFrame);
+    setFrame(clampFrame(initialFrame ?? fitPreviewFrame(null, hostWindow), hostWindow));
+    // initialFrame 只在打开时生效，之后由用户拖动决定。
+  }, [assetKey, assetUrl]);
+
+  // 钉板小窗关闭后浮窗会回到主窗口，按新窗口尺寸重新夹紧。
+  useLayoutEffect(() => {
+    setFrame(current => clampFrame(current, hostWindow));
+  }, [hostWindow]);
 
   useEffect(() => {
     if (!asset) return;
@@ -85,13 +90,13 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
       if (event.key === 'Escape') onClose();
     };
     const onResize = () => setFrame((current) => clampFrame(current, hostWindow));
-    hostWindow.addEventListener('keydown', onKey);
+    if (closeOnEscape) hostWindow.addEventListener('keydown', onKey);
     hostWindow.addEventListener('resize', onResize);
     return () => {
       hostWindow.removeEventListener('keydown', onKey);
       hostWindow.removeEventListener('resize', onResize);
     };
-  }, [asset, onClose, hostWindow]);
+  }, [asset, onClose, hostWindow, closeOnEscape]);
 
   if (!asset) return null;
 
@@ -106,6 +111,7 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     gesture.current = { kind, x: event.clientX, y: event.clientY, start: frame };
+    adjusted.current = true;
     setInteracting(true);
   };
 
@@ -142,10 +148,6 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     setInteracting(false);
-    setFrame((current) => {
-      lastFrames.set(hostWindow, current);
-      return current;
-    });
   };
 
   const gestureHandlers = {
@@ -160,9 +162,10 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
       aria-label={asset.label}
       // Dragging inside the window must never start a text selection in the page behind it.
       onMouseDown={(event) => event.preventDefault()}
-      style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}
+      onPointerDownCapture={onFocus}
+      style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height, zIndex }}
       className={clsx(
-        'animate-fade-in-up fixed z-[60] flex flex-col rounded-xl border border-paper-border bg-paper-card text-paper-ink shadow-float',
+        'animate-fade-in-up fixed flex flex-col rounded-xl border border-paper-border bg-paper-card text-paper-ink shadow-float',
         interacting && 'select-none',
       )}
     >
@@ -171,9 +174,8 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
         onPointerDown={startGesture('move')}
         onDoubleClick={(event) => {
           if ((event.target as HTMLElement).closest('button')) return;
-          const next = clampFrame(defaultFrame(hostWindow), hostWindow);
-          lastFrames.set(hostWindow, next);
-          setFrame(next);
+          // 双击标题栏：恢复为贴合截图比例的默认大小。
+          setFrame(fitPreviewFrame(imageSize.current, hostWindow));
         }}
         title={t('lightbox.help')}
         {...gestureHandlers}
@@ -256,6 +258,16 @@ export function LightboxModal({ asset, onClose, hostWindow = window }: LightboxM
           src={asset.imageUrl}
           alt={asset.label}
           draggable={false}
+          onLoad={(event) => {
+            const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+            if (!width || !height) return;
+            imageSize.current = { width, height };
+            // 没有预先算好尺寸时（如扩展侧栏），图片加载后按比例调整一次。
+            if (!adjusted.current) {
+              adjusted.current = true;
+              setFrame(fitPreviewFrame(imageSize.current, hostWindow));
+            }
+          }}
           className="max-h-full max-w-full select-none rounded-md bg-paper-card shadow-paper transition-transform duration-150"
           style={{
             filter,

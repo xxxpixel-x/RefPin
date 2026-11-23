@@ -21,6 +21,15 @@ import { SelectionToolbar } from './components/peek/SelectionToolbar';
 import { PinDock } from './components/dock/PinDock';
 import { useDockPopout } from './components/dock/useDockPopout';
 import { LightboxModal } from './components/dock/LightboxModal';
+import {
+  closePreview,
+  fitPreviewFrame,
+  focusPreview,
+  lastIndexWhere,
+  loadImageSize,
+  openPreview,
+  type PreviewWindow,
+} from './components/dock/previewWindows';
 import { AssetDrawer } from './components/drawer/AssetDrawer';
 import { PdfViewer, type PdfViewerHandle } from './components/pdf/PdfViewer';
 import { loadReaderPdf } from './engine/pdfLoader';
@@ -146,7 +155,8 @@ export default function App() {
   const [recent, setRecent] = useState<PaperArchive[]>([]);
   const [hoverTrigger, setHoverTrigger] = useState<PeekTrigger | null>(null);
   const [fallbackPreview, setFallbackPreview] = useState<FallbackPreviewState | null>(null);
-  const [lightbox, setLightbox] = useState<{ asset: PaperAsset; fromDock: boolean } | null>(null);
+  // 放大浮窗可以同时开多个，数组顺序即叠放顺序（最后一个在最前面）。
+  const [previews, setPreviews] = useState<PreviewWindow[]>([]);
   const [highlightedPinId, setHighlightedPinId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ notice: DisplayMessage; action?: { label: DisplayMessage; run: () => void } } | null>(null);
 
@@ -203,6 +213,21 @@ export default function App() {
   }, []);
 
   const { popoutWindow, openPopout } = useDockPopout(pdfDoc, showToast);
+  const popoutRef = useRef(popoutWindow);
+  popoutRef.current = popoutWindow;
+
+  /** 打开放大浮窗：先读出截图尺寸，按比例算好默认大小；已打开的同一张图只提到最前面。 */
+  const openPreviewWindow = useCallback(async (asset: PaperAsset, fromDock: boolean) => {
+    setPreviews(list => focusPreview(list, asset.key));
+    const size = await loadImageSize(asset.imageUrl);
+    setPreviews(list => {
+      if (list.some(item => item.id === asset.key)) return focusPreview(list, asset.key);
+      const popout = popoutRef.current;
+      const host = fromDock && popout ? popout : window;
+      const cascade = list.filter(item => (item.fromDock && popout ? popout : window) === host).length;
+      return openPreview(list, { id: asset.key, asset, fromDock, frame: fitPreviewFrame(size, host, cascade) });
+    });
+  }, []);
 
   const handleClearPins = useCallback(() => {
     const store = useReaderStore.getState();
@@ -278,7 +303,7 @@ export default function App() {
       setInitialPage(startPage);
       setHoverTrigger(null);
       setFallbackPreview(null);
-      setLightbox(null);
+      setPreviews([]);
       activePeekIdRef.current = null;
       nativePreviewCacheRef.current.clear();
 
@@ -425,7 +450,7 @@ export default function App() {
     setInitialPage(undefined);
     setHoverTrigger(null);
     setFallbackPreview(null);
-    setLightbox(null);
+    setPreviews([]);
     activePeekIdRef.current = null;
     nativePreviewCacheRef.current.clear();
     useReaderStore.getState().resetPaper();
@@ -677,8 +702,8 @@ export default function App() {
       cropRect: item.cropRect ?? { x: 0, y: 0, width: 1, height: 1 },
       imageUrl: item.imageUrl,
     };
-    setLightbox({ asset, fromDock: true });
-  }, []);
+    void openPreviewWindow(asset, true);
+  }, [openPreviewWindow]);
 
   // 全局快捷键：S 开关框选、[ 开关论文索引、G 开关术语栏、T 一键翻译、Esc 收起浮窗/框选
   useEffect(() => {
@@ -698,7 +723,12 @@ export default function App() {
       }
       if (event.key === 'Escape') {
         closeSearch();
-        setLightbox(null);
+        // 只关闭主窗口里最前面的一个浮窗；钉板小窗里的浮窗由小窗自己响应 Esc。
+        setPreviews(list => {
+          const popout = popoutRef.current;
+          const index = lastIndexWhere(list, item => !(item.fromDock && popout));
+          return index < 0 ? list : closePreview(list, list[index].id);
+        });
         setHoverTrigger(null);
         translation.setSettingsOpen(false);
         if (useReaderStore.getState().snipMode) {
@@ -840,7 +870,7 @@ export default function App() {
       citations={citationsByPage[currentPage] ?? []}
       assetsMap={assetsMap}
       onPinAsset={handlePinAsset}
-      onPreviewAsset={asset => setLightbox({ asset, fromDock: true })}
+      onPreviewAsset={asset => void openPreviewWindow(asset, true)}
       items={pinnedItems}
       backlinksMap={backlinksMap}
       onJumpToBacklink={handleJump}
@@ -990,7 +1020,7 @@ export default function App() {
         onPinReference={handlePinReference}
         onPinGlossary={handlePinGlossary}
         onJump={handleJump}
-        onOpenLightbox={asset => setLightbox({ asset, fromDock: false })}
+        onOpenLightbox={asset => void openPreviewWindow(asset, false)}
         onPeek={handlePeek}
         onDismiss={() => setHoverTrigger(null)}
         pinnedIds={pinnedIds}
@@ -998,8 +1028,22 @@ export default function App() {
       />
 
       {coach && <OnboardingCoach run={coach} dockWindow={popoutWindow} />}
-      <LightboxModal asset={lightbox?.asset ?? null} hostWindow={lightbox?.fromDock ? popoutWindow ?? window : window}
-        onClose={() => setLightbox(null)} />
+      {previews.map((item, index) => {
+        const host = item.fromDock && popoutWindow ? popoutWindow : window;
+        const topOnHost = lastIndexWhere(previews, other => (other.fromDock && popoutWindow ? popoutWindow : window) === host) === index;
+        return (
+          <LightboxModal
+            key={item.id}
+            asset={item.asset}
+            hostWindow={host}
+            initialFrame={item.frame}
+            zIndex={60 + index}
+            onFocus={() => setPreviews(list => focusPreview(list, item.id))}
+            closeOnEscape={host !== window && topOnHost}
+            onClose={() => setPreviews(list => closePreview(list, item.id))}
+          />
+        );
+      })}
       {palette}
       {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}
 
