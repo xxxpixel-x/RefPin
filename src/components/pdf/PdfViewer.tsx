@@ -13,7 +13,8 @@ import {
   useState,
 } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
+import type { GlossaryMention, Highlight, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
+import type { MenuPoint } from '../peek/HighlightEditor';
 import { useReaderStore } from '../../store/useReaderStore';
 import { PdfPageCanvas, type FlashHighlight } from './PdfPageCanvas';
 
@@ -52,6 +53,8 @@ interface Props {
   scale: number;
   citationsByPage: Record<number, InlineCitation[]>;
   glossaryMentionsByPage: Record<number, GlossaryMention[]>;
+  highlights: Highlight[];
+  onHighlightClick: (highlight: Highlight, point: MenuPoint) => void;
   searchMatches: SearchMatch[];
   activeMatch?: SearchMatch;
   snipMode: boolean;
@@ -77,6 +80,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
     scale,
     citationsByPage,
     glossaryMentionsByPage,
+    highlights,
+    onHighlightClick,
     searchMatches,
     activeMatch,
     snipMode,
@@ -96,6 +101,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   ref,
 ) {
   const rulerEnabled = useReaderStore(state => state.readingRulerEnabled);
+  const pageHighlights = useMemo(() => {
+    const byPage: Record<number, Highlight[]> = {};
+    for (const item of highlights) (byPage[item.pageNumber] ??= []).push(item);
+    return byPage;
+  }, [highlights]);
   const [ruler, setRuler] = useState<{ page: number; index: number; rect: NormalizedRect } | null>(null);
   const pageMatches = useMemo(() => {
     const byPage: Record<number, SearchMatch[]> = {};
@@ -109,6 +119,25 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
   const [dims, setDims] = useState<Array<{ width: number; height: number }> | null>(null);
   const [flash, setFlash] = useState<FlashHighlight | null>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set());
+  const [selectedPages, setSelectedPages] = useState<[number, number] | null>(null);
+  useEffect(() => {
+    // 长距离拖选时保留已选页面的文本层，否则虚拟滚动会移除原生选区的起点。
+    function selectionChanged() {
+      const selection = window.getSelection();
+      const pageOf = (node: Node | null) => {
+        if (!node || !scrollRef.current?.contains(node)) return 0;
+        const el = node instanceof Element ? node : node.parentElement;
+        return Number(el?.closest<HTMLElement>('[data-page]')?.dataset.page) || 0;
+      };
+      const start = selection && !selection.isCollapsed ? pageOf(selection.anchorNode) : 0;
+      const end = selection && !selection.isCollapsed ? pageOf(selection.focusNode) : 0;
+      if (!start || !end) { setSelectedPages(null); return; }
+      const first = Math.min(start, end), last = Math.max(start, end);
+      setSelectedPages(prev => prev?.[0] === first && prev[1] === last ? prev : [first, last]);
+    }
+    document.addEventListener('selectionchange', selectionChanged);
+    return () => document.removeEventListener('selectionchange', selectionChanged);
+  }, []);
   const [containerWidth, setContainerWidth] = useState<number>(1040);
   const fitOnLoadRef = useRef({ fitWidthOnLoad, onFitScale, scale });
   fitOnLoadRef.current = { fitWidthOnLoad, onFitScale, scale };
@@ -393,12 +422,14 @@ export const PdfViewer = forwardRef<PdfViewerHandle, Props>(function PdfViewer(
                 key={isBilingual ? `${pageNumber}-orig` : pageNumber}
                 pdfDoc={pdfDoc}
                 pageNumber={pageNumber}
-                isVisible={isVisible}
+                isVisible={isVisible || (!!selectedPages && pageNumber >= selectedPages[0] && pageNumber <= selectedPages[1])}
                 scale={effectiveScale}
                 pageWidth={pageWidth}
                 pageHeight={pageHeight}
                 citations={citationsByPage[pageNumber] ?? NO_CITATIONS}
                 glossaryMentions={glossaryMentionsByPage[pageNumber] ?? NO_GLOSSARY_MENTIONS}
+                highlights={pageHighlights[pageNumber]}
+                onHighlightClick={onHighlightClick}
                 flash={flash?.pageNumber === pageNumber ? flash : null}
                 searchMatches={pageMatches[pageNumber]}
                 activeMatchId={activeMatch?.pageNumber === pageNumber ? activeMatch.id : undefined}

@@ -1,5 +1,5 @@
 import { LocalizedError, message } from '../i18n/core';
-import type { PaperArchive, PersistedPinnedItem, PinnedItem } from '../types/paper';
+import type { Highlight, PaperArchive, PersistedPinnedItem, PinnedItem } from '../types/paper';
 
 export const MAX_PDF_BYTES = 15 * 1024 * 1024;
 const ARCHIVE_LIMIT = 30;
@@ -24,19 +24,48 @@ export function computeLruEvictions(
     .slice(0, excess).map(entry => entry.paperHash);
 }
 
+type LegacyArchive = Omit<PaperArchive, 'highlights'> & { highlights?: Highlight[] };
+
+export function migratePaperArchive(archive: LegacyArchive): PaperArchive {
+  return { ...archive, highlights: archive.highlights ?? [] };
+}
+
+// 只应用本次阅读会话改动的条目，滚动或缩放触发的保存也能保留其他窗口的批注。
+export function mergeHighlightChanges(stored: Highlight[], previous: Highlight[], current: Highlight[]) {
+  if (previous === current) return stored;
+  const byId = new Map(stored.map(item => [item.id, item]));
+  const before = new Map(previous.map(item => [item.id, item]));
+  for (const item of current) {
+    if (before.get(item.id) !== item) byId.set(item.id, item);
+    before.delete(item.id);
+  }
+  for (const id of before.keys()) byId.delete(id);
+  return [...byId.values()];
+}
+
 let connection: Promise<IDBDatabase> | undefined;
 function openDatabase() {
   connection ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('refpin.papers', 1);
+    const request = indexedDB.open('refpin.papers', 2);
     let blocked = false;
     request.onblocked = () => {
       blocked = true;
       reject(new LocalizedError(message('archive.locked')));
     };
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore('archives', { keyPath: 'paperHash' });
-      const blobs = request.result.createObjectStore('pdfBlobs', { keyPath: 'paperHash' });
-      blobs.createIndex('lastOpenedAt', 'lastOpenedAt');
+    request.onupgradeneeded = event => {
+      if (event.oldVersion === 0) {
+        request.result.createObjectStore('archives', { keyPath: 'paperHash' });
+        const blobs = request.result.createObjectStore('pdfBlobs', { keyPath: 'paperHash' });
+        blobs.createIndex('lastOpenedAt', 'lastOpenedAt');
+      } else if (event.oldVersion === 1) {
+        const rows = request.transaction!.objectStore('archives').openCursor();
+        rows.onsuccess = () => {
+          const cursor = rows.result;
+          if (!cursor) return;
+          if (!cursor.value.highlights) cursor.update(migratePaperArchive(cursor.value));
+          cursor.continue();
+        };
+      }
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -85,22 +114,30 @@ async function transact<T>(
 }
 
 export function loadPaperArchive(hash: string): Promise<PaperArchive | undefined> {
-  return transact('readonly', undefined, archives => result(archives.get(hash)));
+  return transact('readonly', undefined, async archives => {
+    const archive = await result(archives.get(hash));
+    return archive && migratePaperArchive(archive);
+  });
 }
 
 export function listRecentPapers(): Promise<PaperArchive[]> {
   return transact('readonly', [], async archives => {
-    const rows: PaperArchive[] = await result(archives.getAll());
-    return rows.sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+    const rows: LegacyArchive[] = await result(archives.getAll());
+    return rows.map(migratePaperArchive).sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
   });
 }
 
-export function savePaperArchive(archive: Omit<PaperArchive, 'hasCachedPdf'>): Promise<boolean> {
+export function savePaperArchive(archive: Omit<LegacyArchive, 'hasCachedPdf'>, previousHighlights?: Highlight[]): Promise<boolean> {
   return transact('readwrite', false, async (archives, blobs) => {
     const { paperHash, sampleId } = archive;
     if (sampleId) blobs.delete(paperHash);
     const hasCachedPdf = !sampleId && (await result(blobs.getKey(paperHash))) !== undefined;
-    archives.put({ ...archive, hasCachedPdf, pinnedItems: archive.pinnedItems.map(stripPinnedItemForStorage) });
+    const stored: LegacyArchive | undefined = await result(archives.get(paperHash));
+    let highlights = archive.highlights ?? stored?.highlights ?? [];
+    if (stored && previousHighlights && archive.highlights) {
+      highlights = mergeHighlightChanges(stored.highlights ?? [], previousHighlights, archive.highlights);
+    }
+    archives.put({ ...archive, highlights, hasCachedPdf, pinnedItems: archive.pinnedItems.map(stripPinnedItemForStorage) });
     if (await result(archives.count()) > ARCHIVE_LIMIT) {
       const evicted = computeLruEvictions(await result(archives.getAll()), ARCHIVE_LIMIT);
       for (const key of evicted) {

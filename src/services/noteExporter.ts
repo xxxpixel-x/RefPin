@@ -2,7 +2,8 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { recropPageRegion } from '../engine/assetExtractor';
 import { t } from '../i18n/core';
 import { pinTitle } from '../i18n/pinTitle';
-import type { CitationBacklink, GlossaryEntry, PinnedItem } from '../types/paper';
+import type { CitationBacklink, GlossaryEntry, Highlight, PinnedItem } from '../types/paper';
+import { compareHighlightPosition } from '../utils/highlights';
 import { buildFallbackBibtex, extractDoi, getCachedScholarMetadata } from './scholarLookup';
 
 const utf8 = new TextEncoder();
@@ -63,6 +64,7 @@ export interface StudyNotes {
   numPages: number;
   currentPage: number;
   pinnedItems: PinnedItem[];
+  highlights?: Highlight[];
   tableRows?: Record<string, string[][]>;
   backlinksMap: Record<string, CitationBacklink[]>;
   glossaryMap: Record<string, GlossaryEntry>;
@@ -151,6 +153,14 @@ export function buildStudyNotesMarkdown(notes: StudyNotes, images?: Map<string, 
   if (terms.length) {
     lines.push('', '## ' + t('notes.glossary'), '', notes.numPages ? t('notes.columns') : t('notes.termColumns'), notes.numPages ? '| --- | --- | --- |' : '| --- | --- |');
     for (const term of terms) lines.push('| ' + md(term.term) + ' | ' + md(term.expansion) + (notes.numPages ? ' | P.' + term.definedPage : '') + ' |');
+  }
+  if (notes.highlights) {
+    lines.push('', '## ' + t('notes.highlights'));
+    if (!notes.highlights.length) lines.push('', t('notes.none'));
+    for (const item of [...notes.highlights].sort(compareHighlightPosition)) {
+      lines.push('', '> ' + md(item.text) + t('notes.highlightPage', { page: item.pageNumber }));
+      if (item.note) lines.push('', item.note.split(/\r?\n/).map(md).join('\n'));
+    }
   }
   return lines.join('\n') + '\n';
 }

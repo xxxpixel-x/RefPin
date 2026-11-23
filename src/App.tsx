@@ -18,6 +18,7 @@ import { OnboardingCoach } from './components/layout/OnboardingCoach';
 import { useOnboarding } from './store/onboarding';
 import { HoverPeekCard, type PeekTrigger } from './components/peek/HoverPeekCard';
 import { SelectionToolbar } from './components/peek/SelectionToolbar';
+import { HighlightEditor, type MenuPoint } from './components/peek/HighlightEditor';
 import { PinDock } from './components/dock/PinDock';
 import { useDockPopout } from './components/dock/useDockPopout';
 import { LightboxModal } from './components/dock/LightboxModal';
@@ -45,6 +46,8 @@ import {
 } from './storage/paperDb';
 import type {
   GlossaryEntry,
+  Highlight,
+  HighlightSelection,
   InlineCitation,
   NormalizedRect,
   PaperAsset,
@@ -60,6 +63,14 @@ interface FallbackPreviewState {
   imageUrl: string;
   pageNumber: number;
   cropRect: NormalizedRect;
+}
+
+interface ArchiveSession {
+  scrollTop: number;
+  sampleId?: string;
+  openedAt: number;
+  savedHighlights: Highlight[];
+  saving?: Promise<boolean>;
 }
 
 function findReferenceForCitation(
@@ -94,6 +105,15 @@ export default function App() {
   const glossaryMentionsByPage = useReaderStore(state => state.glossaryMentionsByPage);
   const backlinksMap = useReaderStore((state) => state.backlinksMap);
   const pinnedItems = useReaderStore((state) => state.pinnedItems);
+  const highlights = useReaderStore(state => state.highlights);
+  const [highlightSaveFailed, setHighlightSaveFailed] = useState(false);
+  const [annotation, setAnnotation] = useState<{ source: Highlight | HighlightSelection[]; point: MenuPoint } | null>(null);
+  const editedHighlight = annotation && !Array.isArray(annotation.source) ? annotation.source : undefined;
+  const editAnnotation = useCallback((item: Highlight, point: MenuPoint) => {
+    setAnnotation({ source: item, point });
+    setHoverTrigger(null);
+  }, []);
+  const closeAnnotation = useCallback(() => setAnnotation(null), []);
   const drawerOpen = useReaderStore((state) => state.drawerOpen);
   const drawerSection = useReaderStore((state) => state.drawerSection);
   const snipMode = useReaderStore((state) => state.snipMode);
@@ -135,8 +155,8 @@ export default function App() {
 
   const viewerRef = useRef<PdfViewerHandle>(null);
   const readerRef = useRef<HTMLElement>(null);
-  const archiveSession = useRef<{ scrollTop: number; sampleId?: string; openedAt: number }>({
-    scrollTop: 0, openedAt: 0,
+  const archiveSession = useRef<ArchiveSession>({
+    scrollTop: 0, openedAt: 0, savedHighlights: [],
   });
   const saveTimerRef = useRef<number>();
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -164,12 +184,25 @@ export default function App() {
     window.clearTimeout(saveTimerRef.current);
     const state = useReaderStore.getState();
     if (!state.paperHash || !state.pdfDoc) return;
-    const { sampleId, scrollTop, openedAt } = archiveSession.current;
-    return savePaperArchive({
-      paperHash: state.paperHash, fileName: state.fileName, sampleId,
-      numPages: state.numPages, lastPage: state.currentPage, lastScrollTop: scrollTop,
-      scale: state.scale, lastOpenedAt: openedAt, pinnedItems: state.pinnedItems,
-    });
+    const session = archiveSession.current;
+    const archive = {
+      paperHash: state.paperHash, fileName: state.fileName, sampleId: session.sampleId,
+      numPages: state.numPages, lastPage: state.currentPage, lastScrollTop: session.scrollTop,
+      scale: state.scale, lastOpenedAt: session.openedAt, pinnedItems: state.pinnedItems, highlights: state.highlights,
+    };
+    const save = async () => {
+      const saved = await savePaperArchive(archive, session.savedHighlights);
+      if (useReaderStore.getState().pdfDoc === state.pdfDoc) {
+        const hasChanges = session.savedHighlights !== archive.highlights &&
+          (archive.highlights.length > 0 || session.savedHighlights.length > 0);
+        setHighlightSaveFailed(!saved && hasChanges);
+      }
+      if (saved) session.savedHighlights = archive.highlights;
+      return saved;
+    };
+    // 连续编辑或撤销按操作顺序写入，失败时保留上一次成功保存的比较基准。
+    session.saving = session.saving ? session.saving.then(save) : save();
+    return session.saving;
   }, []);
 
   const scheduleSave = useCallback(() => {
@@ -184,6 +217,10 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = useReaderStore.subscribe((next, previous) => {
+      if (next.pdfDoc && next.pdfDoc === previous.pdfDoc && next.highlights !== previous.highlights) {
+        void flushArchive();
+        return;
+      }
       if (next.pdfDoc && (next.currentPage !== previous.currentPage || next.scale !== previous.scale ||
           next.pinnedItems !== previous.pinnedItems)) scheduleSave();
     });
@@ -264,6 +301,20 @@ export default function App() {
     finally { exportInProgress.current = false; setExporting(false); }
   }, [showToast]);
 
+  function deleteAnnotation(item: Highlight) {
+    const store = useReaderStore.getState();
+    const doc = store.pdfDoc;
+    store.removeHighlight(item.id);
+    closeAnnotation();
+    showToast(message('highlight.deleted'), {
+      label: message('common.undo'),
+      run: () => {
+        if (useReaderStore.getState().pdfDoc === doc) store.restoreHighlight(item);
+        setToast(null);
+      },
+    });
+  }
+
   const flashPinnedCard = useCallback((id: string) => {
     if (useReaderStore.getState().dockCollapsed) {
       useReaderStore.getState().setDockCollapsed(false);
@@ -300,6 +351,8 @@ export default function App() {
       const { signal } = controller;
       setBootError(null);
       setBootingName(name);
+      setHighlightSaveFailed(false);
+      setAnnotation(null);
       setInitialPage(startPage);
       setHoverTrigger(null);
       setFallbackPreview(null);
@@ -338,6 +391,7 @@ export default function App() {
         const scrollTop = requestedPage ? undefined : archive?.lastScrollTop;
         archiveSession.current = {
           sampleId: sampleId ?? archive?.sampleId, scrollTop: scrollTop ?? 0, openedAt: Date.now(),
+          savedHighlights: archive?.highlights ?? [],
         };
         setInitialPage(requestedPage ?? archive?.lastPage);
         setInitialScrollTop(scrollTop);
@@ -448,6 +502,7 @@ export default function App() {
     setBootingName(null);
     setBootError(null);
     setInitialPage(undefined);
+    setAnnotation(null);
     setHoverTrigger(null);
     setFallbackPreview(null);
     setPreviews([]);
@@ -909,7 +964,7 @@ export default function App() {
         snipMode={snipMode}
         isParsing={isParsing}
         parseProgress={parseProgress}
-        assetCount={assetsList.length + glossaryList.length + referencesList.length}
+        assetCount={assetsList.length + glossaryList.length + referencesList.length + highlights.length}
         pinCount={pinnedItems.length}
         drawerOpen={drawerOpen}
         dockCollapsed={dockCollapsed}
@@ -936,6 +991,9 @@ export default function App() {
           {formatMessage(parseError || bootError || translation.error)}
         </div>
       )}
+      {highlightSaveFailed && <div role="alert" className="border-b border-paper-goldborder bg-paper-goldbg px-4 py-1.5 text-xs text-paper-ink">
+        {t('highlight.saveFailed')}
+      </div>}
 
       {isImageOnly && (
         <div role="status" className="border-b border-paper-border bg-paper-card px-4 py-2 text-xs text-paper-muted">
@@ -957,6 +1015,8 @@ export default function App() {
           assets={assetsList}
           outline={outline}
           glossary={glossaryList}
+          highlights={highlights}
+          onEditHighlight={editAnnotation}
           references={referencesList}
           backlinksMap={backlinksMap}
           onJumpToBacklink={handleJump}
@@ -986,6 +1046,8 @@ export default function App() {
             scale={scale}
             citationsByPage={citationsByPage}
             glossaryMentionsByPage={glossaryMentionsByPage}
+            highlights={highlights}
+            onHighlightClick={editAnnotation}
             snipMode={snipMode}
             translateMode={translation.displayMode}
             translatedBlocksByPage={translation.blocksByPage}
@@ -1000,7 +1062,19 @@ export default function App() {
             onMentionLeave={handleMentionLeave}
             onMentionClick={handleMentionClick}
           />
-          {!snipMode && <SelectionToolbar viewerRef={readerRef} onOpenSettings={() => translation.setSettingsOpen(true)} />}
+          {!snipMode && <SelectionToolbar viewerRef={readerRef} onOpenSettings={() => translation.setSettingsOpen(true)}
+            onAnnotate={(pages, point) => { setHoverTrigger(null); setAnnotation({ source: pages, point }); }} />}
+          {annotation && <HighlightEditor
+            key={editedHighlight?.id ?? 'new'} point={annotation.point} highlight={editedHighlight}
+            onClose={closeAnnotation}
+            onSave={(color, note) => {
+              const store = useReaderStore.getState();
+              if (Array.isArray(annotation.source)) store.addHighlights(annotation.source, color, note);
+              else store.editHighlight(annotation.source.id, color, note);
+              closeAnnotation();
+            }}
+            onDelete={editedHighlight ? () => deleteAnnotation(editedHighlight) : undefined}
+          />}
         </main>
 
         {popoutWindow ? createPortal(dock, popoutWindow.document.body) : dock}

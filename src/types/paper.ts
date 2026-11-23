@@ -22,6 +22,19 @@ export interface NormalizedRect {
   height: number;
 }
 
+export interface Highlight {
+  id: string;
+  pageNumber: number;
+  rects: NormalizedRect[];
+  text: string;
+  color: 'amber' | 'green' | 'blue' | 'rose';
+  note?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type HighlightSelection = Pick<Highlight, 'pageNumber' | 'rects' | 'text'>;
+
 /** 正文中的一处引用热区，例如 “Fig. 2”、"[14]" */
 export interface InlineCitation {
   id: string;
@@ -131,6 +144,7 @@ export interface PaperArchive {
   lastOpenedAt: number;
   hasCachedPdf: boolean;
   pinnedItems: PersistedPinnedItem[];
+  highlights: Highlight[];
 }
 
 /** 跳页前保存的“回来”锚点 */

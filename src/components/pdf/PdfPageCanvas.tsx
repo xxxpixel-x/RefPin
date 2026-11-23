@@ -4,7 +4,8 @@ import { useI18n } from '../../i18n';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import clsx from 'clsx';
-import type { GlossaryMention, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
+import type { GlossaryMention, Highlight, InlineCitation, NormalizedRect, ReaderMention } from '../../types/paper';
+import type { MenuPoint } from '../peek/HighlightEditor';
 import { FreeSnipOverlay } from './FreeSnipOverlay';
 
 export interface FlashHighlight {
@@ -23,6 +24,8 @@ interface Props {
   pageHeight: number;
   citations: InlineCitation[];
   glossaryMentions: GlossaryMention[];
+  highlights?: Highlight[];
+  onHighlightClick?: (highlight: Highlight, point: MenuPoint) => void;
   searchMatches?: SearchMatch[];
   activeMatchId?: string;
   rulerRect?: NormalizedRect;
@@ -61,6 +64,8 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
   pageHeight,
   citations,
   glossaryMentions,
+  highlights,
+  onHighlightClick,
   flash,
   searchMatches,
   activeMatchId,
@@ -218,10 +223,25 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
         pressRef.current = null;
         if (!press || press.dragged || snipMode || window.getSelection()?.toString().trim() ||
             Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) return;
-        if (!press.mention && mentionAt(event) === -1 && onLockRuler && !(event.target as HTMLElement).closest('button')) {
+        if (!(event.target as HTMLElement).closest('button')) {
           const bounds = event.currentTarget.getBoundingClientRect();
-          onLockRuler(pageNumber, (event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
-          return;
+          const x = (event.clientX - bounds.left) / bounds.width;
+          const y = (event.clientY - bounds.top) / bounds.height;
+          const onMention = Boolean(press.mention) || mentionAt(event) !== -1;
+          // 点在引用上时仍锁定引用预览，高亮里的引用不会被批注菜单抢走。
+          if (!onMention && !activeTranslatedBlocks.length && highlights) {
+            // 重叠时优先打开最后绘制的一条，其他条目也可以从索引编辑。
+            for (let i = highlights.length - 1; i >= 0; i--) {
+              if (highlights[i].rects.some(r => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height)) {
+                onHighlightClick?.(highlights[i], { x: event.clientX, y: event.clientY });
+                return;
+              }
+            }
+          }
+          if (!onMention) {
+            onLockRuler?.(pageNumber, x, y);
+            return;
+          }
         }
         if (!press.mention) return;
         const index = mentionAt(event);
@@ -241,6 +261,14 @@ export const PdfPageCanvas = memo(function PdfPageCanvas({
       )}
 
       <canvas ref={canvasRef} width={0} height={0} className="pdf-image block h-full w-full select-none" />
+
+      {isVisible && !activeTranslatedBlocks.length && highlights && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 select-none">
+          {highlights.map(item => item.rects.map((rect, i) =>
+            <span key={item.id + '-' + i} data-ink={item.color}
+              className="pdf-highlight absolute rounded-[2px]" style={overlayPosition(rect)} />))}
+        </div>
+      )}
 
       {isVisible && (
         <div

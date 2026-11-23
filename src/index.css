@@ -50,6 +50,16 @@
   --pdf-filter: invert(0.88) hue-rotate(180deg) contrast(0.95);
 }
 .pdf-image { filter: var(--pdf-filter); }
+[data-ink="amber"] { --highlight-ink: 217 119 6; }
+[data-ink="green"] { --highlight-ink: 52 156 101; }
+[data-ink="blue"] { --highlight-ink: 66 134 204; }
+[data-ink="rose"] { --highlight-ink: 211 97 129; }
+.highlight-swatch {
+  background-color: rgb(var(--highlight-ink) / 46%);
+  border: 1px solid rgb(var(--highlight-ink) / 80%);
+}
+.pdf-highlight { background-color: rgb(var(--highlight-ink) / 33%); }
+:root[data-theme="dark"] .pdf-highlight { background-color: rgb(var(--highlight-ink) / 44%); }
 .original-color-control { display: none; }
 [data-coach-target] { outline: 2px solid var(--paper-gold); outline-offset: 2px; }
 [data-coach-bubble]::before {

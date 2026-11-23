@@ -50,6 +50,22 @@ async function extract(blob: Blob) {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('local study notes', () => {
+  it('includes page-sorted quotes and optional multiline annotations in Markdown and ZIP', async () => {
+    setLocale('zh-CN');
+    const mark = { id: 'late', pageNumber: 7, rects: [rect], text: '第二段', color: 'green' as const, createdAt: 1, updatedAt: 2 };
+    const highlights = [mark, { ...mark, id: 'early', pageNumber: 2, text: '第一段', note: '批注一\n批注二' }];
+    const input = { ...notes, pinnedItems: [], highlights };
+    const section = '## 高亮与批注\n\n> 第一段（第 2 页）\n\n批注一\n批注二\n\n> 第二段（第 7 页）\n';
+    expect(buildStudyNotesMarkdown(input)).toContain(section);
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    vi.stubGlobal('document', { body: { append: vi.fn() }, createElement: () => ({ click: vi.fn(), remove: vi.fn() }) });
+    await exportStudyPackZip(input, null);
+    const entries = await extract(create.mock.calls[0][0] as Blob);
+    expect([...entries.keys()]).toEqual(['notes.md']);
+    expect(new TextDecoder().decode(entries.get('notes.md'))).toContain(section);
+    expect(highlights[0]).toBe(mark);
+  });
+
   it('writes quoted YAML, dock order, unique backlinks, bibliography and glossary', () => {
     setLocale('en');
     const markdown = buildStudyNotesMarkdown(notes, undefined, new Date(0));

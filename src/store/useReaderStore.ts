@@ -8,6 +8,8 @@ import type {
   CitationBacklink,
   DockPosition,
   GlossaryEntry,
+  Highlight,
+  HighlightSelection,
   InlineCitation,
   JumpPosition,
   OutlineItem,
@@ -52,6 +54,11 @@ interface ReaderState {
 
   /* ---------- UI 状态 ---------- */
   pinnedItems: PinnedItem[];
+  highlights: Highlight[];
+  addHighlights: (pages: HighlightSelection[], color: Highlight['color'], note?: string) => void;
+  editHighlight: (id: string, color: Highlight['color'], note?: string) => void;
+  removeHighlight: (id: string) => void;
+  restoreHighlight: (highlight: Highlight) => void;
   scholarLookupEnabled: boolean;
   setScholarLookupEnabled: (enabled: boolean) => void;
   autoSyncEnabled: boolean;
@@ -238,6 +245,21 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   backlinksMap: {},
 
   pinnedItems: [],
+  highlights: [],
+  addHighlights: (pages, color, note) => set(state => {
+    const now = Date.now();
+    const added = pages.map(page => ({
+      ...page, id: crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-'),
+      color, note, createdAt: now, updatedAt: now,
+    }));
+    return { highlights: [...state.highlights, ...added] };
+  }),
+  editHighlight: (id, color, note) => set(state => ({
+    highlights: state.highlights.map(item => item.id === id ? { ...item, color, note, updatedAt: Date.now() } : item),
+  })),
+  removeHighlight: id => set(state => ({ highlights: state.highlights.filter(item => item.id !== id) })),
+  restoreHighlight: item => set(state => state.highlights.some(h => h.id === item.id)
+    ? state : { highlights: [...state.highlights, item] }),
   scholarLookupEnabled: preference(SCHOLAR_KEY) === 'true',
   setScholarLookupEnabled: enabled => {
     savePreference(SCHOLAR_KEY, String(enabled));
@@ -269,6 +291,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       numPages: doc.numPages,
       currentPage: Math.min(doc.numPages, Math.max(1, archive?.lastPage ?? 1)),
       scale: archive?.scale ?? get().scale,
+      highlights: archive?.highlights ?? [],
       pinnedItems: (archive?.pinnedItems ?? []).map(item => ({
         ...item,
         previewStatus: item.kind !== 'reference' && item.kind !== 'glossary' && item.cropRect ? 'restoring' : undefined,
@@ -571,6 +594,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       glossaryMentionsByPage: {},
       backlinksMap: {},
       pinnedItems: [],
+      highlights: [],
       snipMode: false,
       jumpHistory: [],
       historyCursor: 0,

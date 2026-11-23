@@ -6,6 +6,7 @@ import {
   FileText,
   Image as ImageIcon,
   LocateFixed,
+  Pencil,
   Pin,
   Search,
   Table2,
@@ -18,14 +19,17 @@ import type {
   CitationBacklink,
   CitationKind,
   GlossaryEntry,
+  Highlight,
   NormalizedRect,
   OutlineItem,
   PaperAsset,
   ReferenceEntry,
 } from '../../types/paper';
 import { BacklinkStrip } from '../BacklinkStrip';
+import type { MenuPoint } from '../peek/HighlightEditor';
+import { compareHighlightPosition } from '../../utils/highlights';
 
-type DrawerTab = 'all' | CitationKind | 'outline' | 'glossary';
+type DrawerTab = 'all' | CitationKind | 'outline' | 'glossary' | 'highlights';
 type GlossaryFilter = 'all' | GlossaryEntry['kind'];
 
 interface AssetDrawerProps {
@@ -35,6 +39,8 @@ interface AssetDrawerProps {
   assets: PaperAsset[];
   outline?: OutlineItem[];
   glossary?: GlossaryEntry[];
+  highlights?: Highlight[];
+  onEditHighlight?: (highlight: Highlight, point: MenuPoint) => void;
   references: ReferenceEntry[];
   backlinksMap: Record<string, CitationBacklink[]>;
   onJumpToBacklink: (pageNumber: number, rect: NormalizedRect) => void;
@@ -64,6 +70,7 @@ const TABS = [
   { key: 'theorem', label: 'filter.theorems' },
   { key: 'glossary', label: 'filter.glossary' },
   { key: 'reference', label: 'filter.references' },
+  { key: 'highlights', label: 'filter.annotations' },
 ] as const satisfies ReadonlyArray<{ key: Exclude<DrawerTab, 'outline' | 'section'>; label: MessageKey }>;
 
 export function OutlineBranch({ item, onJump }: { item: OutlineItem; onJump: (item: OutlineItem) => void }) {
@@ -95,6 +102,8 @@ export function AssetDrawer({
   assets,
   outline = [],
   glossary = [],
+  highlights = [],
+  onEditHighlight,
   references,
   backlinksMap,
   onJumpToBacklink,
@@ -137,6 +146,12 @@ export function AssetDrawer({
   };
 
   const visualAssets = useMemo(() => assets.filter(asset => asset.kind !== 'section'), [assets]);
+  const filteredHighlights = useMemo(() => {
+    if (tab !== 'all' && tab !== 'highlights') return [];
+    const keyword = query.trim().toLowerCase();
+    return highlights.filter(item => item.text.toLowerCase().includes(keyword) || item.note?.toLowerCase().includes(keyword))
+      .sort(compareHighlightPosition);
+  }, [highlights, tab, query]);
   // PDFs without an embedded outline still get a table of contents from detected headings.
   const outlineItems = useMemo<OutlineItem[]>(() => outline.length ? outline : assets
     .filter(asset => asset.kind === 'section')
@@ -182,7 +197,8 @@ export function AssetDrawer({
   }, [glossary, tab, glossaryFilter, query]);
 
   const counts: Record<Exclude<DrawerTab, 'outline'>, number> = {
-    all: visualAssets.length + glossary.length + references.length,
+    all: visualAssets.length + glossary.length + references.length + highlights.length,
+    highlights: highlights.length,
     glossary: glossary.length,
     reference: references.length,
     figure: 0, table: 0, equation: 0, algorithm: 0, theorem: 0, section: 0,
@@ -240,7 +256,7 @@ export function AssetDrawer({
         </label>
 
         <div className="mt-2 flex flex-wrap items-center gap-1">
-          {TABS.filter((item) => item.key === 'all' || item.key === tab || counts[item.key] > 0).map((item) => (
+          {TABS.filter((item) => item.key === 'all' || item.key === 'highlights' || item.key === tab || counts[item.key] > 0).map((item) => (
             <button
               key={item.key}
               type="button"
@@ -516,12 +532,35 @@ export function AssetDrawer({
           </div>
         )}
 
+        {filteredHighlights.length > 0 && <section className="mt-2 space-y-1.5" aria-label={t('filter.annotations')}>
+          {tab === 'all' && <h3 className="px-1 text-xs font-medium text-paper-ink">{t('filter.annotations')}</h3>}
+          {filteredHighlights.map((item, index) => <div key={item.id}>
+            {filteredHighlights[index - 1]?.pageNumber !== item.pageNumber &&
+              <h4 className="px-1 pb-1 pt-1.5 text-[11px] text-paper-muted">{t('reader.page', { page: item.pageNumber })}</h4>}
+            <div className="flex items-start gap-1 rounded-lg border border-paper-border bg-paper-card p-2 hover:border-paper-goldborder">
+              <button type="button" onClick={() => locate(item.pageNumber, item.rects[0], t('highlight.annotation'))}
+                className="flex min-w-0 flex-1 items-start gap-2 text-left text-xs leading-relaxed">
+                <span data-ink={item.color} className="highlight-swatch mt-1 h-2.5 w-2.5 shrink-0 rounded-full" />
+                <span className="min-w-0 break-words"><span className="line-clamp-3 text-paper-ink">{item.text}</span>
+                  {item.note && <span className="mt-1 block whitespace-pre-wrap text-paper-muted">{item.note}</span>}
+                </span>
+              </button>
+              {onEditHighlight && <button type="button" aria-label={t('highlight.edit')} title={t('highlight.edit')}
+                className="rounded p-1 text-paper-muted hover:bg-paper-bg" onClick={event => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  onEditHighlight(item, { x: box.left, y: box.bottom });
+                }}><Pencil size={12} /></button>}
+            </div>
+          </div>)}
+        </section>}
+
         {isAssetSection && !isParsing &&
+          filteredHighlights.length === 0 &&
           filteredAssets.length === 0 &&
           filteredGlossary.length === 0 &&
           filteredReferences.length === 0 && (
             <p className="px-2 py-8 text-center text-[11px] leading-relaxed text-paper-muted">
-              {t(tab === 'glossary' ? 'panel.glossaryEmpty' : 'assets.noMatches')}
+              {t(tab === 'highlights' && !query.trim() ? 'highlight.empty' : tab === 'glossary' ? 'panel.glossaryEmpty' : 'assets.noMatches')}
             </p>
           )}
       </div>

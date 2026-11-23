@@ -2,8 +2,11 @@ import { IS_EXTENSION_PAGE } from '../../config/runtime';
 import { describeError, formatMessage, LocalizedError, message, t, type DisplayMessage } from '../../i18n';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, Languages, Settings } from 'lucide-react';
-import { cleanPdfSelectedText } from '../../utils/textCleanup';
+import { Check, Copy, Languages, MessageSquarePlus, Settings } from 'lucide-react';
+import { HighlightColors, type MenuPoint } from './HighlightEditor';
+import { readHighlightSelection, readSelectionText } from './pdfSelection';
+import type { Highlight, HighlightSelection } from '../../types/paper';
+import { useReaderStore } from '../../store/useReaderStore';
 import { useExtensionTranslateSettings } from '../../services/useExtensionTranslateSettings';
 import {
   DEFAULT_TRANSLATE_CONFIG,
@@ -12,22 +15,6 @@ import {
   selectionTranslator,
   type TranslateConfig,
 } from '../../services/translator';
-
-// PDF.js uses positioned spans and explicit <br> elements. Reading only those
-// layers keeps page numbers and citation controls out of cross-page selections.
-function readRange(range: Range, viewer: HTMLElement) {
-  const parts: string[] = [];
-  for (const layer of viewer.querySelectorAll('.textLayer')) {
-    if (!range.intersectsNode(layer)) continue;
-    const part = range.cloneRange();
-    if (!layer.contains(part.startContainer)) part.setStart(layer, 0);
-    if (!layer.contains(part.endContainer)) part.setEnd(layer, layer.childNodes.length);
-    const content = part.cloneContents();
-    content.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-    parts.push(content.textContent ?? '');
-  }
-  return cleanPdfSelectedText(parts.join('\n'));
-}
 
 interface Anchor {
   text: string;
@@ -40,9 +27,10 @@ interface SelectionToolbarProps {
   viewerRef: RefObject<HTMLElement>;
   /** Opens the shared translation settings so there is a single place to configure providers. */
   onOpenSettings: () => void;
+  onAnnotate: (pages: HighlightSelection[], point: MenuPoint) => void;
 }
 
-export function SelectionToolbar({ viewerRef, onOpenSettings }: SelectionToolbarProps) {
+export function SelectionToolbar({ viewerRef, onOpenSettings, onAnnotate }: SelectionToolbarProps) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   const rangeRef = useRef<Range>();
@@ -85,7 +73,7 @@ export function SelectionToolbar({ viewerRef, onOpenSettings }: SelectionToolbar
       if (!selection?.rangeCount || selection.isCollapsed) return hide();
       const range = selection.getRangeAt(0);
       if (!viewer.contains(range.commonAncestorContainer)) return hide();
-      savedText = readRange(range, viewer);
+      savedText = readSelectionText(range, viewer);
       if (!savedText) return hide();
       backwards = selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset;
       rangeRef.current = range.cloneRange();
@@ -127,6 +115,21 @@ export function SelectionToolbar({ viewerRef, onOpenSettings }: SelectionToolbar
   }, [viewerRef]);
 
   if (!anchor) return null;
+  function mark(color?: Highlight['color']) {
+    const range = rangeRef.current;
+    const viewer = viewerRef.current;
+    if (!range || !viewer?.contains(range.commonAncestorContainer)) return;
+    const pages = readHighlightSelection(range, viewer);
+    if (!pages.length) return;
+    if (color) useReaderStore.getState().addHighlights(pages, color);
+    else {
+      const box = toolbar.current!.getBoundingClientRect();
+      onAnnotate(pages, { x: box.left, y: box.top });
+    }
+    rangeRef.current = undefined;
+    window.getSelection()?.removeAllRanges();
+    setAnchor(null);
+  }
   function restoreSelection() {
     // Focusing the endpoint/key inputs may replace the browser's PDF selection.
     const range = rangeRef.current;
@@ -143,6 +146,12 @@ export function SelectionToolbar({ viewerRef, onOpenSettings }: SelectionToolbar
       style={{ left: anchor.left, [anchor.above ? 'bottom' : 'top']: anchor.edge, maxHeight: Math.max(48, window.innerHeight - anchor.edge - 8) }}
       onMouseDown={event => { if ((event.target as Element).closest('button')) event.preventDefault(); }}>
       <SelectionActions key={anchor.text} text={anchor.text} restoreSelection={restoreSelection} onOpenSettings={onOpenSettings} />
+      <div className="flex items-center justify-between gap-2 border-t border-paper-border px-1 py-0.5">
+        <HighlightColors onChoose={mark} />
+        <button type="button" className={actionClass} onClick={() => mark()}>
+          <MessageSquarePlus size={14} />{t('highlight.annotation')}
+        </button>
+      </div>
     </div>, document.body,
   );
 }
